@@ -114,6 +114,12 @@ func (a *accounts) Write(_ context.Context, s step.Step, op client.WriteOp) (cli
 			pls = "0"
 		}
 		return client.Result{}, set(s, "pwdLastSet", pls)
+	case accountkind.KeyComputerReset:
+		// The kind sends unicodePwd only: the fake records no other attribute, and the op carries none.
+		if len(op.Attrs) != 0 {
+			return client.Result{}, client.ErrKindAttrs
+		}
+		return client.Result{}, set(s, "pwdLastSet", "133700000000000000")
 	}
 	return client.Result{}, client.ErrUnknownKind
 }
@@ -150,6 +156,7 @@ func inputs(t *testing.T) map[operation.ActionID]operation.Input {
 		ad.UnlockID:        input(t, ad.AccountInput{Target: target()}),
 		ad.EnableID:        input(t, ad.AccountInput{Target: target()}),
 		ad.DisableID:       input(t, ad.AccountInput{Target: target()}),
+		ad.ComputerResetID: input(t, ad.AccountInput{Target: target()}),
 	}
 }
 
@@ -161,10 +168,13 @@ func TestContract(t *testing.T) {
 	for id, in := range inputs(t) {
 		t.Run(string(id), func(t *testing.T) {
 			a := newAccounts()
+			if id == ad.ComputerResetID {
+				a.class = "computer"
+			}
 			if id == ad.EnableID {
 				a.dir.Seed(obj, "userAccountControl", uacDisabled)
 			}
-			operationtest.Contract(t, actions(t, a)[id], operationtest.Fixture{Input: in, Directory: a.dir, Pins: pins(), FreshStepUp: id == ad.ResetPasswordID})
+			operationtest.Contract(t, actions(t, a)[id], operationtest.Fixture{Input: in, Directory: a.dir, Pins: pins(), FreshStepUp: id == ad.ResetPasswordID || id == ad.ComputerResetID})
 		})
 	}
 }
@@ -359,11 +369,26 @@ func TestDescriptors(t *testing.T) {
 	}
 	for _, x := range as {
 		d := x.Describe()
-		if d.Target != operation.TargetAD || d.TargetClass != "user" || d.Version != 1 {
+		wantClass := "user"
+		if d.ID == ad.ComputerResetID {
+			wantClass = "computer"
+		}
+		if d.Target != operation.TargetAD || d.TargetClass != wantClass || d.Version != 1 {
 			t.Errorf("%+v", d)
 		}
-		if (d.ID == ad.ResetPasswordID) != (d.StepUp && d.SecretInput) || (d.ID != ad.ResetPasswordID && (d.StepUp || d.SecretInput)) {
-			t.Errorf("%s: StepUp/SecretInput %v/%v", d.ID, d.StepUp, d.SecretInput)
+		switch d.ID {
+		case ad.ResetPasswordID:
+			if !d.StepUp || !d.SecretInput {
+				t.Errorf("%s: StepUp/SecretInput %v/%v", d.ID, d.StepUp, d.SecretInput)
+			}
+		case ad.ComputerResetID: // step-up, and no secret input: the password is generated inside the connector
+			if !d.StepUp || d.SecretInput || d.Reversibility != operation.Irreversible || d.Permission != ad.PermComputerReset {
+				t.Errorf("%s: %+v", d.ID, d)
+			}
+		default:
+			if d.StepUp || d.SecretInput {
+				t.Errorf("%s: StepUp/SecretInput %v/%v", d.ID, d.StepUp, d.SecretInput)
+			}
 		}
 		if _, ok := x.(operation.Observer); !ok {
 			t.Errorf("%s is not an Observer", d.ID)

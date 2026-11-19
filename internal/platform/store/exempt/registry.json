@@ -1023,6 +1023,26 @@
       "column": "public.directory_object_changes.object_kind",
       "value": "user",
       "reason": "CHECK: directory_object_changes_object_kind_check restricts the object kind to the DM-16 set; the probe row carries one valid kind (T-1109)."
+    },
+    {
+      "column": "public.helpdesk_request_keys.request_mac",
+      "value": "\\x7070707070707070707070707070707070707070707070707070707070707070",
+      "reason": "CHECK: a request MAC is exactly 32 bytes (helpdesk_request_keys_request_mac_check); the probe row carries a 32-byte placeholder."
+    },
+    {
+      "column": "public.helpdesk_request_keys.operation",
+      "value": "issue",
+      "reason": "CHECK: helpdesk_rk_operation restricts operation to issue or verify; the probe row is an issue key."
+    },
+    {
+      "column": "public.helpdesk_request_keys.idem_key",
+      "value": "probe-idem-key-01",
+      "reason": "CHECK: an idempotency key matches ^[A-Za-z0-9._~-]{8,128}$."
+    },
+    {
+      "column": "public.helpdesk_request_keys.state",
+      "value": "pending",
+      "reason": "CHECK: helpdesk_rk_state/helpdesk_rk_done: pending carries no completed_at; the probe row is pending."
     }
   ]
 }
