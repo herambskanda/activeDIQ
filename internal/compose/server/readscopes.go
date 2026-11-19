@@ -10,6 +10,7 @@ import (
 	"github.com/skenzeriq/activediq/internal/platform/authority"
 	"github.com/skenzeriq/activediq/internal/platform/authz"
 	"github.com/skenzeriq/activediq/internal/platform/module"
+	"github.com/skenzeriq/activediq/internal/platform/notify/delivery"
 	"github.com/skenzeriq/activediq/internal/platform/rbac"
 	"github.com/skenzeriq/activediq/internal/platform/report"
 	"github.com/skenzeriq/activediq/internal/platform/store"
@@ -39,6 +40,29 @@ func (accountOwnerStatus) Active(ctx context.Context, tx store.Tx, t tenant.ID, 
 		return false, fmt.Errorf("server: reading account state: %w", err)
 	}
 	return active, nil
+}
+
+// accountMail serves delivery.Accounts from the authn account store, in the caller's tenant transaction (RLS
+// scopes the read). Only an active account with an address has one: a message is never sent to a disabled
+// or deleted account.
+type accountMail struct{}
+
+// MailAddress implements delivery.Accounts.
+func (accountMail) MailAddress(ctx context.Context, tx store.Tx, account string) (string, error) {
+	if tx == nil || !accountUUID.MatchString(account) {
+		return "", delivery.ErrNoAddress
+	}
+	var email *string
+	err := tx.QueryRow(ctx, `SELECT email FROM public.authn_accounts WHERE id = $1::uuid AND state = 'active'`, account).Scan(&email)
+	switch {
+	case store.IsNoRows(err):
+		return "", delivery.ErrNoAddress
+	case err != nil:
+		return "", fmt.Errorf("server: reading account address: %w", err)
+	case email == nil || *email == "":
+		return "", delivery.ErrNoAddress
+	}
+	return *email, nil
 }
 
 // inventoryObjectConnections serves rbac.ObjectConnections from inventory's directory_objects, in the
