@@ -12,120 +12,22 @@ local users). Lab DC only. Credentials come from the gitignored lab env file
 (WIN_LAB_ENV) and are never printed. Needs: pip install pywinrm requests-ntlm.
 The whole run holds the dc1 lock (lab/windows/bin/with-dc1-lock, runbook section 10).
 """
-import argparse, base64, hashlib, os, subprocess, sys, tempfile
+import argparse, os, subprocess, sys, tempfile
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 if not os.environ.get("DIQ_DC1_LOCK_HELD"):
     os.execv(os.path.join(REPO, "lab", "windows", "bin", "with-dc1-lock"),
              ["with-dc1-lock", "--", sys.executable, os.path.abspath(__file__), *sys.argv[1:]])
-try:
-    from winrm.protocol import Protocol
-except ImportError:
-    sys.exit("identity-verify: pip install pywinrm requests-ntlm")
-
-
-def load_env():
-    env = dict(os.environ)
-    path = env.get("WIN_LAB_ENV") or os.path.join(REPO, "lab", "windows", ".win-lab.env")
-    if not os.path.exists(path):
-        sys.exit(f"identity-verify: lab env file not found: {path} (set WIN_LAB_ENV)")
-    for line in open(path):
-        line = line.strip()
-        if line and not line.startswith("#") and "=" in line:
-            k, v = line.split("=", 1)
-            env.setdefault(k, v.strip().strip('"'))
-    return env
-
-
-class DC:
-    def __init__(self, addr, password):
-        self.p = Protocol(endpoint=f"http://{addr}:5985/wsman", transport="ntlm", username="Administrator",
-                          password=password, read_timeout_sec=900, operation_timeout_sec=800)
-
-    def ps(self, script):
-        sh = self.p.open_shell()
-        enc = base64.b64encode(script.encode("utf-16le")).decode()
-        cid = self.p.run_command(sh, "powershell", ["-NoProfile", "-NonInteractive", "-EncodedCommand", enc])
-        out, err, rc = self.p.get_command_output(sh, cid)
-        self.p.cleanup_command(sh, cid)
-        self.p.close_shell(sh)
-        return rc, out.decode(errors="replace") + err.decode(errors="replace")
-
-    def put(self, src, dst):
-        data = open(src, "rb").read()
-        sh = self.p.open_shell()
-        ps = (f"$o=[IO.File]::Create('{dst}');$i=[Console]::OpenStandardInput();$b=New-Object byte[] 65536;"
-              "while(($n=$i.Read($b,0,$b.Length)) -gt 0){$o.Write($b,0,$n)};$o.Close()")
-        cid = self.p.run_command(sh, "powershell", ["-NoProfile", "-NonInteractive", "-EncodedCommand",
-                                                    base64.b64encode(ps.encode("utf-16le")).decode()])
-        for i in range(0, len(data), 32000):
-            self.p.send_command_input(sh, cid, data[i:i + 32000])
-        self.p.send_command_input(sh, cid, b"", end=True)
-        self.p.get_command_output(sh, cid)
-        self.p.cleanup_command(sh, cid)
-        self.p.close_shell(sh)
-        rc, out = self.ps(f"(Get-FileHash '{dst}').Hash")
-        if hashlib.sha256(data).hexdigest().upper() not in out:
-            sys.exit(f"identity-verify: upload of {os.path.basename(src)} corrupted (sha256 mismatch)")
-
-
-SETUP = r"""
-$ErrorActionPreference='Stop'
-$R='C:\lab\t1341'; $ACCT='NT SERVICE\diqT1341'
-sc.exe stop diqT1341 2>&1 | Out-Null; sc.exe delete diqT1341 2>&1 | Out-Null
-Remove-Item -Recurse -Force "$R\parent","$R\out" -ErrorAction SilentlyContinue
-New-Item -ItemType Directory -Force "$R\parent","$R\out" | Out-Null
-sc.exe create diqT1341 binPath= "$R\dial.test.exe -test.run=NONE" start= demand obj= "$ACCT" | Out-Null
-sc.exe sidtype diqT1341 unrestricted | Out-Null
-# the trusted parent, as the installer makes it: protected, owner Administrators, service + SYSTEM + Administrators only
-icacls "$R\parent" /inheritance:r /grant:r "*S-1-5-18:(OI)(CI)F" "*S-1-5-32-544:(OI)(CI)F" "${ACCT}:(OI)(CI)F" | Out-Null
-icacls "$R\out" /inheritance:r /grant:r "*S-1-5-18:(OI)(CI)F" "*S-1-5-32-544:(OI)(CI)F" "${ACCT}:(OI)(CI)M" | Out-Null
-icacls "$R" /grant "${ACCT}:(RX)" | Out-Null
-icacls "$R\dial.test.exe" /grant "${ACCT}:(RX)" | Out-Null
-'setup ok'
-"""
-
-RUNSVC = r"""
-$R='C:\lab\t1341'; $name='%(name)s'
-Remove-Item "$R\out\$name.txt" -ErrorAction SilentlyContinue
-sc.exe config diqT1341 binPath= "$R\dial.test.exe -test.run=^TestWindowsLabServiceSide$ -test.v -diq.out=$R\out\$name.txt -diq.dir=$R\parent\enrol" | Out-Null
-sc.exe start diqT1341 | Out-Null
-for($i=0;$i -lt 60;$i++){ Start-Sleep 1; if((sc.exe query diqT1341) -match 'STOPPED'){break} }
-if(Test-Path "$R\out\$name.txt"){ Get-Content "$R\out\$name.txt" } else { 'NO SERVICE OUTPUT'; sc.exe query diqT1341 }
-"""
-
-ELEVATED = r"""
-$id=[Security.Principal.WindowsIdentity]::GetCurrent(); $p=New-Object Security.Principal.WindowsPrincipal($id)
-"caller: $($id.Name)  elevated-admin: $($p.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator))"
-whoami /groups | Select-String 'Mandatory Label'
-"""
-
-GOTEST = r"""
-$R='C:\lab\t1341'
-& "$R\dial.test.exe" "-test.run=^%(test)s$" "-test.v" "-diq.account=NT SERVICE\diqT1341" "-diq.parent=$R\parent" 2>&1 | % { "$_" }
-"EXIT $LASTEXITCODE"
-"""
-
-REGRESSION = r"""
-# TestNoStoreOrSQL shells out to `go list`, and the DC has no Go toolchain: skipped here, run by `go test` on the build host.
-$R='C:\lab\t1341'
-foreach($t in 'ownerfile','dial'){ Push-Location $env:TEMP; & "$R\$t.test.exe" "-test.v" "-test.skip=^TestNoStoreOrSQL$" 2>&1 | % { "$_" } | Select-String -Pattern '^(--- FAIL|FAIL|PASS|ok)' | % { "${t}: $_" }; "$t EXIT $LASTEXITCODE"; Pop-Location }
-"""
-
-CLEAN = r"""
-$R='C:\lab\t1341'
-sc.exe stop diqT1341 2>&1 | Out-Null; sc.exe delete diqT1341 2>&1 | Out-Null
-Remove-Item -Recurse -Force $R -ErrorAction SilentlyContinue
-'cleaned'
-"""
+sys.path.insert(0, os.path.join(REPO, "lab", "windows", "lib"))
+from dc1winrm import DC, load_env  # noqa: E402
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--log", required=True)
     a = ap.parse_args()
-    env = load_env()
-    dc = DC(env["WIN_LAB_DC_ADDR"], env["WIN_LAB_ADMIN_PASSWORD"])
+    env, _path, addr = load_env("identity-verify")
+    dc = DC(env, addr)
     work = tempfile.mkdtemp(prefix="identity-verify-")
     exe = os.path.join(work, "dial.test.exe")
     subprocess.check_call(["go", "test", "-c", "-o", exe, "./internal/platform/fleet/dial"], cwd=REPO,
