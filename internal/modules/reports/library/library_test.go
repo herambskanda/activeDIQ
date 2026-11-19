@@ -129,13 +129,13 @@ var specRows = []specRow{
 		columns: []string{"display_name", "sam_account_name", "domain", "dn", "dialin_allowed", "enabled"},
 		filters: map[string][]string{"dialin_allow": {"dialin_allowed"}, "dialin_deny": {"dialin_allowed"}, "smartcard": {"smartcard_required"}, "logon_hours": {"logon_hours_restricted"}},
 		deviations: []string{"OU path is shown by the dn column (T-1041)", "Permitted hours is the 168-bit logon_hours text; the mode, days, hours and time-zone parameters wait for T-2206",
-			"a user whose attribute was not read looks the same as one without it (T-2208): header caveat user_attribute_absent_or_unread"}},
+			"without-presets list only users whose sync observed the attribute as absent (read marker, T-2216); a denied attribute still looks absent until T-2220: header caveat user_attribute_absent_or_unread"}},
 	{id: "usr-08", title: "Profile settings", category: report.CategoryUsers, dataset: "inventory.users",
 		presets: map[string][]string{"photo_with": {"Photo Based Reports"}, "photo_without": nil, "script_with": {"Users With Logon Script"}, "script_without": {"Users Without Logon Script"}},
 		// Name, Logon name, Domain, OU path, Has photo, Status
 		columns:    []string{"display_name", "sam_account_name", "domain", "dn", "has_photo", "enabled"},
 		filters:    map[string][]string{"photo_with": {"has_photo"}, "photo_without": {"has_photo"}, "script_with": {"logon_script"}, "script_without": {"logon_script"}},
-		deviations: []string{"OU path is shown by the dn column (T-1041)", "a user whose attribute was not read looks the same as one without it (T-2208): header caveat user_attribute_absent_or_unread"}},
+		deviations: []string{"OU path is shown by the dn column (T-1041)", "without-presets list only users whose sync observed the attribute as absent (read marker, T-2216); a denied attribute still looks absent until T-2220: header caveat user_attribute_absent_or_unread"}},
 	{id: "usr-09", title: "Skype for Business / Lync", category: report.CategoryUsers, dataset: "inventory.users",
 		presets:    map[string][]string{"enabled": {"Skype for Business/Lync Enabled Users"}, "disabled": {"Skype for Business/Lync Disabled Users"}},
 		columns:    []string{"display_name", "sam_account_name", "domain", "dn", "skype_enabled", "enabled"},
@@ -248,7 +248,10 @@ func Test_reports_library_matches_spec(t *testing.T) {
 				if !stated {
 					t.Errorf("%s/%s: the spec row states no filter columns for this preset", row.id, pid)
 				}
-				if got := filterColumns(p.Where); !slices.Equal(got, want) {
+				// The read-state guard (T-2216, T-1112 AC2) is not a spec filter column: it only keeps a
+				// user whose attribute was never read from being listed as lacking it.
+				got := slices.DeleteFunc(filterColumns(p.Where), func(c string) bool { return strings.HasSuffix(c, "_read_state") })
+				if !slices.Equal(got, want) {
 					t.Errorf("%s/%s: the filter reads %v, the spec row says %v", row.id, pid, got, want)
 				}
 			}

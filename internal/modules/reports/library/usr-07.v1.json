@@ -56,10 +56,23 @@
             }
           },
           {
-            "cmp": {
-              "col": "dialin_allowed",
-              "op": "absent"
-            }
+            "and": [
+              {
+                "cmp": {
+                  "col": "dialin_allowed",
+                  "op": "absent"
+                }
+              },
+              {
+                "cmp": {
+                  "col": "dialin_allowed_read_state",
+                  "op": "eq",
+                  "value": {
+                    "enum": "not_observed"
+                  }
+                }
+              }
+            ]
           }
         ]
       },
@@ -68,10 +81,23 @@
           "id": "nps_controlled",
           "label": "users controlled by network policy (NPS): no dial-in value set",
           "where": {
-            "cmp": {
-              "col": "dialin_allowed",
-              "op": "absent"
-            }
+            "and": [
+              {
+                "cmp": {
+                  "col": "dialin_allowed",
+                  "op": "absent"
+                }
+              },
+              {
+                "cmp": {
+                  "col": "dialin_allowed_read_state",
+                  "op": "eq",
+                  "value": {
+                    "enum": "not_observed"
+                  }
+                }
+              }
+            ]
           }
         }
       ]

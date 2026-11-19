@@ -30,10 +30,23 @@
         "Users With Empty Attributes"
       ],
       "where": {
-        "cmp": {
-          "col": "mail",
-          "op": "absent"
-        }
+        "and": [
+          {
+            "cmp": {
+              "col": "mail",
+              "op": "absent"
+            }
+          },
+          {
+            "cmp": {
+              "col": "mail_read_state",
+              "op": "eq",
+              "value": {
+                "enum": "not_observed"
+              }
+            }
+          }
+        ]
       },
       "columns": [
         "display_name",
@@ -48,10 +61,23 @@
       "id": "empty_employee_id",
       "names": [],
       "where": {
-        "cmp": {
-          "col": "employee_id",
-          "op": "absent"
-        }
+        "and": [
+          {
+            "cmp": {
+              "col": "employee_id",
+              "op": "absent"
+            }
+          },
+          {
+            "cmp": {
+              "col": "employee_id_read_state",
+              "op": "eq",
+              "value": {
+                "enum": "not_observed"
+              }
+            }
+          }
+        ]
       },
       "columns": [
         "display_name",
@@ -66,10 +92,23 @@
       "id": "empty_department",
       "names": [],
       "where": {
-        "cmp": {
-          "col": "department",
-          "op": "absent"
-        }
+        "and": [
+          {
+            "cmp": {
+              "col": "department",
+              "op": "absent"
+            }
+          },
+          {
+            "cmp": {
+              "col": "department_read_state",
+              "op": "eq",
+              "value": {
+                "enum": "not_observed"
+              }
+            }
+          }
+        ]
       },
       "columns": [
         "display_name",
@@ -84,10 +123,23 @@
       "id": "empty_title",
       "names": [],
       "where": {
-        "cmp": {
-          "col": "title",
-          "op": "absent"
-        }
+        "and": [
+          {
+            "cmp": {
+              "col": "title",
+              "op": "absent"
+            }
+          },
+          {
+            "cmp": {
+              "col": "title_read_state",
+              "op": "eq",
+              "value": {
+                "enum": "not_observed"
+              }
+            }
+          }
+        ]
       },
       "columns": [
         "display_name",
@@ -102,10 +154,23 @@
       "id": "empty_company",
       "names": [],
       "where": {
-        "cmp": {
-          "col": "company",
-          "op": "absent"
-        }
+        "and": [
+          {
+            "cmp": {
+              "col": "company",
+              "op": "absent"
+            }
+          },
+          {
+            "cmp": {
+              "col": "company_read_state",
+              "op": "eq",
+              "value": {
+                "enum": "not_observed"
+              }
+            }
+          }
+        ]
       },
       "columns": [
         "display_name",
@@ -120,10 +185,23 @@
       "id": "empty_telephone_number",
       "names": [],
       "where": {
-        "cmp": {
-          "col": "telephone_number",
-          "op": "absent"
-        }
+        "and": [
+          {
+            "cmp": {
+              "col": "telephone_number",
+              "op": "absent"
+            }
+          },
+          {
+            "cmp": {
+              "col": "telephone_number_read_state",
+              "op": "eq",
+              "value": {
+                "enum": "not_observed"
+              }
+            }
+          }
+        ]
       },
       "columns": [
         "display_name",
@@ -138,10 +216,23 @@
       "id": "empty_mobile",
       "names": [],
       "where": {
-        "cmp": {
-          "col": "mobile",
-          "op": "absent"
-        }
+        "and": [
+          {
+            "cmp": {
+              "col": "mobile",
+              "op": "absent"
+            }
+          },
+          {
+            "cmp": {
+              "col": "mobile_read_state",
+              "op": "eq",
+              "value": {
+                "enum": "not_observed"
+              }
+            }
+          }
+        ]
       },
       "columns": [
         "display_name",
@@ -156,10 +247,23 @@
       "id": "empty_description",
       "names": [],
       "where": {
-        "cmp": {
-          "col": "description",
-          "op": "absent"
-        }
+        "and": [
+          {
+            "cmp": {
+              "col": "description",
+              "op": "absent"
+            }
+          },
+          {
+            "cmp": {
+              "col": "description_read_state",
+              "op": "eq",
+              "value": {
+                "enum": "not_observed"
+              }
+            }
+          }
+        ]
       },
       "columns": [
         "display_name",
@@ -174,10 +278,23 @@
       "id": "empty_manager",
       "names": [],
       "where": {
-        "cmp": {
-          "col": "manager",
-          "op": "absent"
-        }
+        "and": [
+          {
+            "cmp": {
+              "col": "manager",
+              "op": "absent"
+            }
+          },
+          {
+            "cmp": {
+              "col": "manager_read_state",
+              "op": "eq",
+              "value": {
+                "enum": "not_observed"
+              }
+            }
+          }
+        ]
       },
       "columns": [
         "display_name",

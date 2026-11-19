@@ -44,13 +44,35 @@
       "id": "photo_without",
       "names": [],
       "where": {
-        "cmp": {
-          "col": "has_photo",
-          "op": "eq",
-          "value": {
-            "bool": false
+        "and": [
+          {
+            "cmp": {
+              "col": "has_photo",
+              "op": "eq",
+              "value": {
+                "bool": false
+              }
+            }
+          },
+          {
+            "cmp": {
+              "col": "thumbnail_photo_read_state",
+              "op": "eq",
+              "value": {
+                "enum": "not_observed"
+              }
+            }
+          },
+          {
+            "cmp": {
+              "col": "jpeg_photo_read_state",
+              "op": "eq",
+              "value": {
+                "enum": "not_observed"
+              }
+            }
           }
-        }
+        ]
       }
     },
     {
@@ -79,10 +101,23 @@
         "Users Without Logon Script"
       ],
       "where": {
-        "cmp": {
-          "col": "logon_script",
-          "op": "absent"
-        }
+        "and": [
+          {
+            "cmp": {
+              "col": "logon_script",
+              "op": "absent"
+            }
+          },
+          {
+            "cmp": {
+              "col": "logon_script_read_state",
+              "op": "eq",
+              "value": {
+                "enum": "not_observed"
+              }
+            }
+          }
+        ]
       },
       "columns": [
         "display_name",

@@ -36,11 +36,35 @@ func Test_reports_library_batch6_user_attributes_equal_seed_truth(t *testing.T) 
 				"telephoneNumber": "1", "mobile": "2", "description": "x", "manager": "CN=B,DC=x"}},
 			{"denied", uacNormal | 0x40000, map[string]any{"msNPAllowDialin": false, "msRTCSIP-UserEnabled": false, "hasJpegPhoto": true, "logonHours": open}},
 			{"bare", uacNormal, map[string]any{}},
+			{"unsynced", uacNormal, map[string]any{}}, // no read marker: not yet resynced, so never listed as lacking an attribute (T-2216)
+		}
+		marked := []string{"mail", "employeeID", "department", "title", "company", "telephoneNumber", "mobile", "description", "manager",
+			"scriptPath", "msNPAllowDialin", "msRTCSIP-UserEnabled", "logonHours", "thumbnailPhoto", "jpegPhoto"}
+		withMarker := func(attr map[string]any) map[string]any {
+			rd := map[string]any{}
+			for _, k := range marked {
+				rd[k] = "not_observed"
+			}
+			for k := range attr {
+				switch k {
+				case "hasThumbnailPhoto":
+					rd["thumbnailPhoto"] = "observed"
+				case "hasJpegPhoto":
+					rd["jpegPhoto"] = "observed"
+				default:
+					rd[k] = "observed"
+				}
+			}
+			attr["attrRead"] = rd
+			return attr
 		}
 		var batch []inventory.Observation
 		for i, s := range seeds {
 			o := hUser{guid: hGUID(1, i+1), sam: s.sam, rid: uint32(1100 + i), uac: i64(s.uac), read: 15, pwdLastSet: hBase}.obs()
 			o.Attributes = s.attr
+			if s.sam != "unsynced" {
+				o.Attributes = withMarker(s.attr)
+			}
 			batch = append(batch, o)
 		}
 		if _, err := e.populate(t, e.adA, hBase, batch...); err != nil {
