@@ -303,10 +303,12 @@ refusal is proven on Windows only (CC-WK-59).
   not when this DC received it). Missing metadata, an undecodable entry, or a FILETIME of 0 is `Known=false`, never a
   zero time, so the caller (HeldContacts 24h rule, spec 11 Q1) applies its tenant fallback. `mail`, `mobile` and
   `otherMobile` are each read independently; `otherMobile` and the metadata attribute are in `DefaultSchema`.
-  Behaviour is proven offline and by lab tests written for Samba (`-tags lab`, not yet run); Windows DC behaviour is
-  unproven (follow-up T-2346).
+  The decode is proven offline (synthetic MS-DRSR-shaped XML; no captured value yet). **Samba 4.22 does not serve
+  `msDS-ReplAttributeMetaData` over LDAP** (only `replPropertyMetaData`), so the lab test skips there with a reason; real
+  originating-time behaviour needs a Windows DC (follow-up T-2346, which should also capture a fixture).
 - `read.SignInResolver` (`ADSource.ResolveSignInName` over `ad.Session.ResolveSignInName`) resolves an exact
-  `sAMAccountName` or UPN through the filter builder. Empty names, `*` and control characters are rejected before any
+  `sAMAccountName` or UPN through the filter builder (the two-match abort is unit-tested through a search seam; Samba
+  cannot build an ambiguous pair). Empty names, `*` and control characters are rejected before any
   search; zero or more than one match is `OBJECT_NOT_FOUND` (no ambiguity leak). The match carries `Disabled`,
   `Expired` and `MustChange`, decoded from `userAccountControl`, `accountExpires` and `pwdLastSet`; an unreadable flag
   attribute refuses the answer rather than reporting the user as fine.

@@ -14,8 +14,9 @@ import (
 )
 
 // T-2343 AC1-AC4 on Samba AD: msDS-ReplAttributeMetaData time of mail/mobile/otherMobile, and the exact
-// sign-in-name resolver. Samba serves the metadata as XML like Windows; the originating time of a
-// Windows-side write and the exact flag semantics on a Windows DC are the Windows-lab ticket's.
+// sign-in-name resolver. Samba 4.22 does NOT serve the constructed msDS-ReplAttributeMetaData over LDAP
+// (only replPropertyMetaData), so the metadata test skips with a reason when the DC lacks it; the
+// decode is proven offline and the Windows DC behaviour is T-2346's.
 //
 //	make lab-up && go test -tags lab ./internal/connector/read -run TestLabAttrChange
 func TestLabAttrChangeTimes(t *testing.T) {
@@ -31,6 +32,9 @@ func TestLabAttrChangeTimes(t *testing.T) {
 	mod.Add("otherMobile", []string{"+1 555 0101"})
 	if err := l.adm.Modify(mod); err != nil {
 		t.Fatal(err)
+	}
+	if !servesAttrMetaData(t, l, udn) {
+		t.Skip("this DC does not serve msDS-ReplAttributeMetaData over LDAP (Samba); Windows lab: T-2346")
 	}
 	g, err := guid.FromBytes(guidBytes(t, l, udn))
 	if err != nil {
@@ -73,8 +77,8 @@ func TestLabResolveSignInName(t *testing.T) {
 	s := l.stamp
 	mk("ok"+s, "ok"+s, "ok"+s+"@lab.activediq.test", "512")
 	mk("off"+s, "off"+s, "off"+s+"@lab.activediq.test", "514")
-	mk("dup"+s, "dup"+s, "dupother"+s+"@lab.activediq.test", "512")
-	mk("dupb"+s, "dupb"+s, "dup"+s, "512") // UPN equal to another user's sAMAccountName: ambiguous
+	// Ambiguity (two matches) cannot be built on Samba, which refuses a UPN prefix equal to another
+	// sAMAccountName; it is unit-tested through the search seam (TestUniqueSignIn).
 	ctx := context.Background()
 
 	u, err := l.src.ResolveSignInName(ctx, "OK"+s)
@@ -90,7 +94,7 @@ func TestLabResolveSignInName(t *testing.T) {
 	if off, err := l.src.ResolveSignInName(ctx, "off"+s); err != nil || !off.Disabled {
 		t.Errorf("disabled: %+v %v", off, err)
 	}
-	for _, bad := range []string{"ok*", "*", "nobody" + s, "dup" + s, "ok" + s + ")(objectClass=*"} {
+	for _, bad := range []string{"ok*", "*", "nobody" + s, "ok" + s + ")(objectClass=*"} {
 		if _, err := l.src.ResolveSignInName(ctx, bad); ad.CodeOf(err) != ad.CodeObjectNotFound {
 			t.Errorf("%q: err = %v, want not found", bad, err)
 		}
@@ -104,4 +108,13 @@ func guidBytes(t *testing.T, l *searchLab, dn string) []byte {
 		t.Fatalf("guid of %s: %v", dn, err)
 	}
 	return r.Entries[0].GetRawAttributeValue("objectGUID")
+}
+
+func servesAttrMetaData(t *testing.T, l *searchLab, dn string) bool {
+	t.Helper()
+	r, err := l.adm.Search(ldap.NewSearchRequest(dn, ldap.ScopeBaseObject, ldap.NeverDerefAliases, 0, 0, false, "(objectClass=*)", []string{"msDS-ReplAttributeMetaData"}, nil))
+	if err != nil || len(r.Entries) != 1 {
+		t.Fatalf("metadata probe of %s: %v", dn, err)
+	}
+	return len(r.Entries[0].GetRawAttributeValues("msDS-ReplAttributeMetaData")) > 0
 }

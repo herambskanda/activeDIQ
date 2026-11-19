@@ -47,22 +47,29 @@ func (s *Session) ResolveSignInName(ctx context.Context, name string) (SignInUse
 		return SignInUser{}, err
 	}
 	attrs := []string{"objectGUID", "sAMAccountName", "userPrincipalName", "userAccountControl", "accountExpires", "pwdLastSet"}
+	return uniqueSignIn(func(fn func(*Entry) error) error {
+		return s.Search(ctx, SearchRequest{Base: dn.GUIDRef(nc), Scope: ScopeSubtree, Filter: f, Attributes: attrs, PageSize: 2}, fn)
+	}, time.Now())
+}
+
+// uniqueSignIn runs the search and accepts exactly one match: the second match aborts the search,
+// and zero or two matches are both not-found. run is the seam the unit test fakes.
+func uniqueSignIn(run func(fn func(*Entry) error) error, now time.Time) (SignInUser, error) {
 	var found []*Entry
-	err = s.Search(ctx, SearchRequest{Base: dn.GUIDRef(nc), Scope: ScopeSubtree, Filter: f, Attributes: attrs, PageSize: 2},
-		func(e *Entry) error {
-			found = append(found, e)
-			if len(found) > 1 {
-				return errSignInDone
-			}
-			return nil
-		})
+	err := run(func(e *Entry) error {
+		found = append(found, e)
+		if len(found) > 1 {
+			return errSignInDone
+		}
+		return nil
+	})
 	if err != nil && !errors.Is(err, errSignInDone) {
 		return SignInUser{}, err
 	}
 	if len(found) != 1 {
 		return SignInUser{}, fail(CodeObjectNotFound, "", nil)
 	}
-	return signInUserFrom(found[0], time.Now())
+	return signInUserFrom(found[0], now)
 }
 
 func validSignInName(name string) bool {

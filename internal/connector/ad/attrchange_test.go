@@ -2,6 +2,7 @@ package ad
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -145,5 +146,48 @@ func TestSignInUserFrom(t *testing.T) {
 		if u.Disabled != c.disabled || u.Expired != c.expired || u.MustChange != c.mustChange {
 			t.Errorf("%s: %+v", c.name, u)
 		}
+	}
+}
+
+func TestUniqueSignIn(t *testing.T) {
+	now := time.Date(2026, 11, 19, 12, 0, 0, 0, time.UTC)
+	e := signInEntry(map[string]string{"userAccountControl": "512", "pwdLastSet": "133000000000000000"})
+	feed := func(n int) func(func(*Entry) error) error {
+		return func(fn func(*Entry) error) error {
+			for i := 0; i < n; i++ {
+				if err := fn(e); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+	}
+	if _, err := uniqueSignIn(feed(1), now); err != nil {
+		t.Errorf("one match: %v", err)
+	}
+	for _, n := range []int{0, 2, 3} {
+		if _, err := uniqueSignIn(feed(n), now); CodeOf(err) != CodeObjectNotFound {
+			t.Errorf("%d matches: err = %v, want not found", n, err)
+		}
+	}
+	boom := func(func(*Entry) error) error { return fail(CodeUnreachable, "x", nil) }
+	if _, err := uniqueSignIn(boom, now); CodeOf(err) == CodeObjectNotFound {
+		t.Error("a search failure must not look like not-found")
+	}
+}
+
+// The replxml seed fixture (synthetic, shaped from MS-DRSR; a captured Windows value is T-2346) goes
+// through the same path the live read uses.
+func TestChangeTimesFromFixtureFile(t *testing.T) {
+	b, err := os.ReadFile("replxml/testdata/valid/attr_meta.xml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := changeTimesFrom([]string{"cn", "mail"}, [][]byte{b})
+	if c := got["cn"]; !c.Known || !c.At.Equal(time.Date(2026, 5, 2, 10, 11, 12, 0, time.UTC)) {
+		t.Errorf("cn = %+v", c)
+	}
+	if got["mail"].Known {
+		t.Error("mail absent from the fixture must be unknown")
 	}
 }
