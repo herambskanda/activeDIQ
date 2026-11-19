@@ -33,6 +33,9 @@ type dirFake struct {
 	objs   map[string]client.ObjectState
 	bin    bool
 	writes []client.WriteOp
+	// children is the child count served for an OU; members holds "group/member" pairs of direct members.
+	children map[string]*client.ChildCount
+	members  map[string]bool
 }
 
 func newDir() *dirFake {
@@ -50,6 +53,19 @@ func (d *dirFake) Object(_ context.Context, _ authority.Pins, t authority.Target
 		return client.ObjectState{}, nil
 	}
 	return st, nil
+}
+
+func (d *dirFake) ObjectWithChildCount(_ context.Context, _ authority.Pins, t authority.TargetRef) (client.ObjectState, error) {
+	st, ok := d.objs[t.GUID]
+	if !ok || st.Deleted {
+		return client.ObjectState{}, nil
+	}
+	st.ChildCount = d.children[t.GUID]
+	return st, nil
+}
+
+func (d *dirFake) DirectMember(_ context.Context, _ authority.Pins, g, m authority.TargetRef) (bool, error) {
+	return d.members[g.GUID+"/"+m.GUID], nil
 }
 
 func (d *dirFake) RecycleBin(context.Context, authority.Pins, authority.NamingContextID) (bool, error) {
@@ -71,6 +87,12 @@ func (d *dirFake) Write(_ context.Context, s step.Step, op client.WriteOp) (clie
 		return ""
 	}
 	switch op.DigestKind {
+	case "ad.group.addMember", "ad.group.removeMember":
+		if d.members == nil {
+			d.members = map[string]bool{}
+		}
+		d.members[op.Target.GUID+"/"+attr("~member")] = op.DigestKind == "ad.group.addMember"
+		return client.Result{}, nil
 	case client.DigestObjectMove:
 		st.Parent = attr(client.AttrNewParent)
 	case client.DigestObjectRename:

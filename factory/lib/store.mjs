@@ -563,6 +563,53 @@ export function setControl(ctx, { paused, reason = null, by = 'cli' }) {
   return control;
 }
 
+/** Longest a merge drain may last; it always has an end so a forgotten drain cannot stall merging. */
+export const MERGE_DRAIN_MAX_MINUTES = 120;
+export const MERGE_DRAIN_DEFAULT_MINUTES = 30;
+
+/**
+ * The merge drain: while it is on, the dispatcher starts no new pre-merge gate run and makes no
+ * automatic merge, so `main` is untouched and a person can merge by hand without throwing away a
+ * gate run in flight (a gate that finishes after `main` moved is discarded). A run already in flight
+ * finishes and lands normally. The drain ends by itself at `until`. It has its own file because
+ * `setControl` rewrites `control.json` whole, so `factory pause` would otherwise erase it.
+ * @param {object} ctx
+ * @returns {{on: boolean, until: string|null, reason: string|null, by: string|null, ts: string|null, expired: boolean}}
+ */
+export function readMergeDrain(ctx) {
+  let data = null;
+  try {
+    data = readJson(path.join(ctx.stateDir, 'merge-drain.json'));
+  } catch {
+    // a corrupt drain file reads as "not draining" rather than stalling every merge
+  }
+  const until = typeof data?.until === 'string' ? data.until : null;
+  const live = Boolean(data?.on) && Number.isFinite(Date.parse(until ?? '')) && Date.parse(until) > ctx.now().getTime();
+  return {
+    on: live, until: live || data?.on ? until : null, reason: data?.reason ?? null, by: data?.by ?? null, ts: data?.ts ?? null,
+    expired: Boolean(data?.on) && !live,
+  };
+}
+
+/**
+ * Start or end the merge drain.
+ * @param {object} ctx
+ * @param {{on: boolean, minutes?: number, reason?: string|null, by?: string}} change
+ */
+export function setMergeDrain(ctx, { on, minutes = MERGE_DRAIN_DEFAULT_MINUTES, reason = null, by = 'cli' }) {
+  if (on && !(Number.isFinite(minutes) && minutes > 0 && minutes <= MERGE_DRAIN_MAX_MINUTES)) {
+    throw new FactoryError(`--minutes must be between 1 and ${MERGE_DRAIN_MAX_MINUTES}`);
+  }
+  const until = on ? new Date(ctx.now().getTime() + minutes * 60_000).toISOString() : null;
+  const drain = { on: Boolean(on), until, reason: on ? reason : null, by, ts: nowIso(ctx) };
+  writeJsonAtomic(path.join(ctx.stateDir, 'merge-drain.json'), drain);
+  appendEvent(ctx, {
+    actor: by, kind: 'dispatcher',
+    text: on ? `merge drain on until ${until}${reason ? `: ${reason}` : ''}; no new gate run or automatic merge starts, a run in flight finishes` : 'merge drain off',
+  });
+  return drain;
+}
+
 /**
  * The rate-limit signal the StopFailure hook leaves in `state/signals/rate-limit.json` when any
  * session (a worker, or the CEO's own) is stopped by an API usage limit.

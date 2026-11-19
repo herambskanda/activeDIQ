@@ -322,7 +322,11 @@ func applyGroupMemberIn(tx groupTx, pre *connectorv1.TargetPrecondition, add boo
 	if terr != nil {
 		return nil, invalid("5", "TargetRequired", "target.object")
 	}
-	change := ops.Change{Add: add, Name: "member", Values: []string{string(mdn.Render())}}
+	mval, verr := dn.DNRef(mdn).ForRequest() // the member value is a request DN: NotRequestable and MaxDNLen enforced
+	if verr != nil {
+		return nil, invalid("5", "TargetRequired", "member")
+	}
+	change := ops.Change{Add: add, Name: "member", Values: []string{mval}}
 	if err := tx.Send(func(c ad.WriteConn) error { return ops.ModifyObject(c, target, []ops.Change{change}) }); err != nil {
 		switch ad.CodeOf(err) {
 		case ad.CodeConflict:

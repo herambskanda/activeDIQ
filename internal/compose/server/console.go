@@ -43,6 +43,8 @@ type consoleStack struct {
 	Denials *deniedAudit
 	log     *slog.Logger
 	tenant  atomic.Pointer[tenant.ID]
+	// held is set by ports: the unaudited tenant-scope check GET /auth/session lists permissions with.
+	held atomic.Pointer[consoleAuthz]
 }
 
 // SetTenant tells the sign-in plane which tenant the install has; until then AN-8 answers a server fault.
@@ -57,12 +59,13 @@ func (c *consoleStack) installTenant() (id tenant.ID, ok bool) {
 
 // Tags is the sign-in plane (/auth/*): AN-8 for a local account and AN-10 with TOTP, and with WebAuthn when
 // the install has a public URL. Without one the WebAuthn routes stay 501 (the field is left a nil interface,
-// not a wrapper around a nil factor). GET /auth/csrf returns the session's CSRF value; sign-out answers 501
+// not a wrapper around a nil factor). GET /auth/csrf returns the session's CSRF value, GET /auth/session the permission names it holds; sign-out answers 501
 // until its ticket lands.
 func (c *consoleStack) Tags() apihost.TagHandlers {
 	h := authn.Handlers{
 		Password:     authnhttp.PasswordCookies{Factor: c.Local},
 		SecondFactor: authnhttp.TOTPCookies{Factor: c.Second},
+		Permissions:  heldPermissions{c},
 		Log:          c.log,
 	}
 	if c.WebAuthn != nil {
@@ -142,6 +145,8 @@ func buildConsole(db *store.DB, sink audit.Sink, ks authn.KeySource, log *slog.L
 // ports are the API ports with the real authentication, RBAC and step-up behind the given limiter.
 func (c *consoleStack) ports(lim apihost.Limiter, az operation.Authorizer, cat apihost.Permissions) apihost.Ports {
 	var authz apihost.Authorizer = consoleAuthz{az, cat}
+	held := consoleAuthz{az, cat}
+	c.held.Store(&held) // the listing asks the plain check: a permission the session lacks is not a denial to audit
 	if d := c.Denials; d != nil {
 		authz = auditedAuthz{next: authz, db: d.DB, sink: d.Sink, now: time.Now, log: slog.Default()}
 	}
@@ -177,4 +182,27 @@ func (a consoleAuthz) Allow(ctx context.Context, p apihost.Principal, permission
 	default:
 		return false, err // an infrastructure fault: the chain refuses
 	}
+}
+
+// heldPermissions implements authn.PermissionLister over the catalogue: for each permission it asks the
+// same check chain step 12 asks. It reads the authorizer that ports installed; asked before that, it fails
+// closed with an error (a server always builds ports before it serves).
+type heldPermissions struct{ c *consoleStack }
+
+func (h heldPermissions) HeldPermissions(ctx context.Context, p apihost.Principal) ([]string, error) {
+	a := h.c.held.Load()
+	if a == nil {
+		return nil, errors.New("server: session permissions asked before the API ports exist")
+	}
+	var out []string
+	for _, name := range a.cat {
+		ok, err := a.Allow(ctx, p, name, "tenant")
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			out = append(out, name)
+		}
+	}
+	return out, nil
 }

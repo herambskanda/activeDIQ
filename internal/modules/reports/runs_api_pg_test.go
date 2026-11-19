@@ -205,8 +205,8 @@ func apiSetup(t *testing.T, s *storetest.Server) *apiEnv {
 		t.Fatal(err)
 	}
 	var rec apitest.Recorder
-	perms := apihost.Permissions{"reports.deliver.external", "reports.export", "reports.run", "reports.schedule", "reports.schedule.manage_all",
-		"directory.read", "connections.read", "connections.takeover.attest", "siem.destination.manage", "siem.destination.read"}
+	perms := apihost.Permissions{"reports.deliver.external", "reports.export", "reports.run", "reports.schedule", "reports.schedule.manage_all", "reports.replication.read", "reports.replication.configure",
+		"directory.read", "connections.read", "connections.takeover.attest", "siem.destination.manage", "siem.destination.read", "helpdesk.caller.verify"}
 	e.srv, err = apihost.Build(doc, apitest.Conform(&rec, h.Bind()), pol, perms, apihost.Ports{Authn: e.door, Authz: e.door, Limits: e.door, StepUp: e.door})
 	if err != nil {
 		t.Fatal(err)

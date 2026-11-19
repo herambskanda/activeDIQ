@@ -17,6 +17,7 @@ import (
 	"github.com/skenzeriq/activediq/internal/platform/authz"
 	"github.com/skenzeriq/activediq/internal/platform/blob"
 	"github.com/skenzeriq/activediq/internal/platform/module"
+	"github.com/skenzeriq/activediq/internal/platform/module/jobcontrib"
 	"github.com/skenzeriq/activediq/internal/platform/operation"
 	"github.com/skenzeriq/activediq/internal/platform/rbac"
 	"github.com/skenzeriq/activediq/internal/platform/report"
@@ -59,6 +60,9 @@ func (m *Module) build() (*wiring, error) {
 	cat := &lateLibrary{}
 	svc := &run.Service{DB: d.DB, Jobs: d.Jobs, Scopes: d.ReadScopes, Audit: d.Audit, Catalog: cat, Codec: Codec{},
 		Fresh: inventoryFreshness{r: m.dir.Inventory}}
+	if pd := m.dir.PerDC; pd != nil { // a nil pointer in an interface would defeat the run's nil check
+		svc.PerDC, svc.PerDCDCs = pd, pd
+	}
 	exports := &export.Service{DB: d.DB, Jobs: d.Jobs, Runs: svc, Audit: d.Audit, Authz: authorizer{az: d.Authz}}
 	if d.BlobDir != "" {
 		bs, err := blob.NewFS(d.BlobDir)
@@ -78,7 +82,7 @@ func (w *wiring) register(r *module.Registrar, m *Module) error {
 	if err := r.API(api.Bind(w.handlers)); err != nil {
 		return err
 	}
-	for _, j := range []module.Job{
+	for _, j := range []jobcontrib.Job{
 		{Kind: w.runs.Kind()},
 		{Kind: w.runs.RetentionKind(), Seed: func(ctx context.Context, tx store.Tx, tid tenant.ID) error {
 			return w.runs.ScheduleRetention(ctx, tx, tid)
