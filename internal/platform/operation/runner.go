@@ -272,7 +272,7 @@ func (u *run) failed(reason string, err error) error {
 
 func (u *run) exec(ctx context.Context) (Result, error) {
 	r := u.r
-	if u.d.StepUp && !u.req.FreshStepUp && (!u.persist || canStepUp(u.req.Actor)) {
+	if !u.req.FreshStepUp && (!u.persist || canStepUp(u.req.Actor)) && u.d.NeedsStepUp(u.req.Input) {
 		return Result{}, u.denied("step_up_required", ErrStepUpRequired)
 	}
 	steps, err := u.planSteps(ctx)
