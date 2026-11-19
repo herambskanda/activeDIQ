@@ -19,7 +19,7 @@ import (
 	"github.com/skenzeriq/activediq/internal/platform/operation"
 )
 
-const wantOperations = 36 // 21 on main (T-0866, T-0891) + 6 preview twins + the undo pair (T-0892, ADR-0004 rule 14) + listReportRunPolicyTargets (T-1718) + the manager picker, the SYS-03 thresholds (read, update, preview) and their undo pair (T-1720)
+const wantOperations = 37 // 21 on main (T-0866, T-0891) + 6 preview twins + the undo pair (T-0892, ADR-0004 rule 14) + listReportRunPolicyTargets (T-1718) + getLatestReportRun (T-2083) + the manager picker, the SYS-03 thresholds (read, update, preview) and their undo pair (T-1720)
 
 // fivePermissions are the five permissions of spec 8.5 and, since T-1720, the two of SYS-03 (reports-2 second slice 13).
 var fivePermissions = map[string]bool{

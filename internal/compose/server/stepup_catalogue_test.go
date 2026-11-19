@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"testing"
 
@@ -19,7 +20,7 @@ import (
 // table joins here in the change that adds it, with the row it implements. Rows with no operation yet
 // (LAPS/BitLocker reveal, RBAC changes, API token and enrollment-token creation, directory credential
 // and connection changes, IdP configuration, audit export and retention, break-glass use, authority
-// factor approval) are not listed, and each of those tickets adds its row and sets Descriptor.StepUp.
+// factor approval) are not listed, and each of those tickets adds its row and sets Descriptor.StepUp (or StepUpWhen when the row applies only to some inputs).
 var stepUpTable = map[operation.ActionID]string{
 	"connections.tier0_override.acknowledge": "The Tier-0 override acknowledgement (TM-D1)",
 	"connections.hybrid_link.confirm":        "HybridLink confirmation (connections.hybrid_link.confirm)",
@@ -62,28 +63,59 @@ func catalogue(t *testing.T) []operation.Descriptor {
 	return reg.Catalogue()
 }
 
-// Every table operation that exists carries the flag, and no operation carries it unlisted, so the
+// Every table operation that exists carries the flag (static StepUp, or the input-conditional
+// StepUpWhen of TM-D30), and no operation carries it unlisted, so the
 // table and the catalogue cannot drift in either direction.
 func Test_stepup_flag_catalogue_matches_table(t *testing.T) {
-	cat := catalogue(t)
+	for _, v := range stepUpViolations(catalogue(t), stepUpTable) {
+		t.Error(v)
+	}
+}
+
+// stepUpViolations compares a catalogue with a §7.4 table in both directions.
+func stepUpViolations(cat []operation.Descriptor, table map[operation.ActionID]string) []string {
+	var bad []string
 	byID := map[operation.ActionID]operation.Descriptor{}
 	for _, d := range cat {
 		byID[d.ID] = d
 	}
-	for id, why := range stepUpTable {
+	for id, why := range table {
 		d, ok := byID[id]
-		if !ok {
-			t.Errorf("table operation %s (%s) is not in the catalogue: remove it from the table or register it", id, why)
-			continue
-		}
-		if !d.StepUp {
-			t.Errorf("%s (%s) is in the §7.4 table but its Descriptor lacks StepUp", id, why)
+		switch {
+		case !ok:
+			bad = append(bad, fmt.Sprintf("table operation %s (%s) is not in the catalogue: remove it from the table or register it", id, why))
+		case !d.StepUp && d.StepUpWhen == nil:
+			bad = append(bad, fmt.Sprintf("%s (%s) is in the §7.4 table but its Descriptor has neither StepUp nor StepUpWhen", id, why))
 		}
 	}
 	for _, d := range cat {
-		if _, listed := stepUpTable[d.ID]; d.StepUp && !listed {
-			t.Errorf("%s carries StepUp but is not in stepUpTable: add its §7.4 row", d.ID)
+		if _, listed := table[d.ID]; (d.StepUp || d.StepUpWhen != nil) && !listed {
+			bad = append(bad, fmt.Sprintf("%s carries StepUp or StepUpWhen but is not in stepUpTable: add its §7.4 row", d.ID))
 		}
+		if d.StepUp && d.StepUpWhen != nil {
+			bad = append(bad, fmt.Sprintf("%s carries both StepUp and StepUpWhen; they are mutually exclusive (TM-D30)", d.ID))
+		}
+	}
+	return bad
+}
+
+// The check bites on the predicate in both directions (TM-D30).
+func Test_stepup_check_covers_predicate_descriptors(t *testing.T) {
+	pred := func(operation.Input) (bool, error) { return true, nil }
+	cond := operation.Descriptor{ID: "x.sched.create", StepUpWhen: pred}
+	plain := operation.Descriptor{ID: "x.sched.delete"}
+	if bad := stepUpViolations([]operation.Descriptor{cond}, map[operation.ActionID]string{}); len(bad) != 1 {
+		t.Errorf("predicate without a row: %v", bad)
+	}
+	if bad := stepUpViolations([]operation.Descriptor{plain}, map[operation.ActionID]string{plain.ID: "row"}); len(bad) != 1 {
+		t.Errorf("row without a flag or predicate: %v", bad)
+	}
+	if bad := stepUpViolations([]operation.Descriptor{cond}, map[operation.ActionID]string{cond.ID: "row"}); len(bad) != 0 {
+		t.Errorf("predicate with its row: %v", bad)
+	}
+	both := operation.Descriptor{ID: "x.sched.update", StepUp: true, StepUpWhen: pred}
+	if bad := stepUpViolations([]operation.Descriptor{both}, map[operation.ActionID]string{both.ID: "row"}); len(bad) != 1 {
+		t.Errorf("both: %v", bad)
 	}
 }
 

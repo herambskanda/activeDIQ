@@ -411,6 +411,96 @@ func (o DownloadReportExport200) ResponseBody() any                { return o.Bo
 func (DownloadReportExport200) ResponseHeaders() map[string]string { return nil }
 func (DownloadReportExport200) isDownloadReportExportOutput()      {}
 
+// GetLatestReportRunInput is the decoded input of getLatestReportRun: path, query and header parameters, then the body.
+type GetLatestReportRunInput struct {
+	DefinitionID string  // query "definitionId"
+	PresetID     *string // query "presetId"
+	Rows         *int64  // query "rows"
+}
+
+func (in *GetLatestReportRunInput) BindRequest(r *apihost.Request, errs *apitypes.Errors) {
+	_ = r
+	{
+		vs := r.Query["definitionId"]
+		switch {
+		case len(vs) > 1:
+			errs.Add(apitypes.InQuery, jsontext.Pointer("definitionId"), apitypes.CodeType, "parameter must not repeat")
+		case len(vs) == 1 && vs[0] != "":
+			s := vs[0]
+			in.DefinitionID = string(s)
+		default:
+			errs.Add(apitypes.InQuery, jsontext.Pointer("definitionId"), apitypes.CodeRequired, "required parameter is missing")
+		}
+	}
+	{
+		vs := r.Query["presetId"]
+		switch {
+		case len(vs) > 1:
+			errs.Add(apitypes.InQuery, jsontext.Pointer("presetId"), apitypes.CodeType, "parameter must not repeat")
+		case len(vs) == 1 && vs[0] != "":
+			s := vs[0]
+			var e string
+			e = string(s)
+			in.PresetID = &e
+		}
+	}
+	{
+		vs := r.Query["rows"]
+		switch {
+		case len(vs) > 1:
+			errs.Add(apitypes.InQuery, jsontext.Pointer("rows"), apitypes.CodeType, "parameter must not repeat")
+		case len(vs) == 1 && vs[0] != "":
+			s := vs[0]
+			var e int64
+			if x, err := apitypes.ParseInt(s); err != nil {
+				errs.Add(apitypes.InQuery, jsontext.Pointer("rows"), apitypes.CodeType, "expected a valid value")
+			} else {
+				e = int64(x)
+			}
+			in.Rows = &e
+		}
+	}
+}
+
+func (in *GetLatestReportRunInput) BodyTarget() any { return nil }
+
+func (in *GetLatestReportRunInput) Validate(errs *apitypes.Errors) {
+	_ = errs
+	{
+		apitypes.CheckLen(errs, apitypes.InQuery, jsontext.Pointer("definitionId"), string(in.DefinitionID), 2, 64)
+		if !pattern6.MatchString(string(in.DefinitionID)) {
+			errs.Add(apitypes.InQuery, jsontext.Pointer("definitionId"), apitypes.CodePattern, "value does not match the required pattern")
+		}
+	}
+	if in.PresetID != nil {
+		apitypes.CheckLen(errs, apitypes.InQuery, jsontext.Pointer("presetId"), string((*in.PresetID)), 1, 64)
+		if !pattern10.MatchString(string((*in.PresetID))) {
+			errs.Add(apitypes.InQuery, jsontext.Pointer("presetId"), apitypes.CodePattern, "value does not match the required pattern")
+		}
+	}
+	if in.Rows != nil {
+		apitypes.CheckInt(errs, apitypes.InQuery, jsontext.Pointer("rows"), int64((*in.Rows)), 0, 10)
+	}
+}
+
+func (in *GetLatestReportRunInput) DestroySecrets() {}
+
+// GetLatestReportRunOutput is one of the responses getLatestReportRun declares. Errors are returned as the error value.
+type GetLatestReportRunOutput interface {
+	apihost.Response
+	isGetLatestReportRunOutput()
+}
+
+// GetLatestReportRun200 is the 200 response.
+type GetLatestReportRun200 struct {
+	Body ReportLatestRun
+}
+
+func (GetLatestReportRun200) StatusCode() int                    { return 200 }
+func (o GetLatestReportRun200) ResponseBody() any                { return o.Body }
+func (GetLatestReportRun200) ResponseHeaders() map[string]string { return nil }
+func (GetLatestReportRun200) isGetLatestReportRunOutput()        {}
+
 // GetReportDefinitionInput is the decoded input of getReportDefinition: path, query and header parameters, then the body.
 type GetReportDefinitionInput struct {
 	DefinitionID string // path "definitionId"
@@ -745,7 +835,7 @@ func (in *ListReportDefinitionsInput) Validate(errs *apitypes.Errors) {
 	_ = errs
 	if in.Q != nil {
 		apitypes.CheckLen(errs, apitypes.InQuery, jsontext.Pointer("q"), string((*in.Q)), 1, 256)
-		if !pattern10.MatchString(string((*in.Q))) {
+		if !pattern11.MatchString(string((*in.Q))) {
 			errs.Add(apitypes.InQuery, jsontext.Pointer("q"), apitypes.CodePattern, "value does not match the required pattern")
 		}
 	}
@@ -2464,6 +2554,7 @@ type Handlers interface {
 	DeleteReportExport(ctx context.Context, in DeleteReportExportInput) (DeleteReportExportOutput, error)
 	DeleteReportSchedule(ctx context.Context, in DeleteReportScheduleInput) (DeleteReportScheduleOutput, error)
 	DownloadReportExport(ctx context.Context, in DownloadReportExportInput) (DownloadReportExportOutput, error)
+	GetLatestReportRun(ctx context.Context, in GetLatestReportRunInput) (GetLatestReportRunOutput, error)
 	GetReportDefinition(ctx context.Context, in GetReportDefinitionInput) (GetReportDefinitionOutput, error)
 	GetReportExport(ctx context.Context, in GetReportExportInput) (GetReportExportOutput, error)
 	GetReportReplicationThresholds(ctx context.Context, in GetReportReplicationThresholdsInput) (GetReportReplicationThresholdsOutput, error)
@@ -2609,6 +2700,22 @@ func Bind(h Handlers) apihost.TagHandlers {
 				}
 				if out == nil {
 					return nil, fmt.Errorf("DownloadReportExport returned no output and no error")
+				}
+				return out, nil
+			}),
+		apihost.NewRoute(apihost.RouteMeta{
+			OperationID: "getLatestReportRun", Tag: "reports", Method: "GET", Path: "/reports/runs/latest",
+			Permission: "reports.run", Anonymous: "", Scope: "tenant", Stability: "preview", Deprecated: false, Sunset: "",
+			Class: "read", MaxBody: 0, Body: apihost.BodyNone, MediaType: "", Secret: false,
+		},
+			func() apihost.Input { return new(GetLatestReportRunInput) },
+			func(ctx context.Context, in apihost.Input) (apihost.Response, error) {
+				out, err := h.GetLatestReportRun(ctx, *in.(*GetLatestReportRunInput))
+				if err != nil {
+					return nil, err
+				}
+				if out == nil {
+					return nil, fmt.Errorf("GetLatestReportRun returned no output and no error")
 				}
 				return out, nil
 			}),
@@ -3087,5 +3194,6 @@ func Bind(h Handlers) apihost.TagHandlers {
 }
 
 var (
-	pattern10 = regexp.MustCompile("^[^()*\\\\&|=!<>~\\x00-\\x1f\\x7f]+$")
+	pattern10 = regexp.MustCompile("^[a-z][a-z0-9_-]{0,63}$")
+	pattern11 = regexp.MustCompile("^[^()*\\\\&|=!<>~\\x00-\\x1f\\x7f]+$")
 )

@@ -785,6 +785,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/reports/runs/latest": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get the caller's latest run of a report, for a Home widget
+         * @description Answers the one thing a Home widget needs (specs/home-report-widgets.md 3.2): the caller's own latest succeeded run of definitionId and presetId, or why there is none. It never creates a run. The runner is the caller, taken from the principal; no parameter names another account, so a schedule owned by someone else that delivers to the caller never makes a candidate and the caller sees never_run until they run it themselves. The latest succeeded run is preferred over a newer failed one; a newer queued or running run is reported as inFlight and the state is running. state is one of current, stale_data (current and the freshness state is stale: asOf and freshness.stale name the connections), scope_changed (the caller's read scope differs from the one the run was trimmed with: no rows and no count), expired (past expiresAt: no rows), running, failed (no earlier run is current; failure is on the run header), never_run, unavailable (the definition or preset is not in the library). With rows=10 and a current run, table holds the first 10 rows of the definition's widget-profile columns (at most 5), read through the run-read gate (run.ReadAccess, 6.6 checks 1 to 5); there is no second gate. rows is 0 or 10, anything else is a 400; rows=10 on a definition whose widget profile has no table view is a 400. The response never carries the digest, the parameters or the scope text; getReportRun answers those. asOf is the freshness watermark of the run and is the age to show; it is never called live.
+         */
+        get: operations["getLatestReportRun"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/reports/schedules": {
         parameters: {
             query?: never;
@@ -1808,6 +1828,7 @@ export interface components {
             presets: components["schemas"]["ReportPreset"][];
             subjectKind: string;
             version: number;
+            widget?: components["schemas"]["ReportWidgetProfile"];
         };
         /** @description A page of the library. */
         ReportDefinitionList: {
@@ -2024,6 +2045,33 @@ export interface components {
          * @enum {string}
          */
         ReportLastRunOutcome: "sent" | "nothing_to_send" | "partly_failed" | "failed" | (string & {});
+        /** @description The caller's latest run of one report for a widget. runId, asOf, rowCount, finishedAt and expiresAt describe the run the state names and are null for never_run and unavailable. rowCount is null when state is scope_changed, expired, failed or running without a current result. table is present only when rows=10 was asked and the state serves rows. inFlight is a newer queued or running run. failure is the reason of a failed run. */
+        ReportLatestRun: {
+            /** Format: date-time */
+            asOf: string | null;
+            /** Format: date-time */
+            expiresAt: string | null;
+            failure?: components["schemas"]["ReportFailure"];
+            /** Format: date-time */
+            finishedAt: string | null;
+            freshness?: components["schemas"]["ReportFreshness"];
+            inFlight?: components["schemas"]["ReportRunSummary"];
+            rowCount: number | null;
+            /** Format: uuid */
+            runId: string | null;
+            state: components["schemas"]["ReportLatestState"];
+            table?: components["schemas"]["ReportLatestTable"];
+        };
+        /**
+         * @description What a Home widget renders for the caller's latest run (specs/home-report-widgets.md 3.3).
+         * @enum {string}
+         */
+        ReportLatestState: "current" | "stale_data" | "scope_changed" | "expired" | "running" | "failed" | "never_run" | "unavailable" | (string & {});
+        /** @description The first rows of a current run in the columns of the definition's widget profile, in the profile's order. */
+        ReportLatestTable: {
+            columns: components["schemas"]["ReportColumnInfo"][];
+            rows: components["schemas"]["ReportRow"][];
+        };
         /**
          * @description The lingering-object risk indicator of SYS-03 (7.3.4). at_risk: a partner's last success is older than the forest's tombstone lifetime. no_indication: it is not. not_reported: the last success or the tombstone lifetime is not known. This is an indicator, never a detection: no label, text or value says that lingering objects were detected.
          * @enum {string}
@@ -2679,6 +2727,13 @@ export interface components {
             /** Format: date-time */
             value: string;
         };
+        /** @description The views a Home widget may render for the report (specs/home-report-widgets.md 3.1). count is always allowed and is listed. tableColumns are the at most 5 columns of the table view, in order, and are empty unless views holds table. trend plots the run's row count only. A definition without this member supports the count view only. */
+        ReportWidgetProfile: {
+            tableColumns: string[];
+            views: components["schemas"]["ReportWidgetView"][];
+        };
+        /** @enum {string} */
+        ReportWidgetView: "count" | "table" | "trend" | (string & {});
         /** @description Input of delegation.role.create. The caller chooses roleId, so a retry is the same role. A role is never deleted; empty it with delegation.role.update. */
         RoleCreate: {
             name: string;
@@ -4886,6 +4941,38 @@ export interface operations {
             404: components["responses"]["NotFound"];
             409: components["responses"]["Conflict"];
             410: components["responses"]["ReportResultExpired"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    getLatestReportRun: {
+        parameters: {
+            query: {
+                /** @description The report definition. */
+                definitionId: string;
+                /** @description The preset; absent means the definition's default preset. */
+                presetId?: string;
+                /** @description 0 (the default) answers the header only; 10 adds the first 10 rows of the widget table. */
+                rows?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The latest run state for the widget */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReportLatestRun"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
             429: components["responses"]["RateLimited"];
             500: components["responses"]["Internal"];
         };

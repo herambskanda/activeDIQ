@@ -289,6 +289,8 @@ export interface View {
   readonly showServiceAccounts: boolean;
   readonly sort: string | null;
   readonly order: SortOrder;
+  /** The objectGUIDs of the groups or users a subject report is about (GRP-02, GRP-03). */
+  readonly subjects: readonly string[];
 }
 
 export const EMPTY_VIEW: View = {
@@ -299,9 +301,20 @@ export const EMPTY_VIEW: View = {
   showServiceAccounts: false,
   sort: null,
   order: "asc",
+  subjects: [],
 };
 
 export const PERIOD_DAYS: readonly number[] = [7, 30, 90, 180, 365];
+
+/** The most subjects one run takes (the API accepts 1..100). */
+export const MAX_SUBJECTS = 100;
+const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * The API asks for the connection beside each GUID but resolves a subject by its objectGUID alone, and
+ * the directory search does not return a connection. Until it does, this placeholder fills the field.
+ */
+const NO_CONNECTION = "00000000-0000-0000-0000-000000000000";
 
 export function parseView(search: URLSearchParams): View {
   const days = Number(search.get("days"));
@@ -326,6 +339,7 @@ export function parseView(search: URLSearchParams): View {
     showServiceAccounts: search.get("svc") === "1",
     sort: sort || null,
     order: search.get("order") === "desc" ? "desc" : "asc",
+    subjects: [...new Set(search.getAll("s").filter((g) => GUID.test(g)))].slice(0, MAX_SUBJECTS),
   };
 }
 
@@ -335,6 +349,7 @@ export function viewToSearch(v: View): string {
   if (v.days !== null) p.set("days", String(v.days));
   if (v.columns) p.set("cols", v.columns.join(","));
   for (const f of v.filters) p.append("f", `${f.column}:${f.operator}:${f.value}`);
+  for (const g of v.subjects) p.append("s", g);
   if (v.showServiceAccounts) p.set("svc", "1");
   if (v.sort) {
     p.set("sort", v.sort);
@@ -361,6 +376,9 @@ export function buildRunBody(
 ) {
   const parameters: RunParameters = {};
   if (view.days !== null) parameters.period = { kind: "last_days", days: view.days };
+  if (view.subjects.length > 0) {
+    parameters.subjects = view.subjects.map((guid) => ({ connectionId: NO_CONNECTION, guid }));
+  }
   if (view.columns) parameters.columns = view.columns as NonNullable<RunParameters["columns"]>;
   if (view.filters.length > 0 || view.showServiceAccounts) {
     const base = preset?.filters ?? [];
