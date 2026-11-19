@@ -411,6 +411,57 @@ paths:
           $ref: shared/problems.yaml#/components/responses/RateLimited
         "500":
           $ref: shared/problems.yaml#/components/responses/Internal
+  /reports/runs/{runId}/rows/{rowKey}/detail:
+    get:
+      tags: [reports]
+      operationId: getReportRunRowDetail
+      summary: Read the detail of one change-history row of a run
+      description: >-
+        The docked detail of one row of a change-history run (USR-06, GRP-05, CMP-03, CTC-02, OU-02: spec reports-2-second-slice 4.1, design 2). The rows read carries no per-row detail; this read does,
+        for the row whose rowKey (the object GUID) is given. The body is exactly one of five kinds, chosen by kind: edited, membership, credential, permissions, removed (the Deleted presets). Every kind carries
+        when, object and actor; the fields beyond those are the kind's own and no kind carries a field of another. A value the history does not hold (no originating time because the change was only observed, a
+        replication version that was not recorded, a restore status the connection account cannot read) is a typed unknown, never an empty string, 0 or a guess (FR-09). Names only: no kind carries an old or new
+        value, a password or a security descriptor (spec rule 3). actor is notRecorded for a native change (spec rule 6, DM-18.I3) and activediq, with the principal and the operation, only for a change made through activeDIQ.
+        Scope: the object is shown only when its recorded ancestry is in the caller's read scope, otherwise 404 (the existence of an object outside scope is not disclosed). For a membership row the member names are
+        paged and trimmed to the caller's scope: membership.names is one page of the side chosen by side (added by default), and addedCount, removedCount, addedOutOfScope and removedOutOfScope are totals over the whole
+        change, never over the page; members outside scope are counted, never named. The cursor is bound to this run, row and side. The run-read gate is that of listReportRunRows, in the same order: runner equals
+        the caller, otherwise 404; not expired, otherwise 410 report-result-expired; scope fingerprint unchanged, otherwise 409 with errors[].code scope_changed_rerun; succeeded, otherwise 409 with errors[].code
+        run_not_ready or run_failed. A rowKey that is not a row of the run, or whose run is not a change-history report, is a 404. The result is stored and frozen with the run (ADR-0010 rule 3). Read-only; the
+        detail offers no restore (restore is 2b, ADM-098).
+      x-permission: reports.run
+      x-activediq-stability: preview
+      x-activediq-limits:
+        class: read
+      x-activediq-parity: [ADM-092]
+      parameters:
+        - $ref: modules/reports.yaml#/components/parameters/RunId
+        - $ref: modules/reports.yaml#/components/parameters/RowKey
+        - $ref: modules/reports.yaml#/components/parameters/MembershipSide
+        - $ref: shared/paging.yaml#/components/parameters/PageCursor
+        - $ref: shared/paging.yaml#/components/parameters/PageLimit
+      responses:
+        "200":
+          description: The detail of the row
+          content:
+            application/json:
+              schema:
+                $ref: modules/reports.yaml#/components/schemas/ReportRowDetail
+        "400":
+          $ref: shared/problems.yaml#/components/responses/Validation
+        "401":
+          $ref: shared/problems.yaml#/components/responses/Unauthenticated
+        "403":
+          $ref: shared/problems.yaml#/components/responses/Forbidden
+        "404":
+          $ref: shared/problems.yaml#/components/responses/NotFound
+        "409":
+          $ref: shared/problems.yaml#/components/responses/Conflict
+        "410":
+          $ref: shared/problems.yaml#/components/responses/ReportResultExpired
+        "429":
+          $ref: shared/problems.yaml#/components/responses/RateLimited
+        "500":
+          $ref: shared/problems.yaml#/components/responses/Internal
   /reports/runs/{runId}/policies/{policyId}/targets:
     get:
       tags: [reports]
@@ -1597,6 +1648,21 @@ components:
       schema:
         type: string
         format: uuid
+    RowKey:
+      name: rowKey
+      in: path
+      required: true
+      description: The rowKey of a row of the run; for a change-history run, the object's GUID.
+      schema:
+        type: string
+        format: uuid
+    MembershipSide:
+      name: side
+      in: query
+      required: false
+      description: Which side of a membership change the names are paged from. Absent is added. Ignored for a row that is not a membership change.
+      schema:
+        $ref: modules/reports.yaml#/components/schemas/ReportMembershipSide
     ExportId:
       name: exportId
       in: path
@@ -2222,7 +2288,7 @@ components:
         columns:
           type: array
           minItems: 1
-          maxItems: 64
+          maxItems: 96
           description: The columns shown and exported, in order. Replaces the preset's columns when present.
           items:
             $ref: modules/reports.yaml#/components/schemas/ReportColumnId
@@ -2670,7 +2736,7 @@ components:
           maximum: 3660
         columns:
           type: array
-          maxItems: 64
+          maxItems: 96
           items:
             type: string
             maxLength: 64
@@ -2747,7 +2813,7 @@ components:
             $ref: modules/reports.yaml#/components/schemas/ReportPreset
         columns:
           type: array
-          maxItems: 64
+          maxItems: 96
           items:
             $ref: modules/reports.yaml#/components/schemas/ReportColumnInfo
         exportFormats:
@@ -2832,7 +2898,7 @@ components:
             $ref: modules/reports.yaml#/components/schemas/ReportFilterView
         columns:
           type: array
-          maxItems: 64
+          maxItems: 96
           items:
             type: string
             maxLength: 64
@@ -3257,7 +3323,7 @@ components:
           minLength: 1
         cells:
           type: array
-          maxItems: 64
+          maxItems: 96
           items:
             $ref: modules/reports.yaml#/components/schemas/ReportCell
     ReportLatestState:
@@ -3327,7 +3393,7 @@ components:
           format: uuid
         columns:
           type: array
-          maxItems: 64
+          maxItems: 96
           items:
             $ref: modules/reports.yaml#/components/schemas/ReportColumnInfo
         rows:
@@ -3467,6 +3533,347 @@ components:
       type: string
       x-activediq-enum: open
       enum: [permission_denied, container_absent, not_read]
+    ReportDetailTime:
+      description: An instant the history holds, or unknown when it does not.
+      oneOf:
+        - $ref: modules/reports.yaml#/components/schemas/ReportValueTime
+        - $ref: modules/reports.yaml#/components/schemas/ReportCellUnknown
+      discriminator:
+        propertyName: kind
+        mapping:
+          time: "#/components/schemas/ReportValueTime"
+          unknown: "#/components/schemas/ReportCellUnknown"
+    ReportDetailInteger:
+      description: A whole number as a decimal string, or unknown when the history does not hold it.
+      oneOf:
+        - $ref: modules/reports.yaml#/components/schemas/ReportCellInteger
+        - $ref: modules/reports.yaml#/components/schemas/ReportCellUnknown
+      discriminator:
+        propertyName: kind
+        mapping:
+          integer: "#/components/schemas/ReportCellInteger"
+          unknown: "#/components/schemas/ReportCellUnknown"
+    ReportDetailText:
+      description: Text, absent when the object has none, or unknown when it was not read.
+      oneOf:
+        - $ref: modules/reports.yaml#/components/schemas/ReportCellText
+        - $ref: modules/reports.yaml#/components/schemas/ReportCellAbsent
+        - $ref: modules/reports.yaml#/components/schemas/ReportCellUnknown
+      discriminator:
+        propertyName: kind
+        mapping:
+          text: "#/components/schemas/ReportCellText"
+          absent: "#/components/schemas/ReportCellAbsent"
+          unknown: "#/components/schemas/ReportCellUnknown"
+    ReportDetailBasisValue:
+      description: >-
+        Where a time comes from. origin: the DC time of the change, from replication metadata (independent of the DC). observed: the time activeDIQ observed it. last_seen: the object as last observed before it left the feed.
+      type: string
+      x-activediq-enum: open
+      enum: [origin, observed, last_seen]
+    ReportDetailWhen:
+      description: >-
+        When the change happened. changedAt is the originating time where the history holds one, else the observed time, and basis says which. observedAt is always the observation time. gapMinutes is the minutes between
+        the previous observation and this one, unknown when there is no previous observation. observationBased is always true: several changes between two observations show as one.
+      type: object
+      required: [changedAt, basis, observedAt, gapMinutes, observationBased]
+      additionalProperties: false
+      properties:
+        changedAt:
+          $ref: modules/reports.yaml#/components/schemas/ReportDetailTime
+        basis:
+          $ref: modules/reports.yaml#/components/schemas/ReportDetailBasisValue
+        observedAt:
+          $ref: modules/reports.yaml#/components/schemas/ReportDetailTime
+        gapMinutes:
+          $ref: modules/reports.yaml#/components/schemas/ReportDetailInteger
+        observationBased:
+          type: boolean
+    ReportDetailObject:
+      description: >-
+        The object the change is on. dn is the full distinguished name, an attribute of the object and never a key; the client addresses the object by objectGuid. For a removed row every field is as last seen by activeDIQ.
+        logonName is absent for a kind without one (a group or OU).
+      type: object
+      required: [objectGuid, name, logonName, domain, ouPath, dn]
+      additionalProperties: false
+      properties:
+        objectGuid:
+          type: string
+          format: uuid
+        name:
+          type: string
+          maxLength: 1024
+        logonName:
+          $ref: modules/reports.yaml#/components/schemas/ReportDetailText
+        domain:
+          type: string
+          maxLength: 255
+        ouPath:
+          $ref: modules/reports.yaml#/components/schemas/ReportDetailText
+        dn:
+          $ref: modules/reports.yaml#/components/schemas/ReportDetailText
+    ReportDetailActor:
+      description: >-
+        Who made the change. notRecorded: the directory does not hold it (spec rule 6). activediq: the change was made through activeDIQ, so the principal and the operation are known; operation is the handle of the operation.
+      oneOf:
+        - $ref: modules/reports.yaml#/components/schemas/ReportDetailActorNotRecorded
+        - $ref: modules/reports.yaml#/components/schemas/ReportDetailActorActiveDiq
+      discriminator:
+        propertyName: kind
+        mapping:
+          notRecorded: "#/components/schemas/ReportDetailActorNotRecorded"
+          activediq: "#/components/schemas/ReportDetailActorActiveDiq"
+    ReportDetailActorNotRecorded:
+      type: object
+      required: [kind]
+      additionalProperties: false
+      properties:
+        kind:
+          type: string
+          const: notRecorded
+    ReportDetailActorActiveDiq:
+      type: object
+      required: [kind, principal, operation]
+      additionalProperties: false
+      properties:
+        kind:
+          type: string
+          const: activediq
+        principal:
+          type: string
+          maxLength: 256
+        operation:
+          type: string
+          format: uuid
+    ReportDetailAttribute:
+      description: >-
+        One attribute the change touched, with its name, the originating time and the replication version where recorded, each unknown where not. Never a value.
+      type: object
+      required: [name, originAt, version]
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+          maxLength: 256
+        originAt:
+          $ref: modules/reports.yaml#/components/schemas/ReportDetailTime
+        version:
+          $ref: modules/reports.yaml#/components/schemas/ReportDetailInteger
+    ReportRowDetail:
+      description: >-
+        The detail of one change-history row, exactly one of five kinds. A client branches on kind and on nothing else.
+      oneOf:
+        - $ref: modules/reports.yaml#/components/schemas/ReportRowDetailEdited
+        - $ref: modules/reports.yaml#/components/schemas/ReportRowDetailMembership
+        - $ref: modules/reports.yaml#/components/schemas/ReportRowDetailCredential
+        - $ref: modules/reports.yaml#/components/schemas/ReportRowDetailPermissions
+        - $ref: modules/reports.yaml#/components/schemas/ReportRowDetailRemoved
+      discriminator:
+        propertyName: kind
+        mapping:
+          edited: "#/components/schemas/ReportRowDetailEdited"
+          membership: "#/components/schemas/ReportRowDetailMembership"
+          credential: "#/components/schemas/ReportRowDetailCredential"
+          permissions: "#/components/schemas/ReportRowDetailPermissions"
+          removed: "#/components/schemas/ReportRowDetailRemoved"
+    ReportRowDetailEdited:
+      description: >-
+        An edit (also a created, moved or renamed change, whose attributes are the ones it touched). attributes are names with originating time and version; valuesRecorded is always false (names only, old and new values are not recorded).
+      type: object
+      required: [kind, runId, rowKey, when, attributes, valuesRecorded, object, actor]
+      additionalProperties: false
+      properties:
+        kind:
+          type: string
+          const: edited
+        runId:
+          type: string
+          format: uuid
+        rowKey:
+          type: string
+          format: uuid
+        when:
+          $ref: modules/reports.yaml#/components/schemas/ReportDetailWhen
+        attributes:
+          type: array
+          maxItems: 256
+          items:
+            $ref: modules/reports.yaml#/components/schemas/ReportDetailAttribute
+        valuesRecorded:
+          type: boolean
+        object:
+          $ref: modules/reports.yaml#/components/schemas/ReportDetailObject
+        actor:
+          $ref: modules/reports.yaml#/components/schemas/ReportDetailActor
+    ReportRowDetailMembership:
+      description: >-
+        A membership change of a group. The four counts are totals over the whole change in the caller's scope or outside it; names is one page of the side asked for. A member outside the caller's scope is counted in
+        addedOutOfScope or removedOutOfScope and never named.
+      type: object
+      required: [kind, runId, rowKey, when, side, addedCount, removedCount, addedOutOfScope, removedOutOfScope, names, object, actor]
+      additionalProperties: false
+      properties:
+        kind:
+          type: string
+          const: membership
+        runId:
+          type: string
+          format: uuid
+        rowKey:
+          type: string
+          format: uuid
+        when:
+          $ref: modules/reports.yaml#/components/schemas/ReportDetailWhen
+        side:
+          $ref: modules/reports.yaml#/components/schemas/ReportMembershipSideValue
+        addedCount:
+          type: integer
+          minimum: 0
+          maximum: 9007199254740991
+        removedCount:
+          type: integer
+          minimum: 0
+          maximum: 9007199254740991
+        addedOutOfScope:
+          type: integer
+          minimum: 0
+          maximum: 9007199254740991
+        removedOutOfScope:
+          type: integer
+          minimum: 0
+          maximum: 9007199254740991
+        names:
+          $ref: modules/reports.yaml#/components/schemas/ReportMembershipNamePage
+        object:
+          $ref: modules/reports.yaml#/components/schemas/ReportDetailObject
+        actor:
+          $ref: modules/reports.yaml#/components/schemas/ReportDetailActor
+    ReportMembershipSide:
+      description: Which side of a membership change to page. A closed request enum.
+      type: string
+      enum: [added, removed]
+    ReportMembershipSideValue:
+      description: Which side of a membership change a page of names is.
+      type: string
+      x-activediq-enum: open
+      enum: [added, removed]
+    ReportMembershipNamePage:
+      description: One page of in-scope member names of one side of a membership change, by name then objectGUID, stable.
+      type: object
+      required: [items, page]
+      additionalProperties: false
+      properties:
+        items:
+          type: array
+          maxItems: 1000
+          items:
+            $ref: modules/reports.yaml#/components/schemas/ReportMembershipName
+        page:
+          $ref: shared/paging.yaml#/components/schemas/PageInfo
+    ReportMembershipName:
+      description: One member added or removed, addressed by objectGUID. The name is the one last observed.
+      type: object
+      required: [objectGuid, name]
+      additionalProperties: false
+      properties:
+        objectGuid:
+          type: string
+          format: uuid
+        name:
+          type: string
+          maxLength: 1024
+    ReportRowDetailCredential:
+      description: >-
+        A credential event: a password was changed or reset, recognised from replication metadata. It carries no value and no attribute list beyond the fact (spec rule 2).
+      type: object
+      required: [kind, runId, rowKey, when, object, actor]
+      additionalProperties: false
+      properties:
+        kind:
+          type: string
+          const: credential
+        runId:
+          type: string
+          format: uuid
+        rowKey:
+          type: string
+          format: uuid
+        when:
+          $ref: modules/reports.yaml#/components/schemas/ReportDetailWhen
+        object:
+          $ref: modules/reports.yaml#/components/schemas/ReportDetailObject
+        actor:
+          $ref: modules/reports.yaml#/components/schemas/ReportDetailActor
+    ReportRowDetailPermissions:
+      description: >-
+        A permissions change, recognised from the replication metadata of nTSecurityDescriptor. descriptorRead is always false: no descriptor was read or compared, so the change cannot be told from inheritance or SDProp
+        propagation (spec rule 2).
+      type: object
+      required: [kind, runId, rowKey, when, descriptorRead, object, actor]
+      additionalProperties: false
+      properties:
+        kind:
+          type: string
+          const: permissions
+        runId:
+          type: string
+          format: uuid
+        rowKey:
+          type: string
+          format: uuid
+        when:
+          $ref: modules/reports.yaml#/components/schemas/ReportDetailWhen
+        descriptorRead:
+          type: boolean
+        object:
+          $ref: modules/reports.yaml#/components/schemas/ReportDetailObject
+        actor:
+          $ref: modules/reports.yaml#/components/schemas/ReportDetailActor
+    ReportRestoreStateValue:
+      description: >-
+        What is known of a removed object. removed_restore_unknown: it left the feed, and whether it is a restorable tombstone, recycled or purged is not readable by the connection account and is never guessed from elapsed time.
+      type: string
+      x-activediq-enum: open
+      enum: [removed_restore_unknown]
+    ReportRestoreUnknownReasonValue:
+      description: >-
+        Why the restore status is unknown. deleted_objects_not_readable: the connection account is least-privilege and cannot read CN=Deleted Objects; noSuchObject there is not proof the tombstone expired (spec rule 7).
+      type: string
+      x-activediq-enum: open
+      enum: [deleted_objects_not_readable]
+    ReportRowDetailRemoved:
+      description: >-
+        A row of a Deleted preset. deletedAt is the time activeDIQ first observed the object gone and means on or before that time (onOrBefore is always true; no DC time is shown for a deletion that was not read).
+        object is as last seen by activeDIQ. state and restorableUntil are the restore-status fields; restorableUntil is always the typed unknown (a time is never shown, because the connection account cannot read it and elapsed time is no proof) with restoreUnknownReason saying why; a later read that can know it is an additive change. There is no restore link in this read.
+      type: object
+      required: [kind, runId, rowKey, when, deletedAt, onOrBefore, state, restorableUntil, restoreUnknownReason, object, actor]
+      additionalProperties: false
+      properties:
+        kind:
+          type: string
+          const: removed
+        runId:
+          type: string
+          format: uuid
+        rowKey:
+          type: string
+          format: uuid
+        when:
+          $ref: modules/reports.yaml#/components/schemas/ReportDetailWhen
+        deletedAt:
+          $ref: modules/reports.yaml#/components/schemas/ReportDetailTime
+        onOrBefore:
+          type: boolean
+        state:
+          $ref: modules/reports.yaml#/components/schemas/ReportRestoreStateValue
+        restorableUntil:
+          $ref: modules/reports.yaml#/components/schemas/ReportCellUnknown
+        restoreUnknownReason:
+          $ref: modules/reports.yaml#/components/schemas/ReportRestoreUnknownReasonValue
+        object:
+          $ref: modules/reports.yaml#/components/schemas/ReportDetailObject
+        actor:
+          $ref: modules/reports.yaml#/components/schemas/ReportDetailActor
     ReportPolicyTargetPage:
       description: >-
         A page of the direct targets of one policy row. basis is always direct_targets: the list is what the policy is applied to, not the resultant set, and says nothing about which policy governs a given user. count is the

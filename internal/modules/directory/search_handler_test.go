@@ -342,6 +342,14 @@ func (c *countingIndex) Search(context.Context, store.Tx, tenant.ID, reportsql.S
 	return inventory.SearchResult{}, nil
 }
 
+func (*countingIndex) Recents(context.Context, store.Tx, tenant.ID, reportsql.SearchScopes, string, []reportsql.SearchType, int) (inventory.SearchResult, error) {
+	return inventory.SearchResult{}, nil
+}
+
+func (*countingIndex) RecordOpened(context.Context, store.Tx, tenant.ID, string, string, string, time.Time) error {
+	return nil
+}
+
 func (*countingIndex) SearchMetadata(context.Context, store.Tx, tenant.ID, authz.ReadScope, time.Time, []reportsql.SearchHit) (map[inventory.SearchRef]inventory.SearchMeta, error) {
 	return nil, nil
 }
