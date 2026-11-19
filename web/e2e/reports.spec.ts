@@ -108,6 +108,7 @@ interface Server {
   runOver: Record<string, unknown>;
   totalRows: number;
   forbidden: boolean;
+  subjectKind?: string;
   /** Answer rows with this instead of a page. */
   rowsFailure?: ReturnType<typeof problem>;
 }
@@ -139,7 +140,8 @@ async function serve(page: Page, over: Partial<Server> = {}): Promise<Server> {
         json: { items: hit ? [definition] : [], page: { nextCursor: null } },
       });
     }
-    if (path === "/definitions/usr-03") return route.fulfill({ json: definition });
+    if (path === "/definitions/usr-03")
+      return route.fulfill({ json: { ...definition, subjectKind: s.subjectKind ?? "none" } });
     if (path === "/runs" && req.method() === "POST") {
       s.runPosts++;
       const body = JSON.parse(req.postData() ?? "{}");
@@ -381,6 +383,53 @@ test("hidden probable service accounts can be shown, and the choice is in the UR
   expect(s.runPosts).toBe(2);
   await page.goBack();
   await expect(page.getByText("13 probable service accounts hidden")).toBeVisible();
+});
+
+test("a subject report: search a group on the server, pick it, run for it (T-1076)", async ({
+  page,
+}) => {
+  const s = await serve(page, { subjectKind: "group" });
+  const guid = "22222222-2222-4222-8222-222222222222";
+  let searched = "";
+  await page.route(/\/api\/v1\/directory\/search/, async (route) => {
+    searched = route.request().postData() ?? "";
+    await route.fulfill({
+      json: {
+        asOf: null,
+        refine: false,
+        groups: [
+          {
+            type: "groups",
+            items: [
+              {
+                type: "groups",
+                objectId: guid,
+                displayName: "Finance",
+                distinguishedName: "CN=Finance,OU=Groups,DC=lab,DC=test",
+                domain: "",
+                matchClass: "prefix",
+                highlights: [],
+                status: [],
+              },
+            ],
+          },
+        ],
+      },
+    });
+  });
+  await page.goto("/reports/usr-03");
+  await expect(page.getByText("Choose the group this report covers")).toBeVisible();
+  expect(s.runPosts).toBe(0);
+  await page.getByRole("combobox", { name: "Groups" }).fill("fin");
+  await page.getByRole("option", { name: /Finance/ }).click();
+  await page.screenshot({ path: `../factory/demos/evidence/T-1076/subject-picker.png` });
+  expect(searched).toContain('"type":"groups"');
+  await page.getByRole("button", { name: "Run for 1 group" }).click();
+  await expect(page).toHaveURL(new RegExp(`s=${guid}`));
+  await expect.poll(() => s.runPosts).toBe(1);
+  expect(s.runBodies[0]).toMatchObject({ parameters: { subjects: [{ guid }] } });
+  const axe = await new AxeBuilder({ page }).analyze();
+  expect(axe.violations).toEqual([]);
 });
 
 test("a library filter with no match offers to clear it; the filter is in the URL", async ({
