@@ -2,7 +2,7 @@
 # Standard: knowledge/development/standards/ci-gates.md · Runbook: knowledge/development/runbooks/ci-and-build.md
 # Every gate below has a failing run proving it catches a violation: `make ci-proof` (part of `make ci`).
 
-.PHONY: fitness-modules prescreen prescreen-proof test-scale fitness-p2-oci gen-modules gen-modules-check fitness-sso fitness-reports fitness-search fitness-search-nightly fitness-fleet-ca-scope fitness-objectid fitness-grantbootstrap ci ci-fast ci-full gen-proto gen-check lint lint-go lint-web fmt test test-go test-web fitness fitness-stack fitness-tenancy fitness-domain-keys fitness-profiles fitness-proto fitness-safeprim fitness-corpus fitness-oracles fitness-api fitness-oracles-windows fitness-oracles-lab fitness-fuzz-nightly fitness-nightly search-latency search-latency-pg16 search-latency-pg18 fuzz-saml build build-web web-install ci-proof fitness-operation fitness-audit fitness-disclosure fitness-packaging fitness-host fitness-agent-host fitness-built-msi fitness-update fitness-update-offline fitness-keys fitness-fleet-ca-scope workflows-check fitness-merge-order fitness-group-member
+.PHONY: fitness-modules prescreen prescreen-proof test-scale fitness-p2-oci gen-modules gen-modules-check fitness-sso fitness-reports fitness-search fitness-search-nightly fitness-fleet-ca-scope fitness-objectid fitness-grantbootstrap ci ci-fast ci-full gen-proto gen-check lint lint-go lint-web fmt test test-go test-web fitness fitness-stack fitness-tenancy fitness-domain-keys fitness-profiles fitness-proto fitness-safeprim fitness-corpus fitness-oracles fitness-api fitness-oracles-windows fitness-oracles-lab fitness-fuzz-nightly fitness-nightly search-latency search-latency-pg16 search-latency-pg18 fuzz-saml build build-web web-install ci-proof fitness-operation fitness-audit fitness-disclosure fitness-packaging fitness-host fitness-agent-host fitness-built-msi fitness-built-msi-release fitness-update fitness-update-offline fitness-keys fitness-fleet-ca-scope workflows-check fitness-merge-order fitness-group-member
 
 # T-2313 (merge plan step 3.1): the cheap, Docker-free checks first. NOT a prerequisite of ci, ci-fast or
 # ci-full (it would run twice); every check below is also run by `make ci`. Nothing is removed from ci.
@@ -165,8 +165,11 @@ fitness-p2-oci: ## T-1462, ADR-0002 P2 (OCI half): build the server image of lin
 
 BUILT_MSI ?= dist/*.msi
 
-fitness-built-msi: ## T-0697: ADR-0006 A1 on the built artefact: every MSI matching $(BUILT_MSI) is dumped with msidump (msitools) and its service account (NT SERVICE\\activeDIQAgent), restricted SID, pinned privileges, custom actions, binaries, DACLs and HKLM\\SYSTEM writes are judged; prints inactive when none exists. The release job passes -require once the packaging ticket builds the MSI
+fitness-built-msi: ## T-0697: ADR-0006 A1 on the built artefact: every MSI matching $(BUILT_MSI) is dumped with msidump (msitools) and its service account (NT SERVICE\\activeDIQAgent), restricted SID, pinned privileges, custom actions, binaries, DACLs and HKLM\\SYSTEM writes are judged; prints inactive when none exists. The release job runs it with -require (fitness-built-msi-release, T-0724) on the MSI its Windows job builds
 	go run ./tools/fitness/builtmsi -glob '$(BUILT_MSI)'
+
+fitness-built-msi-release: ## T-0724: the release gate: as fitness-built-msi but -require (fails when no MSI exists); release.yml runs the same command on the MSI the Windows job built. Not in `make ci`: WiX needs Windows
+	go run ./tools/fitness/builtmsi -require -glob '$(BUILT_MSI)'
 
 AGENT_POLICY_FUZZ_TIME ?= 20s
 

@@ -54,7 +54,15 @@ func main() {
 				die(err)
 			}
 			cleanup = append(cleanup, d)
-			if out, err := exec.Command("msidump", "-t", "-d", d, m).CombinedOutput(); err != nil {
+			abs, err := filepath.Abs(m)
+			if err != nil {
+				die(err)
+			}
+			// msidump writes the Binary table's streams into its working directory, not into -d (T-0724: a
+			// stray Binary/ appeared in the repo root), so it runs inside the temp dir.
+			cmd := exec.Command("msidump", "-t", "-d", d, abs)
+			cmd.Dir = d
+			if out, err := cmd.CombinedOutput(); err != nil {
 				die(fmt.Errorf("msidump %s: %v\n%s (install msitools: apt-get install msitools)", m, err, out))
 			}
 			jobs = append(jobs, job{m, d})
