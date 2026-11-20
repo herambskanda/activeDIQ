@@ -25,7 +25,7 @@ import (
 	connectorv1 "github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1"
 )
 
-// T-0695: the ScopedSearch RPC (read.Handler over read.NewADSource over a real Samba session, served
+// T-0695: the ScopedSearch RPC (read.Handler over the AD provider over a real Samba session, served
 // on a bufconn gRPC server) against an admin LDAP query of the same tree.
 // `make lab-up && go test -tags lab ./internal/connector/read -run TestLabScopedSearch`.
 // Samba does not range `member` (MaxValRange is a Windows behaviour): here the handler's own 1500
