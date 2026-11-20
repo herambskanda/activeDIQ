@@ -1,4 +1,4 @@
-package inventory_test
+package library_test
 
 // Library batch 2 against the inventory datasets (T-0962, spec reports-2a AC-13, AC-19, AC-20, AC-23).
 //

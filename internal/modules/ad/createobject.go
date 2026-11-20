@@ -6,8 +6,8 @@ import (
 	"strings"
 
 	"github.com/skenzeriq/activediq/internal/directory/client"
+	"github.com/skenzeriq/activediq/internal/directory/objectdef"
 	"github.com/skenzeriq/activediq/internal/directory/writechange"
-	"github.com/skenzeriq/activediq/internal/modules/objects"
 	"github.com/skenzeriq/activediq/internal/platform/authority"
 	"github.com/skenzeriq/activediq/internal/platform/operation"
 )
@@ -52,7 +52,7 @@ func planCreateObject(c objClass) planFn[ObjectCreateInput] {
 		if err := validName(in.Name); err != nil {
 			return nil, err
 		}
-		attrs := objects.Input{}
+		attrs := objectdef.Input{}
 		for k, v := range in.Attributes {
 			a, ok := c.canon(k, true)
 			if !ok || !validValue(v) {
