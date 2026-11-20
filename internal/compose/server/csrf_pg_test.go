@@ -155,3 +155,52 @@ func tokenSecret(tok string) string {
 	_, secret, _ := strings.Cut(tok, ".")
 	return secret
 }
+
+// T-1562: GET /auth/session lists exactly the catalogue permissions the session holds, answers 401 without
+// a session, and is never cached.
+func TestGetSessionListsHeldPermissions(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		e := chainSetup(t, s)
+		now := time.Now().UTC()
+		tok := e.signIn(t, &now)
+		get := func(h http.Handler, cookies ...*http.Cookie) *httptest.ResponseRecorder {
+			r := httptest.NewRequest(http.MethodGet, "/api/v1/auth/session", nil)
+			r.RemoteAddr = "203.0.113.7:1"
+			for _, c := range cookies {
+				r.AddCookie(c)
+			}
+			w := httptest.NewRecorder()
+			h.ServeHTTP(w, r)
+			return w
+		}
+
+		h := e.build(t, e.grant(chainPerm))
+		w := get(h, authnhttp.SessionCookie(tok, time.Hour))
+		if w.Code != http.StatusOK || w.Header().Get("Cache-Control") != "no-store" {
+			t.Fatalf("GET /auth/session: %d %v %s", w.Code, w.Header(), w.Body)
+		}
+		var out struct{ Permissions []string }
+		if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
+			t.Fatal(err)
+		}
+		if len(out.Permissions) != 1 || out.Permissions[0] != string(chainPerm) {
+			t.Errorf("permissions = %v, want [%s]", out.Permissions, chainPerm)
+		}
+
+		// A session holding nothing gets an empty list, not an error.
+		w = get(e.build(t), authnhttp.SessionCookie(tok, time.Hour))
+		if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"permissions":[]`) {
+			t.Errorf("no grants: %d %s", w.Code, w.Body)
+		}
+
+		for name, cookies := range map[string][]*http.Cookie{
+			"no cookie":      nil,
+			"pending cookie": {{Name: authn.PendingCookieName, Value: tok.Reveal(), Path: "/"}},
+		} {
+			w := get(h, cookies...)
+			if w.Code != http.StatusUnauthorized || !strings.Contains(w.Body.String(), "/problems/unauthenticated") {
+				t.Errorf("%s: %d %s", name, w.Code, w.Body)
+			}
+		}
+	})
+}

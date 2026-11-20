@@ -242,7 +242,7 @@ func checkPool(ctx context.Context, d *Database, reg *registry.Registry) ([]Viol
 	}
 	nSite := 0
 	for _, p := range reg.PlatformPaths {
-		if p.Package == poolSQLDir && p.WithPlatform {
+		if p.Package == poolSQLDir && p.Function == poolCaller && p.WithPlatform {
 			nSite++
 		}
 	}
@@ -306,6 +306,10 @@ func checkPool(ctx context.Context, d *Database, reg *registry.Registry) ([]Viol
 
 // poolSQLDir is the one package allowed to name the function in SQL and to call it under WithPlatform.
 const poolSQLDir = "internal/platform/fleet/fleetsql"
+
+// poolCaller is the registry name of the one function that calls the pool function. Other platform-scope
+// callers in the same package (Enroller.SignServerLeaf, installation server CA) do not touch it.
+const poolCaller = "TrustAnchors.Load"
 
 // poolBehaviour runs the probes of F-POOL-4 and returns (rule, where, message) triples.
 func poolBehaviour(ctx context.Context, d *Database, owner, role, app string) ([][3]string, error) {

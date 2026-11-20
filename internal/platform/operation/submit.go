@@ -27,6 +27,12 @@ type Pinner interface {
 	Pin(ctx context.Context, connection string, nc authority.NamingContextID, previous string) (DCPin, error)
 }
 
+// CredentialSource names the DM-11 credential row a connection is bound to (an ID, never material).
+// Directory-write step events carry it as credential_id so the chain alone joins an event to a DC log.
+type CredentialSource interface {
+	CredentialOf(ctx context.Context, t tenant.ID, connection string) (string, error)
+}
+
 // FallbackPinner is an optional Pinner capability: a writable DC other than exclude (matched by host,
 // case-insensitively, and by DSA GUID), for the server's Tier-0 re-read when the pinned DC cannot answer
 // (ADR-0005 rule 7). A Pinner without it has no fallback, and an unanswered re-read counts as tier0.
@@ -138,7 +144,7 @@ func (r *Runner) SubmitDirectory(ctx context.Context, req Request) (Submission, 
 		return Submission{}, fmt.Errorf("%w: secrets supplied do not match the action's SecretInput", ErrInvalid)
 	}
 	u := &run{r: r, req: req, act: act, d: d, eventID: r.cfg.NewID()}
-	if d.StepUp && !req.FreshStepUp && canStepUp(req.Actor) {
+	if !req.FreshStepUp && canStepUp(req.Actor) && d.NeedsStepUp(req.Input) {
 		// An interactive human who has not stepped up is refused; a token or automation is held (rule 8).
 		return Submission{}, u.recordFailure(ctx, u.denied("step_up_required", ErrStepUpRequired))
 	}
@@ -231,7 +237,7 @@ func (r *Runner) planAndRoute(ctx context.Context, t tenant.ID, opID string, inp
 			return fmt.Errorf("plan transaction: %w", err)
 		}
 		var err error
-		steps, err = act.Plan(ctx, PlanContext{Tx: tx, Facts: pinnedReader{port: r.cfg.Facts, ad: d.Target == TargetAD, store: d.Target == TargetStore, pins: maps.Clone(op.Pins), dsas: maps.Clone(op.DSAs), tenant: t}, Pins: op.Pins}, input)
+		steps, err = act.Plan(ctx, PlanContext{Tx: tx, Facts: pinnedReader{port: r.cfg.Facts, ad: d.Target == TargetAD, store: d.Target == TargetStore, pins: maps.Clone(op.Pins), dsas: maps.Clone(op.DSAs), tenant: t}, Pins: op.Pins, Tenant: t, Actor: op.Chain, Templates: r.templateGate(op.Chain, t)}, input)
 		return err
 	})
 	if perr == nil {
@@ -338,8 +344,13 @@ func (r *Runner) failPlan(ctx context.Context, t tenant.ID, op opRecord, cause e
 		if err := deleteOperationSecrets(ctx, tx, t, op.ID); err != nil {
 			return err
 		}
+		outcome, reason, tgt := audit.Failure, "plan_failed", authority.TargetRef{}
+		var pr *PlanRefusal
+		if errors.As(cause, &pr) && pr.valid() { // a typed refusal is a denied attempt carrying the Action's code
+			outcome, reason, tgt = audit.Denied, pr.Code, pr.Target
+		}
 		return r.emit(ctx, tx, audit.Event{ID: "op-" + op.ID + "-plan-failed", Kind: KindOperationCompleted, Actor: op.Chain,
-			Key: step.Key{Operation: step.OperationID(op.ID)}, Outcome: audit.Failure, Reason: "plan_failed", Details: detail("result", "plan_failed")})
+			Key: step.Key{Operation: step.OperationID(op.ID)}, Target: tgt, Outcome: outcome, Reason: reason, Details: detail("result", reason)})
 	})
 	if err != nil {
 		return Submission{}, err
@@ -604,7 +615,7 @@ func (r *Runner) route(ctx context.Context, t tenant.ID, opID string) (Submissio
 			return sub, fmt.Errorf("%w: reading tenant settings: %w", ErrGate, err)
 		}
 	}
-	hold := kernelHold(holdInput{d: d, req: Request{Actor: op.Chain, Origin: op.Origin, MaxObjects: op.MaxObjects,
+	hold := kernelHold(holdInput{d: d, input: Input(op.Input), req: Request{Actor: op.Chain, Origin: op.Origin, MaxObjects: op.MaxObjects,
 		FreshStepUp: op.StepUpFresh, UndoNeededApproval: op.Hold == HoldUndoNeededAppr}, items: len(rows),
 		worst: worst(steps), irrevSetting: irrev})
 	route, gerr := r.cfg.Gate.Route(ctx, PlanSummary{Action: d, Steps: steps, PlanHash: op.PlanHash,

@@ -26,6 +26,11 @@
       "owner": "internal/platform/keys"
     },
     {
+      "table": "public.fleet_server_ca",
+      "reason": "The fleet gateway's server CA belongs to the installation, not to a tenant (ADR-0008): one CA, one pin, one presented chain for every tenant, so its row has no tenant_id and no RLS (ADR-0002 rule 4). It signs ServerAuth leaves only and is never in the client pool. sealed_key is sealed under the installation DEK and destroyed when the row leaves the active state (CHECK and guard trigger); the runtime role cannot DELETE or TRUNCATE. Any tenant transaction can read it, so only its owning package may name it in SQL.",
+      "owner": "internal/platform/fleet/fleetsql"
+    },
+    {
       "table": "public.update_verifier_floor",
       "reason": "The update verifier's rollback floor is install-level: one monotone row shared by the server, connector and agent update paths, read before and outside any tenant transaction, so it has no tenant_id and no RLS. The guard trigger refuses any lowering and the runtime role cannot DELETE or TRUNCATE it (ENH-07, TM-D12 rule 2). Any tenant transaction can read it, so only its owning package may name it in SQL.",
       "owner": "internal/platform/updateverify/floorpg"
@@ -50,6 +55,12 @@
       "mintsTenantID": true
     },
     {
+      "package": "internal/platform/fleet/fleetsql",
+      "function": "Enroller.SignServerLeaf",
+      "reason": "The gateway's ServerAuth leaf is signed by the installation server CA, a registered-global row that belongs to no tenant, and unsealing its key needs the installation DEK (also global), so the call runs in platform scope. It is not reachable from any RPC, takes no principal, key or CSR, checks every name against the configured fleet endpoints, is rate-capped per node and audits each issuance (ADR-0008 item 7, T-0735; TM-TB6-T15, T16).",
+      "withPlatform": true
+    },
+    {
       "package": "internal/platform/tenant/provision",
       "function": "FirstRun",
       "reason": "First-run bootstrap creates the install's first tenant before any tenant exists, so it runs outside a tenant context under WithPlatform and mints the tenant ID (ADR-0002 rules 4 and 5).",
@@ -64,9 +75,16 @@
       "mintsTenantID": true
     },
     {
-      "package": "internal/compose/server",
-      "function": "reportSchema",
-      "reason": "Start-up compiles the report datasets against the public schema catalogue (pg_class, pg_attribute) before the install tenant exists, so the read runs outside a tenant context under WithPlatform. The catalogue is identical for every tenant and holds names and types only, never a tenant row; the result is the immutable schema the SQL registry checks identifiers against (T-1104).",
+      "package": "internal/modules/directory",
+      "function": "catalogSchema",
+      "reason": "Start-up compiles the report datasets against the public schema catalogue (pg_class, pg_attribute) before the install tenant exists, so the read runs outside a tenant context under WithPlatform. The catalogue is identical for every tenant and holds names and types only, never a tenant row; the result is the immutable schema the search index compiles its SQL identifiers against (T-1104, T-1865, ADR-0013).",
+      "withPlatform": true,
+      "mintsTenantID": false
+    },
+    {
+      "package": "internal/modules/reports",
+      "function": "schema",
+      "reason": "Module start-up compiles the report datasets against the public schema catalogue (pg_class, pg_attribute) before the install tenant exists, so the read runs outside a tenant context under WithPlatform. The catalogue is identical for every tenant and holds names and types only, never a tenant row; the result is the immutable schema the SQL registry checks identifiers against (T-1104, ADR-0013).",
       "withPlatform": true,
       "mintsTenantID": false
     },
@@ -156,7 +174,7 @@
     },
     {
       "package": "internal/platform/rbac",
-      "function": "Authorizer.Authorize",
+      "function": "requestTenant",
       "reason": "The tenant is read from the request context that the authority chain's authentication step set (authority.TenantFrom), never from a request field; the parse only converts that server-set value to the typed ID and fails closed (ADR-0002 rule 5).",
       "withPlatform": false,
       "mintsTenantID": true
@@ -221,6 +239,36 @@
   "platformJobs": [],
   "probeValues": [
     {
+      "column": "public.migration_jobs.state",
+      "value": "quarantined",
+      "reason": "CHECK: state is one of a closed set and ties limit_hit, source_sha256 and finished_at to it (migration_jobs_check*); the probe row is an ordinary quarantined job."
+    },
+    {
+      "column": "public.migration_jobs.limit_hit",
+      "null": true,
+      "reason": "CHECK: limit_hit is set exactly when the job is rejected; the probe row is quarantined, so it is NULL."
+    },
+    {
+      "column": "public.migration_jobs.finished_at",
+      "null": true,
+      "reason": "CHECK: finished_at is set exactly for a finished state; the probe row is quarantined, so it is NULL."
+    },
+    {
+      "column": "public.migration_jobs.source_sha256",
+      "value": "\\x7070707070707070707070707070707070707070707070707070707070707070",
+      "reason": "CHECK: a SHA-256 is exactly 32 bytes (migration_jobs_source_sha256_check); the probe row carries a 32-byte placeholder."
+    },
+    {
+      "column": "public.migration_jobs.source_kind",
+      "value": "csv",
+      "reason": "CHECK: source_kind is one of a closed set of kinds."
+    },
+    {
+      "column": "public.migration_jobs.admp_build",
+      "value": "probe",
+      "reason": "CHECK: admp_build matches ^[A-Za-z0-9._-]{1,64}$."
+    },
+    {
       "column": "public.helpdesk_caller_verifications.factor",
       "value": "email_otp",
       "reason": "CHECK: factor is email_otp, sms_otp or totp; the probe row is an email OTP challenge."
@@ -244,6 +292,26 @@
       "column": "public.helpdesk_caller_verifications.code_mac",
       "value": "\\x7070707070707070707070707070707070707070707070707070707070707070",
       "reason": "CHECK: code_mac is exactly 32 bytes and present for every non-totp factor (helpdesk_cv_code); the probe row carries a 32-byte placeholder, not a real MAC."
+    },
+    {
+      "column": "public.authn_enrolment_sessions.created_at",
+      "value": "2000-01-01 00:00:00+00",
+      "reason": "CHECK: expires_at is later than created_at and within 10 minutes of it; the probe row pins both to fixed instants."
+    },
+    {
+      "column": "public.authn_enrolment_sessions.expires_at",
+      "value": "2000-01-01 00:05:00+00",
+      "reason": "CHECK: see created_at; 5 minutes after the pinned created_at."
+    },
+    {
+      "column": "public.authn_enrolment_sessions.handle_hash",
+      "value": "\\x7070707070707070707070707070707070707070707070707070707070707070",
+      "reason": "CHECK: handle_hash is a 32-byte SHA-256 digest; the probe row pins a 32-byte value."
+    },
+    {
+      "column": "public.authn_enrolment_sessions.proof",
+      "value": "password",
+      "reason": "CHECK: proof is one of password or kerberos; the probe row pins password."
     },
     {
       "column": "public.personal_subject.salt",
@@ -288,7 +356,7 @@
     {
       "column": "public.authn_authenticator_enrollments.expires_at",
       "value": "2030-01-01T00:00:00Z",
-      "reason": "INSERT trigger: an enrolment starts pending with an expiry (DM-37, ENH-09 \u00a75); the probe row is a pending enrolment."
+      "reason": "INSERT trigger: an enrolment starts pending with an expiry (DM-37, ENH-09 §5); the probe row is a pending enrolment."
     },
     {
       "column": "public.authn_ad_attempts.key_hash",
@@ -538,7 +606,7 @@
     {
       "column": "public.connection_attestation_attempts.code_verifier",
       "value": "probe-code-verifier-0123456789-0123456789-0123",
-      "reason": "CHECK: a PKCE code_verifier is 43..128 characters (RFC 7636 \u00a74.1)."
+      "reason": "CHECK: a PKCE code_verifier is 43..128 characters (RFC 7636 §4.1)."
     },
     {
       "column": "public.connection_attestation_attempts.state_hash",
@@ -986,6 +1054,86 @@
       "column": "public.directory_object_changes.object_kind",
       "value": "user",
       "reason": "CHECK: directory_object_changes_object_kind_check restricts the object kind to the DM-16 set; the probe row carries one valid kind (T-1109)."
+    },
+    {
+      "column": "public.helpdesk_request_keys.request_mac",
+      "value": "\\x7070707070707070707070707070707070707070707070707070707070707070",
+      "reason": "CHECK: a request MAC is exactly 32 bytes (helpdesk_request_keys_request_mac_check); the probe row carries a 32-byte placeholder."
+    },
+    {
+      "column": "public.helpdesk_request_keys.operation",
+      "value": "issue",
+      "reason": "CHECK: helpdesk_rk_operation restricts operation to issue or verify; the probe row is an issue key."
+    },
+    {
+      "column": "public.helpdesk_request_keys.idem_key",
+      "value": "probe-idem-key-01",
+      "reason": "CHECK: an idempotency key matches ^[A-Za-z0-9._~-]{8,128}$."
+    },
+    {
+      "column": "public.helpdesk_request_keys.state",
+      "value": "pending",
+      "reason": "CHECK: helpdesk_rk_state/helpdesk_rk_done: pending carries no completed_at; the probe row is pending."
+    },
+    {
+      "column": "public.report_schedules.definition_id",
+      "value": "probe-report",
+      "reason": "CHECK: definition_id matches ^[a-z][a-z0-9-]{1,63}$ (report_schedules_definition_id_check)."
+    },
+    {
+      "column": "public.report_schedules.time_zone",
+      "value": "UTC",
+      "reason": "CHECK: time_zone is an IANA-shaped name (report_schedules_time_zone_check)."
+    },
+    {
+      "column": "public.report_schedules.state",
+      "value": "active",
+      "reason": "CHECK: state is one of a closed set and ties pause_reason and next_run_at to it; the probe row is active."
+    },
+    {
+      "column": "public.report_schedule_recipients.kind",
+      "value": "address",
+      "reason": "CHECK: kind is account or address and each kind requires its own column; the probe row is an address recipient, so account stays NULL."
+    },
+    {
+      "column": "public.report_schedule_recipients.address",
+      "value": "probe@example.test",
+      "reason": "CHECK: an address recipient carries an address of 3 to 254 characters."
+    },
+    {
+      "column": "public.report_schedule_recipients.formats",
+      "value": "{csv}",
+      "reason": "CHECK: formats is a non-empty subset of csv, xlsx, pdf, html."
+    },
+    {
+      "column": "public.report_schedule_recipients.delivery",
+      "value": "attachment",
+      "reason": "CHECK: delivery is attachment or link, and an address recipient is attachment only."
+    },
+    {
+      "column": "public.report_schedule_fires.state",
+      "value": "queued",
+      "reason": "CHECK: state is one of a closed set (report_schedule_fires_state_check)."
+    },
+    {
+      "column": "public.migration_fidelity.class",
+      "value": "exact",
+      "reason": "CHECK: class is a closed set and ties diff and reason to it; the probe row is an exact item."
+    },
+    {
+      "column": "public.migration_fidelity.reason",
+      "value": "",
+      "reason": "CHECK: reason is empty exactly for exact/changed items; the probe row is exact."
+    },
+    {
+      "column": "public.migration_fidelity.item_kind",
+      "value": "probe",
+      "reason": "CHECK: item_kind matches ^[a-z][a-z0-9_]{0,63}$."
+    },
+    {
+      "column": "public.migration_proposals.class",
+      "value": "exact",
+      "reason": "CHECK: a proposal exists only for exact or changed items."
     }
   ]
 }
