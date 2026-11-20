@@ -27,4 +27,13 @@ type Services struct {
 	// ObjectReader is the live object read of the user lifecycle Actions (ad module); the writes go
 	// through AccountWriter. Nil until wired, and the Actions then refuse every Plan.
 	ObjectReader client.ObjectReader
+	// Source is the connector endpoint source and Reads the live object read over it (directory module:
+	// user search). Nil until the composition root wires a connector transport; the module then mounts no
+	// routes.
+	Source client.ConnectorSource
+	Reads  client.Reads
+	// PerDC is the per-DC read and DC count of the per-DC reports (USR-04, PWD-03); the reports module
+	// sets run.Service.PerDC and PerDCDCs from it. Nil until wired; a per-DC run then fails
+	// connection_unavailable.
+	PerDC *client.ConnectorPerDC
 }

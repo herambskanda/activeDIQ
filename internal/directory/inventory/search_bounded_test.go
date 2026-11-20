@@ -33,6 +33,7 @@ type planNode struct {
 	Relation string     `json:"Relation Name"`
 	Index    string     `json:"Index Name"`
 	Rows     float64    `json:"Actual Rows"`
+	Time     float64    `json:"Actual Total Time"`
 	Loops    float64    `json:"Actual Loops"`
 	Removed  float64    `json:"Rows Removed by Filter"`
 	Recheck  float64    `json:"Rows Removed by Index Recheck"`

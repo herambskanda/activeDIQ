@@ -72,22 +72,6 @@ test.beforeEach(async ({ page }) => {
   await page.route("**/api/v1/directory/search", async (route) => {
     return route.fulfill({ json: searchResultsFixture() });
   });
-  // Default mock users response
-  await page.route("**/api/v1/directory/users?*", (route) =>
-    route.fulfill({
-      json: {
-        items: [
-          {
-            objectGuid: "00000000-0000-4000-8000-000000000001",
-            displayName: "Ada Lovelace",
-            samAccountName: "alovelace",
-            userPrincipalName: "alovelace@corp.example.test",
-            enabled: true,
-          },
-        ],
-      },
-    }),
-  );
 });
 
 async function noCriticalViolations(page: Page) {

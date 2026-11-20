@@ -36,10 +36,10 @@ scope decision, not a platform asymmetry.
 | --- | --- | --- |
 | `internal/platform/report` (EP-8 host), `Registrar.Dataset` | **Built (T-0956, row B1).** Pure types and `Resolve` (no SQL driver), `Registrar.Dataset`, `Contributions.Datasets()`, `platform.Deps.Report`, and the Boot table-ownership check (`report.CheckTables`). Deviations below | §2, §3, row B1 |
 | `internal/platform/store/reportsql` | **Built (T-0957, row B2).** `NewRegistry`, `Compile`, `CompileCount`, `Exec`, `Count`, the scope and narrowing renderers, SQL vectors (FF-SP4) and RP6. `sqlconst` (FF-SP2) lets a value of type `reportsql.CompiledSQL` reach `Exec` and `string(x)` of one is a constant for it. Deviations in §5 | §5, row B2, RP1, RP6 |
-| Directory read-scope producer | **Built (T-0880, T-0881, T-0882).** `authz.ReadScope` and the EP-6 `ScopeEvaluator` host (T-0880), the `ou_one_level` root kind (T-0881), and the one producer `rbac.ReadScopes.For` with the read oracle `authz.Evaluator.AuthorizeRead` (T-0882). The old per-object post-filter over candidates, which had no callers, is deleted. **Wired in `compose/server` (T-0916, `readscopes.go`):** `rbac.OwnerStatus` over `authn_accounts` (active only), `rbac.ObjectConnections` over `directory_objects` (one connection, else ok=false), `buildReadScopes(authorizer, module.Contributions)`, and `txReadScopes` (opens the tenant tx) for `directory.ReadScopes`; search and report runs both receive it | §4 |
+| Directory read-scope producer | **Built (T-0880, T-0881, T-0882).** `authz.ReadScope` and the EP-6 `ScopeEvaluator` host (T-0880), the `ou_one_level` root kind (T-0881), and the one producer `rbac.ReadScopes.For` with the read oracle `authz.Evaluator.AuthorizeRead` (T-0882). The old per-object post-filter over candidates, which had no callers, is deleted. **Wired in `compose/server` (T-0916, `readscopes.go`):** `rbac.OwnerStatus` over `authn_accounts` (active only), `rbac.ObjectConnections` over `directory_objects` (one connection, else ok=false), `buildReadScopes(authorizer, module.Contributions)`, and the directory module's `txScopes` adapter (opens the tenant tx) for `directory.ReadScopes`, over `platform.Deps.ReadScopes`; search and report runs both receive it | §4 |
 | Inventory rows | `directory_objects` (migration 0033) holds `connection_id`, `object_guid`, `nc_guid`, `parent_guid`, `ancestry uuid[]`, `kind`, `state`, `lockout_time`, `pwd_last_set`, `account_expires`, `attributes jsonb`, `observed_at`. Links are in `links` (0012). **Row B3 (T-0958, migration 0061) added** the GIN index `directory_objects_by_ancestry`, the D7 inputs (`user_account_control`, `primary_group_id`, `last_logon_timestamp`, `spn_present`, `inputs_read`) and the D4 tables `inventory_domain_policies`, `inventory_psos`, `inventory_pso_applies`. **Row B6 (T-0961, migration 0068) added** the group closure `inventory_group_members` and its dirty set `inventory_group_closure_dirty`. Row P2 (T-0948, migration 0059) is built: `Populate` takes a per-(tenant, connection) advisory lock and refuses non-READ COMMITTED transactions (DM-16.I10); `ancestry_complete` is derived by the writer on every upsert (`objects.go`, `upsertObjectSQL`), a move rewrites every descendant's `ancestry` in the same transaction (`rewriteDescendants`, found by `ancestry @>` until B3's GIN index) and `repairCompleteness` walks `parent_guid` to set or clear the flag below a row that arrived or changed Row P1 (T-0949, migration 0063) is built: `nc_sync_passes` (one row per tenant, connection, NC) holds `last_pass_at` and `state` (`ok`, `resync_required`, `paused`). `Writer.RecordPass` sets the pass as-of (start of the read) in the cycle's transaction and `Ingest` calls it on the last batch for each `Cycle.PassNCs`, so a quiet domain is fresh; `Writer.MarkNC` records resync or pause; `Reader.Freshness` returns `[]report.NCWatermark` and the `report.Label` result, with `DefaultStalenessThreshold` = 60 min | §3.4, §4.5, rows P1, **P2**, B3, B6 |
 | Run path (`modules/reports`, `modules/reports/run`) | **Built (T-0959, row B4).** Migration 0064 (`report_runs`, `report_run_rows`, both guard triggers) and 0065 (`report_runs_insert_guard`: a run is born queued, attempt 0, no result; T-1061), `run.Service` (`Create`, `Cancel`, `Retry`, `Read`/`ReadAccess`, `Page`, `List`), the `reports.run` and retention job kinds, the six run operations of the API, RP4 and RP9 landed. **T-1105 added the two library reads** (`listReportDefinitions`, `getReportDefinition`, `modules/reports/definitions.go`, §3.6). The export operations are built in row B9 (T-0963); the other 9 operations answer 501 until B11 | §6, §9, row B4 |
-| Console screens (`web/src/modules/reports`) | **Built (T-0966, row B12 part 1; export and schedule are B12b, T-0902).** Routes `/reports` (library) and `/reports/<id>`; the run starts when the report opens and the grid reads `listReportRunRows` (500 a page, server sort, windowed DataGrid). Client state is the URL plus `use-definitions.ts` and `use-report-run.ts` (start, poll `getReportRun`, cancel, retry). The stale banner and header chip render `ReportFreshness.stale[]` (connection name, cause, age) and the hidden-group banner renders `ReportRun.hiddenGroups[]` (count, `locked` removes Show), all from the API (T-1074); the console derives neither. Open gaps: no report+object composite hit (T-1075), subject reports need an object picker (T-1076), live-stack check (T-1077) | §6, row B12 |
+| Console screens (`web/src/modules/reports`) | **Built (T-0966, row B12 part 1; export and schedule are B12b, T-0902).** Routes `/reports` (library) and `/reports/<id>`; the run starts when the report opens and the grid reads `listReportRunRows` (500 a page, server sort, windowed DataGrid). Client state is the URL plus `use-definitions.ts` and `use-report-run.ts` (start, poll `getReportRun`, cancel, retry). The stale banner and header chip render `ReportFreshness.stale[]` (connection name, cause, age) and the hidden-group banner renders `ReportRun.hiddenGroups[]` (count, `locked` removes Show), all from the API (T-1074); the console derives neither. Open gaps: no report+object composite hit (T-1075), subject reports use the ds `ObjectPicker` (`subjects.tsx`; GUIDs in the URL as `s=`; T-1076) and the ds `Link`, live-stack check (T-1077) | §6, row B12 |
 | `platform/export` | CSV, XLSX and PDF encoders (HTML is `platform/htmlx`), `export.Cell`, `Source`, `Run`, `RunToBlob` (T-0150), the canonical `Digest`/`Digester` and `Unknown()`. **Built (T-0963, row B9):** `modules/reports/export` (service, `reports.export` job, About block), migration 0065, RP5 landed. **PDF and HTML built (T-0964, row B10)**, §7.1b | §7, rows B9, B10 |
 | `platform/chartimg` | **Decided, not built (ADR-0014, ratified 2026-11-15; build T-2135, fitness `fitness-chartimg` CI1–CI5 T-2134).** The one chart-image renderer: typed chart spec + stored run rows → `Scene` → PNG (`x/image/vector`, embedded Plex TTF, integer layout) and SVG. PDF embeds the PNG as a Flate image XObject, PNG export and inline mail image (`Content-ID`, no attachment fallback) use the same pixels, HTML export uses the SVG. Limits 2,400×1,600 px, 4 MiB, 5 s deadline, `GOMAXPROCS/2` concurrent; no network or filesystem | EB-5 §4.2, §6.3, §6.4, FR-GC-19, AC-GC-13 |
 | `platform/jobs` | Kinds, `ModeDefault` and `ModeManagedTx`, queue, leases, and the DM-44 `Schedule` value (T-0951: recurrence, IANA zone, DST rules, `Check` fires a missed run once). **The stored schedule table and the tick loop are not built** (T-0951 follow-up) | §8, row P4 |
@@ -794,6 +794,14 @@ Each is in review under §3.3's own rule ("a dataset that needs another function
   and `domainsReadable < domainsInScope` for partial coverage. `GET /reports/runs/{runId}/policies/{policyId}/targets`
   pages one policy row's direct targets (`basis: direct_targets`, `count` in scope, name order) behind the
   `listReportRunRows` run-read gate. Until T-1114 lands the dataset it answers 501 (`pending.go`).
+- **Change-history row detail (T-1717, additive within `/api/v1`).** `GET /reports/runs/{runId}/rows/{rowKey}/detail`
+  (`getReportRunRowDetail`, `reports.run`, the `listReportRunRows` run-read gate) answers `ReportRowDetail`, one of
+  `edited` (attributes: name, originating time, version; `valuesRecorded` false), `membership` (added/removed counts,
+  out-of-scope counts, one page of in-scope names per `side`), `credential`, `permissions` (`descriptorRead` false) and
+  `removed` (Deleted presets: `deletedAt` on or before, `state` `removed_restore_unknown`, `restorableUntil` always
+  typed unknown with its reason). Every kind carries `when`, `object` (logon name, domain, OU path, DN as attributes)
+  and `actor` (`notRecorded`, or `activediq` with principal and `operationId`). Unknowns are typed cells, never
+  empty or zero. The read behind it is T-2117; until then it answers 501 (`pending.go`).
 - A PSO row's own name is its own identity (row anchor `dom` makes the row visible); a PSO is **not** a
   `MaskAnchor` identity here because the row is the PSO. The `policy_source` masking of `inventory.users`
   (§3.3) is unchanged.
@@ -950,7 +958,7 @@ replicated-logon thresholds (spec §6.4) is `Min: 30` on USR-03's `days` paramet
   - Test: `definitions_pg_test.go` (whole HTTP stack, response conformance on, both PostgreSQL versions).
 - **Wired in production (T-1104):** `compose/server.bootReport` adds `inventory.Datasets()` to the host under owner key
   `inventory` (checked by `report.CheckTables` against `store/owners`); the reports module (`wiring.go`, ready hook after the host is sealed) compiles the host's datasets with
-  `reportsql.NewRegistry` over the live schema catalogue (`reportSchema`, a registered platform path: it runs before the
+  `reportsql.NewRegistry` over the live schema catalogue (`schema` in the reports module; the directory module's `catalogSchema` is the other, a registered platform path: it runs before the
   install tenant exists) and passes `library.Load(library.Shipped(), …)` as `run.Catalog`. The placeholder catalogue that knew no definition is deleted.
 - **Tests.** `library/library_test.go` (`Test_reports_library_matches_spec`, `Test_reports_search_by_me_name`,
   immutability, broken definitions, crosswalk agreement); `directory/inventory/reports_library_test.go` (every
@@ -1622,11 +1630,40 @@ A stored run holds rows trimmed to one account's scope at one moment. Holding `r
   `ReadScopes.For` call per request and sets each item's `scopeCurrent` to "fingerprint equals the
   stored one" (check 4 as data, not as a 409). Where it is false the item's `rowCount` is null. No
   refusal here, so no `read_denied` event.
+- **Latest run** (`GET /reports/runs/latest`, `getLatestReportRun`, T-2083, home-report-widgets §3.2) is
+  `run.Service.Latest`. It selects `WHERE runner_account = chain.Requester AND definition_id AND preset`
+  (never another account, so a schedule owned by someone else that delivers to the caller is never a
+  candidate: `never_run`), prefers the latest succeeded run over a newer failed one, and reports a newer
+  queued or running run as `inFlight`. Header only (`rows=0`) it does one `ReadScopes.For` call and compares the
+  fingerprint like the history list (`scope_changed`: no count, no rows). With `rows=10` the first page goes through
+  `Service.Page` and so through `ReadAccess` (checks 1 to 5): no second gate. The page is trimmed to the
+  definition's **widget profile** (`report.WidgetProfile`: `views`, at most 5 `tableColumns`, optional `widget` member of
+  the definition file, validated against the definition's own columns; no profile means count only and
+  `rows=10` is a 400 `no_table_view`). `stale_data` is a current run whose freshness state is `stale`.
+  The response carries `asOf` and `freshness` (with `stale[]`), never the digest, parameters or scope text.
+  The shipped definitions get their profiles in the shipped-library change (LOCK-hashed files).
 - **Retry** (`POST /reports/runs/{id}/retry`, `retryReportRun`, T-0891) passes checks 1 and 2 only. It
   is not blocked by 3 or 4, which is its purpose. It resolves the stored `definition_id`, version,
   preset and `params` again under the caller's current scope, then takes the §6.1 create path
   (reuse window, job limit) with `rerun_of` = the source run. A source in `queued` or `running` is a 409
   `run_in_progress`.
+
+- **SYS-03 contract (T-1720; implementation T-1743, T-1744, T-1745).** `api/openapi/modules/reports.yaml` carries, for DC
+  Replication Status: ten new `ReportColumnId` values (`domain_controller`, `partition`, `partner_dc`, `last_attempt`,
+  `last_success`, `consecutive_failures`, `last_error_code`, `last_error`, `lingering_risk`, `read_at`; `domain` and
+  `status` are reused); `ReportRun.coverage` extended with optional `unanswered[]` (DC, reason, error code and fixed
+  message, row key, read time), `notReadByCap` and `readCap` (100); and `ReportRun.replication` (pinned thresholds,
+  `statusCounts` for failing, warning, healthy and not_reported in that order, `tombstoneLifetimeDays`,
+  `nextReadAllowedAfter`). A DC that did not answer is **both** an `unanswered` entry and one stored row with status
+  `not_reported`, so exports and the digest cannot drop it, and it is counted under not_reported, never healthy. A DC
+  left unread by the cap has no row, only the `notReadByCap` count. SYS-03 reads at most 100 DCs, in DNS-name order,
+  and does not refuse the run (the USR-04/PWD-03 cap refuses with `per_dc_read_cap_exceeded`). The status `status`
+  sort is by severity (failing, warning, not_reported, healthy). Two permissions, distinct from `reports.run`:
+  `reports.replication.read` (thresholds read; also checked inside `createReportRun` for the SYS-03 definition, like
+  the export check of `reports.run`) and `reports.replication.configure` (thresholds Action
+  `reports.replication.thresholds.update` with preview twin and undo pair `…restore`). The thresholds are a tenant
+  setting; a run pins the values it used. `listReportManagers` (`GET /reports/managers`) is the USR-12 picker list; the
+  pick travels as the existing `ReportSubjectRef`. Until the owning rows land the new operations answer 501 from `pending.go`.
 
 **Test RP9** (row B4, listed by T-0873): `Test_run_read_bound_to_runner_and_scope`:
 - a second account holding `reports.run` and `reports.export` gets 404 on GET, page and export
@@ -2036,6 +2073,7 @@ threshold, the 10 MB limit) are confirmed by row B13, and the defaults apply unt
 
 ## Changelog
 
+- 2026-11-14 · T-2083 · §6.6 latest-run read (`getLatestReportRun`) and the definition widget profile (home-report-widgets §3).
 - 2026-11-04 · T-1124 · §3.3a second-slice fragments (duplicates, direct reports, logon hours in a zone, noise-filtered change aggregation, policy rows), slot `{arg}`, `HourMask`, RP12 to RP16, decisions 12 and 13. No AST change.
 - 2026-11-04 · T-0981 · §8 aligned with TM-D30 and spec reports-2a §8.4–§8.6: owner-only update, delete and resume with `not_owner` (was `owner_only`), run now 404 to every non-owner, resume `confirmedExternal` (R5), SX-1/SX-2 step-up, SX-5 and SX-6 in the fire checks, SX-8 audit fields. Proof: spec AC-51–AC-57 (B11).
 

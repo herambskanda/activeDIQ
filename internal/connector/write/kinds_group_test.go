@@ -380,3 +380,17 @@ func TestGroupContactMemberWithoutObjectSid(t *testing.T) {
 		t.Fatalf("got %q", rule(r))
 	}
 }
+
+// TestGM5NonGroupTargetWithAssertedGroupIsRefused is GM5 (iii) of ADR-0017: the asserted class is not on
+// the wire, so a user GUID aimed as the group target is refused by the live class read.
+func TestGM5NonGroupTargetWithAssertedGroupIsRefused(t *testing.T) {
+	f := newGroupFix(t, nil, "513")
+	f.d.objs[f.group] = objEntry(f.group, "CN=Not A Group,OU=People,DC=lab,DC=test", dom+"-1200",
+		[]string{"top", "person", "organizationalPerson", "user"}, nil)
+	for _, add := range []bool{true, false} {
+		_, r := readMembership(f.d, add, f.group, f.member, clsUser)
+		if rule(r) != "ClassNotAllowed" || len(f.d.sent) != 0 {
+			t.Errorf("add=%v: got %q", add, rule(r))
+		}
+	}
+}
