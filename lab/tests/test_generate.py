@@ -59,6 +59,21 @@ class Shape(unittest.TestCase):
         self.assertGreaterEqual(m["counts"]["computers"], 1500)
         self.assertGreaterEqual(m["counts"]["departments"], 10)
 
+    def test_published_printers_are_seeded_under_their_servers(self):
+        """T-1719: printQueue objects are children of a server computer object, loaded after it, with a DN that needs escaping."""
+        files, m = gen("small")
+        self.assertGreaterEqual(m["counts"]["printers"], 3)
+        self.assertEqual(m["counts"]["printers"], len(m["printers"]))
+        body = "".join(v for k, v in files.items() if k.startswith("10-"))
+        self.assertEqual(body.count("objectClass: printQueue\n"), m["counts"]["printers"])
+        for p in m["printers"]:
+            self.assertTrue(p["dn"].endswith("," + p["server_dn"]), p)
+            own, srv = generate.ldif_value("dn", p["dn"]) + "\n", generate.ldif_value("dn", p["server_dn"]) + "\n"
+            self.assertIn(own, body)   # a non-ASCII DN is base64 in LDIF, so compare the encoded line
+            self.assertLess(body.index(srv), body.index(own))
+        self.assertTrue(any("\\," in p["dn"] for p in m["printers"]), "no printer needs DN escaping")
+        self.assertTrue(any(not p["described"] for p in m["printers"]), "no bare printer")
+
     def test_every_user_state_present(self):
         _, m = gen("small")
         states = m["counts"]["user_states"]

@@ -1,5 +1,6 @@
-import { type FormEvent, useEffect, useId, useRef } from "react";
+import { type FormEvent, useEffect, useId, useMemo, useRef } from "react";
 
+import { api } from "../../api/client";
 import {
   Button,
   Chip,
@@ -9,30 +10,45 @@ import {
   Table,
   TextInput,
 } from "../../ds/components";
-import { api } from "../../api/client";
-import { SEARCH_LIMIT, validateQuery } from "./search-model";
-import { type ApiClient, type DirectoryUser, useUserSearch } from "./use-user-search";
+import "./search-results.css";
+import {
+  chipView,
+  disambiguatorOf,
+  identifiersOf,
+  PAGE_SIZE,
+  type SearchHit,
+  type SearchResult,
+  validateSearchText,
+} from "./search-results-model";
+import { type ApiClient, useDirectorySearch } from "./use-directory-search";
 import { useQueryInUrl } from "./use-query-in-url";
 
 /** How long typing must pause before the search is sent. */
 export const DEBOUNCE_MS = 300;
 
+/**
+ * The user search (/directory/users?q=). It asks directory.search for users only, so it answers
+ * from the inventory, trimmed by the caller's ReadScope, and pages by the API's cursor. Every
+ * value shown is a field of the API's answer.
+ */
 export function UserSearchPage({ client = api }: { readonly client?: ApiClient }) {
   const { text, setText, committed, commit } = useQueryInUrl();
   const resultsId = useId();
   const input = useRef<HTMLInputElement>(null);
 
   const trimmed = text.trim();
-  const invalid = validateQuery(trimmed);
+  const invalid = validateSearchText(trimmed);
+  // A refused text that arrives in the address bar is never sent.
+  const toSend = validateSearchText(committed) === undefined ? committed : "";
 
-  // Debounce: send the search once typing pauses. Invalid text is never sent.
+  // Debounce: send the search once typing pauses. Refused text is never sent.
   useEffect(() => {
     if (invalid !== undefined || trimmed === committed) return;
     const timer = setTimeout(() => commit(trimmed), DEBOUNCE_MS);
     return () => clearTimeout(timer);
   }, [trimmed, invalid, committed, commit]);
 
-  const { state, retry } = useUserSearch(client, committed);
+  const { state, retry, page, next, previous, first } = useDirectorySearch(client, toSend, "users");
 
   const submit = (e: FormEvent) => {
     e.preventDefault();
@@ -54,9 +70,9 @@ export function UserSearchPage({ client = api }: { readonly client?: ApiClient }
           type="search"
           autoComplete="off"
           spellCheck={false}
-          placeholder="Name, account name or user principal name"
+          placeholder="Name, account name, user principal name or e-mail"
           value={text}
-          error={invalid}
+          error={invalid ?? validateSearchText(committed)}
           onChange={(e) => setText(e.target.value)}
           trailing={text !== "" && <Button onClick={clear}>Clear</Button>}
         />
@@ -67,7 +83,9 @@ export function UserSearchPage({ client = api }: { readonly client?: ApiClient }
           Results
         </h2>
         {state.status === "idle" && (
-          <StatePanel>Type a name, account name or user principal name to find users.</StatePanel>
+          <StatePanel>
+            Type a name, account name, user principal name or e-mail to find users you may see.
+          </StatePanel>
         )}
         {state.status === "loading" && <Skeleton label="Searching" />}
         {state.status === "failed" && (
@@ -89,66 +107,191 @@ export function UserSearchPage({ client = api }: { readonly client?: ApiClient }
                 Sign in
               </Button>
             )}
-            {state.failure.kind !== "denied" && state.failure.kind !== "unauthenticated" && (
+            {(state.failure.kind === "rate-limited" ||
+              state.failure.kind === "unreachable" ||
+              state.failure.kind === "error") && (
               <Button variant="primary" onClick={retry}>
                 Retry
               </Button>
             )}
+            {state.failure.kind === "invalid" && first !== undefined && (
+              <Button variant="primary" onClick={first}>
+                Back to the first page
+              </Button>
+            )}
+            {state.failure.kind === "invalid" && first === undefined && (
+              <Button onClick={clear}>Clear search</Button>
+            )}
           </StatePanel>
         )}
-        {state.status === "done" && state.users.length === 0 && (
-          <StatePanel title={`No users match “${committed}”`}>
-            <p>Check the spelling, or try part of the account name or user principal name.</p>
-            <Button onClick={clear}>Clear search</Button>
-          </StatePanel>
+        {state.status === "done" && (
+          <Answer
+            result={state.result}
+            q={toSend}
+            page={page}
+            next={next}
+            previous={previous}
+            clear={clear}
+          />
         )}
-        {state.status === "done" && state.users.length > 0 && <Results users={state.users} />}
       </section>
     </main>
   );
 }
 
-const COLUMNS: readonly Column<DirectoryUser>[] = [
-  {
-    key: "name",
-    header: "Display name",
-    rowHeader: true,
-    cell: (u) => u.displayName,
-    title: (u) => u.displayName,
-  },
-  {
-    key: "sam",
-    header: "Account name",
-    mono: true,
-    cell: (u) => u.samAccountName,
-    title: (u) => u.samAccountName,
-  },
-  {
-    key: "upn",
-    header: "User principal name",
-    mono: true,
-    cell: (u) => u.userPrincipalName,
-    title: (u) => u.userPrincipalName,
-  },
-  {
-    key: "status",
-    header: "Status",
-    cell: (u) => (
-      <Chip tone={u.enabled ? "ok" : "muted"}>{u.enabled ? "Enabled" : "Disabled"}</Chip>
-    ),
-  },
-];
+function Answer({
+  result,
+  q,
+  page,
+  next,
+  previous,
+  clear,
+}: {
+  readonly result: SearchResult;
+  readonly q: string;
+  readonly page: number;
+  readonly next: (() => void) | undefined;
+  readonly previous: (() => void) | undefined;
+  readonly clear: () => void;
+}) {
+  const group = result.groups.find((g) => g.type === "users");
+  const users = group?.items ?? [];
+  const showDomain = users.some((u) => u.domain !== "");
+  const columns = useMemo(() => columnsOf(showDomain), [showDomain]);
 
-function Results({ users }: { readonly users: readonly DirectoryUser[] }) {
-  const capped = users.length >= SEARCH_LIMIT;
+  if (users.length === 0) {
+    return result.refine ? (
+      <StatePanel title="Keep typing to narrow the search">
+        <p>Too many users match this text to rank them. Add more of the name or identifier.</p>
+        <Button onClick={clear}>Clear search</Button>
+      </StatePanel>
+    ) : (
+      <StatePanel title={`No users match “${shorten(q)}” in your scope`}>
+        <p>
+          Check the spelling, or try part of the account name, user principal name or e-mail. If you
+          expected a result, your scope may not cover it: ask your activeDIQ administrator.
+        </p>
+        <Button onClick={clear}>Clear search</Button>
+      </StatePanel>
+    );
+  }
+
+  const from = (page - 1) * PAGE_SIZE + 1;
+  const to = from + users.length - 1;
+  const of = group?.count === undefined ? "" : ` of ${group.count}`;
   return (
     <>
       <p className="diq-hint" role="status">
-        {capped
-          ? `Showing the first ${users.length} matches. Type more to narrow the search.`
-          : `${users.length} ${users.length === 1 ? "user" : "users"} found.`}
+        {page === 1 && next === undefined
+          ? `${users.length} ${users.length === 1 ? "user" : "users"} found.`
+          : `Showing ${from}–${to}${of} users.`}
       </p>
-      <Table caption="Matching users" columns={COLUMNS} rows={users} rowKey={(u) => u.objectGuid} />
+      {result.refine && (
+        <StatePanel title="Keep typing to narrow the search">
+          <p>
+            Too many users match this text to rank them, so counts are not shown. Closer matches are
+            listed below.
+          </p>
+        </StatePanel>
+      )}
+      <Table caption="Matching users" columns={columns} rows={users} rowKey={(u) => u.objectId} />
+      {group?.limitReached === true && (
+        <p className="diq-hint">
+          Showing the first 1,000 matches. Refine your search to see others.
+        </p>
+      )}
+      {(previous !== undefined || next !== undefined) && (
+        <nav className="sr-pages" aria-label="Result pages">
+          {previous !== undefined && <Button onClick={previous}>Previous page</Button>}
+          <span>Page {page}</span>
+          {next !== undefined && (
+            <Button variant="primary" onClick={next}>
+              Next page
+            </Button>
+          )}
+        </nav>
+      )}
+      <p className="sr-foot">
+        {result.asOf === null ? (
+          "The directory inventory has not synced yet."
+        ) : (
+          <>
+            Directory inventory as of <time dateTime={result.asOf}>{formatAsOf(result.asOf)}</time>.
+          </>
+        )}
+      </p>
     </>
   );
+}
+
+function shorten(q: string): string {
+  const chars = Array.from(q);
+  return chars.length <= 60 ? q : `${chars.slice(0, 59).join("")}…`;
+}
+
+function formatAsOf(at: string): string {
+  const d = new Date(at);
+  return Number.isNaN(d.getTime())
+    ? at
+    : d.toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" });
+}
+
+function columnsOf(showDomain: boolean): readonly Column<SearchHit>[] {
+  const cols: Column<SearchHit>[] = [
+    {
+      key: "name",
+      header: "Display name",
+      rowHeader: true,
+      cell: (u) => u.displayName,
+      title: (u) => u.displayName,
+    },
+    {
+      key: "identifiers",
+      header: "Account name · principal name · e-mail",
+      mono: true,
+      cell: (u) => identifiersOf(u).join(" · "),
+      title: (u) => identifiersOf(u).join(" · "),
+    },
+    {
+      key: "status",
+      header: "Status",
+      cell: (u) => (
+        <span className="sr-chips">
+          {u.status.flatMap((c, i) => {
+            const v = chipView(c);
+            return v === undefined
+              ? []
+              : [
+                  <Chip key={`${c.kind}:${i}`} tone={v.tone}>
+                    {v.label}
+                  </Chip>,
+                ];
+          })}
+        </span>
+      ),
+    },
+    {
+      key: "disambiguator",
+      header: "Title · office",
+      cell: (u) => disambiguatorOf(u),
+      title: disambiguatorOf,
+    },
+    {
+      key: "dn",
+      header: "Distinguished name",
+      mono: true,
+      cell: (u) => u.distinguishedName,
+      title: (u) => u.distinguishedName,
+    },
+  ];
+  if (showDomain) {
+    cols.push({
+      key: "domain",
+      header: "Domain",
+      mono: true,
+      cell: (u) => u.domain,
+      title: (u) => u.domain,
+    });
+  }
+  return cols;
 }

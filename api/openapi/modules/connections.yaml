@@ -3,6 +3,89 @@
 # step-up (section 7.4). The callback is the browser's return from the IdP (AN-11): it carries no
 # credential of ours, so the state it presents is the credential.
 paths:
+  /connections/health:
+    get:
+      tags: [connections]
+      operationId: listConnectionHealth
+      summary: List the health of the caller's connections
+      description: >-
+        Answers one row per directory connection in the caller's tenant that the caller may read, for the Home
+        "Directory health" and "Needs you" panels. The row set is trimmed to the connections the caller's
+        connections.read grant covers before anything is counted or ordered; a connection outside it is not
+        in the answer and not in any total. Rows are ordered by displayName, then id, so the order is stable.
+        state is synced (last sync inside its expected interval, every DC reachable), lagging (the last
+        successful sync is older than the interval, or some but not all DCs are unreachable), dc_unreachable
+        (no DC is reachable) or suspended (an administrator paused the connection). lastSyncAt is null and
+        lagSeconds is null when the connection has never synced. The rows carry no credential, keytab, bind
+        identity or service-account DN. A tenant with no connection answers 200 with an empty items list. A caller without connections.read gets 403
+        (never an empty list) and learns nothing about which connections exist; getConnectionSummary is the count
+        any signed-in administrator may read.
+      x-permission: connections.read
+      x-activediq-stability: preview
+      x-activediq-limits:
+        class: read
+      x-activediq-parity: [ADM-002]
+      responses:
+        "200":
+          description: One health row per readable connection
+          content:
+            application/json:
+              schema:
+                $ref: modules/connections.yaml#/components/schemas/ConnectionHealthList
+              example:
+                items:
+                  - id: 3f0c8a52-6a1e-4c1b-9d57-2a7b1e5c9a10
+                    displayName: corp.example.com
+                    state: lagging
+                    lastSyncAt: "2026-11-12T08:14:03Z"
+                    lagSeconds: 1260
+                    dcReachable: 2
+                    dcTotal: 3
+        "401":
+          $ref: shared/problems.yaml#/components/responses/Unauthenticated
+        "403":
+          $ref: shared/problems.yaml#/components/responses/Forbidden
+        "429":
+          $ref: shared/problems.yaml#/components/responses/RateLimited
+        "500":
+          $ref: shared/problems.yaml#/components/responses/Internal
+  /connections/summary:
+    get:
+      tags: [connections]
+      operationId: getConnectionSummary
+      summary: Count the tenant's connections (Home first-run)
+      description: >-
+        Answers how many directory connections the caller's tenant has, and nothing else, so the console can
+        tell a tenant that has not connected a directory yet (connectionCount 0, the Home first-run state) from
+        one that has. Any signed-in administrator may call it: it needs no connections.read, because the
+        first-run screen must render for an administrator whose grant covers no connection. The count is the
+        whole tenant's, not trimmed to the caller's grant, and carries no name, id, state or other detail; the
+        detail is listConnectionHealth, which needs connections.read. The three outcomes stay distinct: a
+        tenant with no connection answers 200 with connectionCount 0 (never an error and never an empty
+        list), an unauthenticated caller gets 401, and a caller without connections.read who calls
+        listConnectionHealth gets 403 there, not an empty list.
+      x-permission: authenticated
+      x-activediq-stability: preview
+      x-activediq-limits:
+        class: read
+      x-activediq-parity: [ADM-002]
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          description: The number of connections in the tenant
+          content:
+            application/json:
+              schema:
+                $ref: modules/connections.yaml#/components/schemas/ConnectionSummary
+              example:
+                connectionCount: 0
+        "401":
+          $ref: shared/problems.yaml#/components/responses/Unauthenticated
+        "429":
+          $ref: shared/problems.yaml#/components/responses/RateLimited
+        "500":
+          $ref: shared/problems.yaml#/components/responses/Internal
   /connections/{connectionId}/takeover-attestation:
     post:
       tags: [connections]
@@ -149,6 +232,67 @@ components:
         type: string
         format: uuid
   schemas:
+    ConnectionHealthList:
+      description: One row per readable connection. Not paged, because a tenant has few connections; at most 256.
+      type: object
+      required: [items]
+      additionalProperties: false
+      properties:
+        items:
+          type: array
+          maxItems: 256
+          items:
+            $ref: modules/connections.yaml#/components/schemas/ConnectionHealth
+    ConnectionSummary:
+      description: How many connections the tenant has. A count only; no connection is identified.
+      type: object
+      required: [connectionCount]
+      additionalProperties: false
+      properties:
+        connectionCount:
+          type: integer
+          minimum: 0
+          maximum: 256
+    ConnectionHealthState:
+      description: >-
+        synced, lagging (last sync older than its interval, or some DCs unreachable), dc_unreachable (no DC
+        reachable) or suspended (paused by an administrator).
+      type: string
+      enum: [synced, lagging, dc_unreachable, suspended]
+      x-activediq-enum: open
+    ConnectionHealth:
+      description: The health of one connection. Nothing here is a credential or an identity the connection binds as.
+      type: object
+      required: [id, displayName, state, lastSyncAt, lagSeconds, dcReachable, dcTotal]
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          format: uuid
+        displayName:
+          type: string
+          maxLength: 256
+        state:
+          $ref: modules/connections.yaml#/components/schemas/ConnectionHealthState
+        lastSyncAt:
+          description: The last successful sync, UTC. Null when the connection has never synced.
+          type: [string, "null"]
+          format: date-time
+        lagSeconds:
+          description: Seconds since the last successful sync, at the time of the answer. Null when it has never synced.
+          type: [integer, "null"]
+          minimum: 0
+          maximum: 9007199254740991
+        dcReachable:
+          description: Domain controllers that answered the last probe.
+          type: integer
+          minimum: 0
+          maximum: 1000
+        dcTotal:
+          description: Domain controllers known for the connection.
+          type: integer
+          minimum: 0
+          maximum: 1000
     TakeoverAttestationStart:
       description: Where the Global Administrator signs in.
       type: object

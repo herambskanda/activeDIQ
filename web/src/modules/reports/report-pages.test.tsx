@@ -24,10 +24,10 @@ const column = (id: string, label: string, type = "text") => ({
   filterOperators: ["equals", "contains"],
 });
 const svcFilter = {
-  kind: "ReportFilterConditionView",
+  kind: "condition",
   column: "probable_service_account",
   operator: "equals",
-  values: [{ kind: "ReportValueBoolean", value: false }],
+  values: [{ kind: "boolean", value: false }],
 };
 const definition = {
   id: "usr-03",
@@ -101,8 +101,8 @@ const page = (rows: number, next: string | null = null) => ({
   rows: Array.from({ length: rows }, (_, i) => ({
     rowKey: `r${i}`,
     cells: [
-      { kind: "ReportCellText", value: i === 0 ? "<img src=x onerror=alert(1)>" : `User ${i}` },
-      { kind: "ReportCellInteger", value: String(i) },
+      { kind: "text", value: i === 0 ? "<img src=x onerror=alert(1)>" : `User ${i}` },
+      { kind: "integer", value: String(i) },
     ],
   })),
 });
@@ -246,7 +246,7 @@ describe("a report opens and runs without a Generate step", () => {
     await settle(0);
     const last = calls.filter((c) => c.method === "POST").at(-1)!;
     expect(JSON.parse(last.body).parameters.period).toEqual({
-      kind: "ReportPeriodLastDays",
+      kind: "last_days",
       days: 90,
     });
   });
@@ -451,14 +451,62 @@ describe("states", () => {
     expect(button("Retry")).toBeTruthy();
   });
 
-  it("does not run a report that needs a group, and says so", async () => {
+  it("does not run a report that needs a group until one is chosen", async () => {
     respond = ({ url }) =>
       url.pathname.endsWith("/usr-03")
         ? json(200, { ...definition, subjectKind: "group" })
         : undefined;
     await mount("/reports/usr-03", "report");
-    expect(text()).toContain("about a specific group or user");
+    expect(text()).toContain("Choose the group this report covers");
+    expect(container.querySelector('input[role="combobox"]')).toBeTruthy();
     expect(calls.some((c) => c.method === "POST")).toBe(false);
+  });
+
+  it("searches groups on the server, picks one and runs the report for it", async () => {
+    const guid = "22222222-2222-4222-8222-222222222222";
+    respond = ({ url, body }) => {
+      if (url.pathname.endsWith("/usr-03"))
+        return json(200, { ...definition, subjectKind: "group" });
+      if (url.pathname.endsWith("/directory/search")) {
+        expect(body).toMatchObject({ q: "fin", type: "groups" });
+        return json(200, {
+          asOf: null,
+          refine: false,
+          groups: [
+            {
+              type: "groups",
+              items: [
+                {
+                  type: "groups",
+                  objectId: guid,
+                  displayName: "Finance",
+                  distinguishedName: "CN=Finance,OU=Groups,DC=lab,DC=test",
+                  domain: "",
+                  matchClass: "prefix",
+                  highlights: [],
+                  status: [],
+                },
+              ],
+            },
+          ],
+        });
+      }
+      return undefined;
+    };
+    await mount("/reports/usr-03", "report");
+    await setValue(container.querySelector<HTMLInputElement>('input[role="combobox"]')!, "fin");
+    await settle(300);
+    const option = container.querySelector<HTMLElement>('[role="option"]')!;
+    expect(option.textContent).toContain("CN=Finance,OU=Groups,DC=lab,DC=test");
+    await click(option);
+    await click(button("Run for 1 group"));
+    expect(window.location.search).toBe(`?s=${guid}`);
+    const posts = calls.filter((c) => c.method === "POST" && c.url.pathname.endsWith("/runs"));
+    expect(posts).toHaveLength(1);
+    expect(JSON.parse(posts[0]!.body)).toMatchObject({
+      definitionId: "usr-03",
+      parameters: { subjects: [{ guid }] },
+    });
   });
 });
 
