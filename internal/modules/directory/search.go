@@ -5,15 +5,15 @@ import (
 	"encoding/json/jsontext"
 	"errors"
 
+	"github.com/skenzeriq/activediq/internal/directory/search"
 	"github.com/skenzeriq/activediq/internal/modules/directory/api"
-	"github.com/skenzeriq/activediq/internal/modules/search"
 	"github.com/skenzeriq/activediq/internal/platform/apihost"
 	"github.com/skenzeriq/activediq/internal/platform/apihost/apitypes"
 	"github.com/skenzeriq/activediq/internal/platform/authn/tenantref"
 	"github.com/skenzeriq/activediq/internal/platform/authority"
 )
 
-// UniversalSearch is the search service (modules/search). *search.Service implements it.
+// UniversalSearch is the search service (directory/search). *search.Service implements it.
 type UniversalSearch interface {
 	Search(ctx context.Context, c search.Call) (search.Result, error)
 }

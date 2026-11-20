@@ -10,8 +10,7 @@ from pathlib import Path
 LAB = Path(__file__).resolve().parent.parent
 REPO = LAB.parent.parent
 OLD = "192.168.1." + "9"  # assembled so this file does not match its own scan
-DRIVERS = ["agent-verify", "agent-unenrolled-verify", "gssapi-lab", "dc1-clock", "dc1-policy", "dc1-evidence", "skeleton-proof-evidence"]
-GATED_VIA_LOADER = ["capture-tsprops"]  # subcommand CLI; gated by dc1winrm.load_env, covered by test_shared_loader_has_no_default
+DRIVERS = ["agent-verify", "agent-unenrolled-verify", "identity-verify", "gssapi-lab", "dc1-clock", "dc1-policy", "dc1-evidence", "skeleton-proof-evidence", "capture-tsprops", "fs1-lab"]
 HOOK = """import socket
 def _no(*a, **k):
     open(%r, "a").write("connect\\n"); raise OSError("network blocked by test")
@@ -33,7 +32,11 @@ class DcAddrRequired(unittest.TestCase):
         env.update(extra_env or {})
         if name == "dc1-evidence":
             args = ["now"]
-        elif name == "agent-unenrolled-verify":
+        elif name == "fs1-lab":
+            args = ["check"]  # positional only; load_env (the address gate) runs first
+        elif name == "capture-tsprops":
+            args = ["capture", "--out", str(d / "out")]  # no --log; the address gate runs in cmd_capture
+        elif name in ("agent-unenrolled-verify", "identity-verify"):
             args = ["--log", str(d / "x.log")]  # no subcommand; the address gate runs right after parse_args
         else:
             args = ["--log", str(d / "x.log"), "prepare"]
@@ -82,7 +85,7 @@ class DcAddrRequired(unittest.TestCase):
                 self.assertTrue("require_dc_addr" in t or "dc1winrm.load_env" in t
                                 or re.search(r"from dc1winrm import [^\n]*\bload_env\b", t),
                                 f"{p.name} reaches the DC without the required-address gate")
-                self.assertIn(p.name, DRIVERS + GATED_VIA_LOADER, f"add {p.name} to DRIVERS")
+                self.assertIn(p.name, DRIVERS, f"add {p.name} to DRIVERS")
 
     def test_old_address_is_gone_from_lab_and_runbooks(self):
         hits = []
@@ -96,21 +99,6 @@ class DcAddrRequired(unittest.TestCase):
                     except UnicodeDecodeError:
                         pass
         self.assertEqual(hits, [])
-
-    def test_shared_loader_has_no_default(self):
-        sys.path.insert(0, str(LAB / "lib"))
-        import dc1winrm
-        d = Path(tempfile.mkdtemp()); f = d / "e"; f.write_text("WIN_LAB_ADMIN_PASSWORD=x\n")
-        old = os.environ.pop("WIN_LAB_DC_ADDR", None)
-        os.environ["WIN_LAB_ENV"] = str(f)
-        try:
-            with self.assertRaises(SystemExit) as c:
-                dc1winrm.load_env("t")
-            self.assertIn("WIN_LAB_DC_ADDR", str(c.exception))
-        finally:
-            os.environ.pop("WIN_LAB_ENV", None)
-            if old is not None:
-                os.environ["WIN_LAB_DC_ADDR"] = old
 
 
 if __name__ == "__main__":

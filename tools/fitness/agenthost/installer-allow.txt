@@ -25,3 +25,12 @@ PrepareDataDir
 GrantChannel
 RollbackGrantChannel
 RevokeChannel
+# T-0724 (needs the security-architect's ruling on this ticket): service recovery (restart x3, 30 s, no reboot,
+# no command) and the "activeDIQ Agent" Application event source, via `agentsetup configure-service` /
+# `unconfigure-service` (typed ChangeServiceConfig2 and registry calls in agentsetup, SYSTEM, no argument).
+# Why not WiX: core ServiceConfigFailureActions in WiX 5.0.2 fails the install (error 1939 on the lab DC);
+# util:ServiceConfig adds a DLL custom action and a Binary row; util:EventSource writes HKLM\SYSTEM registry
+# rows. fitness-built-msi refuses all three on the real MSI. Rollback and uninstall only remove the source.
+ConfigureService
+RollbackConfigureService
+UnconfigureService

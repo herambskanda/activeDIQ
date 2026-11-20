@@ -646,3 +646,127 @@ func TestForeignCustomRIDHolderNoFSPResolvesThroughTrust(t *testing.T) {
 		wantBasisTrust(t, f, "CN=carol,OU=Staff,"+dom, C19, true)
 	})
 }
+
+// T-0834: a grant to a SID of another domain of the forest is answered by the GC, never by the
+// ignorable-prefix rule or the trust seam.
+func TestForestForeignGrantResolvedThroughGC(t *testing.T) {
+	src := foreignID + "-1300"
+	setup := func(withHolder bool) (*fakeDir, string) {
+		f := forest()
+		f.forestDoms = []string{foreignID}
+		holder := u(f, "carol", 4201)
+		if withHolder {
+			f.find(holder).history(src)
+		}
+		f.find(daDN).raw["nTSecurityDescriptor"] = sdBytes(aceSpec{sid: src, mask: wProp, objType: &memberID})
+		return f, holder
+	}
+	grp := func(members ...string) *fobj {
+		return &fobj{dn: "CN=rootgrp,DC=other", sid: src, cls: group, guid: guid.GUID{7, 7},
+			attrs: map[string][]string{"member": members}}
+	}
+	t.Run("live group marks local members", func(t *testing.T) {
+		f, _ := setup(false)
+		m := u(f, "member", 4202)
+		f.gc = []*fobj{grp(m)}
+		wantBasisTrust(t, f, m, C19, true)
+		if f.gcCalls == 0 {
+			t.Error("GC not consulted")
+		}
+	})
+	t.Run("live group, nested local group walked", func(t *testing.T) {
+		f, _ := setup(false)
+		inner := "CN=inner,OU=Staff," + dom
+		f.add(inner, dsid+"-4300", group, "member", u(f, "deep", 4203))
+		f.gc = []*fobj{grp(inner)}
+		wantBasisTrust(t, f, "CN=deep,OU=Staff,"+dom, C19, true)
+	})
+	t.Run("gc down fails closed", func(t *testing.T) {
+		f, _ := setup(false)
+		f.gcErr = errors.New("gc down")
+		r, err := classifyTrust(t, f, daDN)
+		if err == nil || !r.Tier0 || !r.Unknown {
+			t.Errorf("%+v %v", r, err)
+		}
+	})
+	t.Run("member of a third domain fails closed", func(t *testing.T) {
+		f, _ := setup(false)
+		f.gc = []*fobj{grp("CN=x,DC=third,DC=example")}
+		if _, err := classifyTrust(t, f, daDN); err == nil {
+			t.Error("want error")
+		}
+	})
+	t.Run("absent from GC with holder: holder only, trust seam not called", func(t *testing.T) {
+		f, holder := setup(true)
+		f.trustErr = errors.New("trust must not be called")
+		wantBasisTrust(t, f, holder, C19, true)
+	})
+	t.Run("absent from GC without holder: dead grant", func(t *testing.T) {
+		f, _ := setup(false)
+		f.trustErr = errors.New("trust must not be called")
+		if _, err := classifyTrust(t, f, daDN); err != nil {
+			t.Error(err)
+		}
+	})
+}
+
+// T-0834 review fixes: default child-domain DACLs grant the root's Enterprise/Schema Admins; their
+// root-domain members are Tier 0 in the root's snapshot, so the child snapshot must succeed and mark
+// its own members. Without a GC the pre-T-0834 handling stays; a live foreign user fails closed.
+func TestForestForeignGrantReviewFixes(t *testing.T) {
+	childForest := func() (*fakeDir, string) {
+		f := forest()
+		f.nm.RootDomain = mustDN("DC=root,DC=test")
+		f.forestDoms = []string{foreignID}
+		sd := sdBytes(aceSpec{sid: dsid + "-512", mask: gAll},
+			aceSpec{sid: foreignID + "-519", mask: gAll}, aceSpec{sid: foreignID + "-518", mask: gAll})
+		f.add("DC=root,DC=test", foreignID, cls("top", "domain", "domainDNS")).raw["nTSecurityDescriptor"] = sd
+		f.find(cfg).raw["nTSecurityDescriptor"] = sd
+		for _, g := range []string{"Schema Admins", "Enterprise Admins", "Enterprise Key Admins"} {
+			f.drop("CN=" + g + ",CN=Users," + dom)
+		}
+		return f, u(f, "eamember", 4301)
+	}
+	gcGroup := func(rid string, members ...string) *fobj {
+		return &fobj{dn: "CN=g,CN=Users,DC=root,DC=test", sid: foreignID + "-" + rid, cls: group, guid: guid.GUID{8, 8},
+			attrs: map[string][]string{"member": members}}
+	}
+	rootAdmin := "CN=Administrator,CN=Users,DC=root,DC=test"
+	t.Run("default EA/SA grants with root members: succeeds, child member marked", func(t *testing.T) {
+		f, m := childForest()
+		f.gc = []*fobj{gcGroup("519", rootAdmin, m), gcGroup("518", rootAdmin)}
+		wantBasisTrust(t, f, m, C17, true)
+	})
+	t.Run("no GC: default root grant stays ignorable", func(t *testing.T) {
+		f, _ := childForest()
+		f.gcErr = ErrNoGC
+		if r, err := classifyTrust(t, f, "CN=carol,OU=Staff,"+dom); err != nil || r.Unknown {
+			t.Errorf("%+v %v", r, err)
+		}
+	})
+	t.Run("no GC: external-trust holder SID behaves as on main (resolveHistory needs the GC)", func(t *testing.T) {
+		f := forest()
+		f.gcErr = ErrNoGC
+		src := "S-1-5-21-111-222-333-1300"
+		f.find("CN=carol,OU=Staff," + dom).history(src)
+		f.find(daDN).raw["nTSecurityDescriptor"] = sdBytes(aceSpec{sid: src, mask: wProp, objType: &memberID})
+		f.trust = map[string]TrustedPrincipal{src: {Kind: TrustUser}}
+		// The sIDHistory read itself needs the GC (pre-existing, not T-0834): fails closed with ErrNoGC
+		// before forestGrant is reached, so the T-0834 change does not alter this path.
+		r, err := classifyTrust(t, f, "CN=carol,OU=Staff,"+dom)
+		if err == nil || !r.Unknown || !errors.Is(err, ErrNoGC) {
+			t.Errorf("%+v %v", r, err)
+		}
+	})
+	t.Run("live sibling user, no holder: fails closed", func(t *testing.T) {
+		f := forest()
+		f.forestDoms = []string{foreignID}
+		src := foreignID + "-1400"
+		f.find(daDN).raw["nTSecurityDescriptor"] = sdBytes(aceSpec{sid: src, mask: wProp, objType: &memberID})
+		f.gc = []*fobj{{dn: "CN=su,DC=other", sid: src, cls: cls("top", "user"), guid: guid.GUID{9, 9}}}
+		r, err := classifyTrust(t, f, daDN)
+		if err == nil || !r.Unknown || !strings.Contains(err.Error(), src) {
+			t.Errorf("%+v %v", r, err)
+		}
+	})
+}

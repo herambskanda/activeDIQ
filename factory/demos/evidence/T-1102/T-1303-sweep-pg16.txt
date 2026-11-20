@@ -1,0 +1,88 @@
+search latency · PostgreSQL 16 · 50000 objects · ceiling W=10000 · GOMAXPROCS=4 · host CPUs=24
+seed digest 8e30166cb3805ee0dddca8141a6b23b2c6a9566d26a12560ac452f21b329676f
+seed written through inventory.Populator in 7m39.245s; row counts asserted before measuring:
+  user       30000
+  group       8000
+  computer   10000
+  contact     2000
+  total      50000 searchable objects (+ 752 OUs, 2 naming contexts)
+  disabled    4000 accounts   duplicate display names 2464 (4.9 %)
+
+server_version 16.14 · shared_buffers 128MB · 416000 search-key rows · scoped caller sees 8401 objects
+ceiling-sized class: prefix texts holding [9590 8474 7406 7342 7053 6143] matched key rows (W=10000)
+host load at start of timed runs: 4.51 (host CPUs 24)
+
+caller  class           n      p50      p95      p99      max   (ms; 1000 queries per row)
+admin   exact          76    217.6    415.7    507.3    507.3   stopped: 51 of 76 queries over 200ms, so the p95 of 1000 is over budget whatever the rest take
+admin   prefix         86    216.6    452.2    550.3    550.3   stopped: 51 of 86 queries over 200ms, so the p95 of 1000 is over budget whatever the rest take
+admin   fuzzy1        206    187.9    229.2    251.3    262.1   stopped: 51 of 206 queries over 200ms, so the p95 of 1000 is over budget whatever the rest take
+admin   nomatch      1000     14.5    176.2    209.8    261.8
+admin   oneletter    1000     34.4    177.0    211.4    302.8
+admin   ceiling       350    169.1    215.3    243.9    278.8   stopped: 51 of 350 queries over 200ms, so the p95 of 1000 is over budget whatever the rest take
+scoped  exact         118    191.1    314.0    350.9    386.2   stopped: 51 of 118 queries over 200ms, so the p95 of 1000 is over budget whatever the rest take
+scoped  prefix         93    201.0    355.6    534.8    534.8   stopped: 51 of 93 queries over 200ms, so the p95 of 1000 is over budget whatever the rest take
+scoped  fuzzy1        246    183.3    224.1    249.5    266.5   stopped: 51 of 246 queries over 200ms, so the p95 of 1000 is over budget whatever the rest take
+scoped  nomatch      1000     13.4    171.5    200.3    293.0
+scoped  oneletter    1000     31.4    149.4    174.0    303.5
+scoped  ceiling      1000    140.3    172.3    190.5    218.6
+host load at end of timed runs: 10.65 (host CPUs 24)
+
+result equality against the brute-force oracle (25 queries per class and caller, groupLimit 50):
+  exact        50 answers compared
+  prefix       50 answers compared
+  fuzzy1       50 answers compared
+  nomatch      50 answers compared
+  oneletter    50 answers compared
+  ceiling      50 answers compared
+  no disagreement with the oracle; no hidden object returned
+
+plan probes (EXPLAIN ANALYZE of the statement the handler runs):
+  one letter admin   m_prefix key rows read   5731 (W+1 = 10001) · seq scans [] · objects joined 5731
+  one letter scoped  m_prefix key rows read   5731 (W+1 = 10001) · seq scans [] · objects joined 5731
+  fuzzy one-typo admin   mean over 8 queries: key rows read 242 · Rows Removed by Index Recheck 0 · removed by filter 168 · statement 130.9 ms · Index Scan inventory_search_keys_tenant_key_id_key
+  fuzzy one-typo scoped  mean over 8 queries: key rows read 242 · Rows Removed by Index Recheck 0 · removed by filter 168 · statement 119.5 ms · Index Scan inventory_search_keys_tenant_key_id_key
+
+sweep W=5000, ceiling-sized prefix texts [st br w gr] holding [4896 4503 4387 4366] key rows (ms):
+  admin   n  150  p50   133.9  p95   164.7  p99   173.6  max   185.2  within budget
+  scoped  n  150  p50   114.4  p95   140.7  p99   150.7  max   159.6  within budget
+
+sweep W=6000, ceiling-sized prefix texts [sh a j tr] holding [5784 5731 5718 5020] key rows (ms):
+  admin   n  150  p50   140.3  p95   164.4  p99   183.1  max   198.2  within budget
+  scoped  n  150  p50   122.6  p95   142.4  p99   149.4  max   155.8  within budget
+
+sweep W=7000, ceiling-sized prefix texts [pr sh a j] holding [6143 5784 5731 5718] key rows (ms):
+  admin   n  150  p50   149.0  p95   188.1  p99   204.5  max   207.1  within budget
+  scoped  n  150  p50   128.1  p95   158.4  p99   177.1  max   183.0  within budget
+
+sweep W=8000, ceiling-sized prefix texts [h z ch pr] holding [7406 7342 7053 6143] key rows (ms):
+  admin   n  150  p50   160.1  p95   199.0  p99   235.5  max   243.9  within budget
+  scoped  n  150  p50   133.3  p95   163.5  p99   174.3  max   178.5  within budget
+
+sweep W=9000, ceiling-sized prefix texts [gg h z ch] holding [8474 7406 7342 7053] key rows (ms):
+  admin   n  150  p50   162.2  p95   196.2  p99   224.8  max   231.0  within budget
+  scoped  n  150  p50   133.9  p95   159.2  p99   177.8  max   186.3  within budget
+
+sweep W=10000, ceiling-sized prefix texts [n gg h z] holding [9590 8474 7406 7342] key rows (ms):
+  admin   n  150  p50   174.5  p95   212.7  p99   249.9  max   265.2  OVER BUDGET
+  scoped  n  150  p50   147.3  p95   173.3  p99   189.4  max   191.4  within budget
+
+sweep W=20000, ceiling-sized prefix texts [b p t m] holding [17847 16523 15832 14738] key rows (ms):
+  admin   n  150  p50   374.4  p95   435.7  p99   462.9  max   530.7  OVER BUDGET
+  scoped  n  150  p50   304.4  p95   366.5  p99   418.7  max   457.3  OVER BUDGET
+
+sweep W=40000, ceiling-sized prefix texts [s] holding [33504] key rows (ms):
+  admin   n  150  p50   548.3  p95   668.8  p99   758.1  max   782.1  OVER BUDGET
+  scoped  n  150  p50   423.5  p95   515.5  p99   535.8  max   538.4  OVER BUDGET
+
+pg16 admin   exact      p95   415.7ms  OVER BUDGET
+pg16 admin   prefix     p95   452.2ms  OVER BUDGET
+pg16 admin   fuzzy1     p95   229.2ms  OVER BUDGET
+pg16 admin   nomatch    p95   176.2ms  ok
+pg16 admin   oneletter  p95   177.0ms  ok
+pg16 admin   ceiling    p95   215.3ms  OVER BUDGET
+pg16 scoped  exact      p95   314.0ms  OVER BUDGET
+pg16 scoped  prefix     p95   355.6ms  OVER BUDGET
+pg16 scoped  fuzzy1     p95   224.1ms  OVER BUDGET
+pg16 scoped  nomatch    p95   171.5ms  ok
+pg16 scoped  oneletter  p95   149.4ms  ok
+pg16 scoped  ceiling    p95   172.3ms  ok

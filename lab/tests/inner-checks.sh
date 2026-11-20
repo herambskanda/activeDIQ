@@ -15,6 +15,7 @@ USERS='(&(objectCategory=person)(objectClass=user)(!(objectClass=computer)))'
 echo "digest $(L -b $B -s sub '(objectClass=*)' '*' | grep -v '^$' | sort | sha256sum | cut -c1-16) -"
 echo "users $(L -b $B "$USERS" dn | n) $(j 'd["counts"]["users"]')"
 echo "computers $(L -b $B '(objectClass=computer)' dn | n) $(j 'd["counts"]["computers"]')"
+echo "printers $(L -b $B '(objectClass=printQueue)' dn | n) $(j 'd["counts"]["printers"]')"
 echo "groups $(L -b $B '(objectClass=group)' dn | n) $(j 'd["counts"]["groups"]')"
 echo "ous_under_managed $(L -b $B '(objectClass=organizationalUnit)' dn | n) $(( $(j 'd["counts"]["ous"]') - 1 ))"
 for st in disabled never_expires must_change; do

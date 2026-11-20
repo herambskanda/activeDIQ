@@ -141,13 +141,10 @@ func (e *env) wantPostings(t *testing.T, when string) int {
 func assertFuzzyPlan(t *testing.T, plan *planNode) {
 	t.Helper()
 	var posting, recheck, loop int
+	for _, v := range hitsJoinViolations(plan) {
+		t.Error(v)
+	}
 	plan.walk("", func(n *planNode, cte string) {
-		switch n.Relation {
-		case "inventory_search_keys", "inventory_search_trigrams", "directory_objects":
-			if strings.Contains(n.Type, "Seq Scan") {
-				t.Errorf("%s on %s (%s)", n.Type, n.Relation, cte)
-			}
-		}
 		if cte != "m_fuzzy" {
 			return
 		}

@@ -26,6 +26,8 @@ var (
 type WritableDC struct {
 	Host    string
 	DSAGUID string
+	// Site is the AD site the DC reported (DcIdentity.site); empty when it reported none.
+	Site string
 }
 
 // DCDirectory lists a connection's writable DCs, live (Describe with refresh), so a DC rebuilt under
@@ -66,25 +68,36 @@ func (d *DCDirectory) WritableDCs(ctx context.Context, connectionID string, nc a
 	if err != nil {
 		return nil, fmt.Errorf("%w: naming context", ErrInvalidOp)
 	}
-	cc, err := d.src.Connector(ctx, connectionID)
+	resp, err := describeDCs(ctx, d.src, connectionID, ident, "DC discovery")
 	if err != nil {
-		return nil, fmt.Errorf("client: connector for DC discovery: %w", err)
+		return nil, err
+	}
+	return writableDCsOf(resp, want)
+}
+
+// describeDCs is the one live Describe (refresh) path of DC discovery and DC counting. A status without a
+// ConnectorError detail carries a free-text message: it is never passed on.
+func describeDCs(ctx context.Context, src ConnectorSource, connectionID string, ident *connectorv1.DirectoryIdentity, why string) (*connectorv1.DescribeResponse, error) {
+	cc, err := src.Connector(ctx, connectionID)
+	if err != nil {
+		return nil, fmt.Errorf("client: connector for %s: %w", why, err)
 	}
 	resp, err := cc.Describe(ctx, &connectorv1.DescribeRequest{
 		Connection: &connectorv1.ConnectionRef{ConnectionId: connectionID, DirectoryIdentity: ident},
 		Refresh:    true,
 	})
 	if err != nil {
-		// A status without a ConnectorError detail carries a free-text message: never pass it on.
 		if re := (&RemoteError{}); errors.As(FromStatus(err), &re) {
 			return nil, fmt.Errorf("client: connector describe: %w", re)
 		}
 		return nil, ErrDescribeFailed
 	}
-	return writableDCsOf(resp, want)
+	return resp, nil
 }
 
-func writableDCsOf(resp *connectorv1.DescribeResponse, nc []byte) ([]WritableDC, error) {
+// dcsOfNC returns the DCs that serve nc: a domain NC lives on the DCs of that domain, a forest-wide
+// partition on every DC. An nc the response does not describe is ErrDCNC.
+func dcsOfNC(resp *connectorv1.DescribeResponse, nc []byte) ([]*connectorv1.DomainControllerInfo, error) {
 	var kind connectorv1.NamingContextKind
 	for _, n := range resp.GetNamingContexts() {
 		if string(n.GetNcGuid().GetValue()) == string(nc) {
@@ -94,12 +107,23 @@ func writableDCsOf(resp *connectorv1.DescribeResponse, nc []byte) ([]WritableDC,
 	if kind == connectorv1.NamingContextKind_NAMING_CONTEXT_KIND_UNSPECIFIED {
 		return nil, ErrDCNC
 	}
-	var out []WritableDC
+	var out []*connectorv1.DomainControllerInfo
 	for _, dc := range resp.GetDomainControllers() {
-		// Domain NCs live on the DCs of that domain; forest-wide partitions on every DC.
 		if kind == connectorv1.NamingContextKind_NAMING_CONTEXT_KIND_DOMAIN && string(dc.GetDomainNcGuid().GetValue()) != string(nc) {
 			continue
 		}
+		out = append(out, dc)
+	}
+	return out, nil
+}
+
+func writableDCsOf(resp *connectorv1.DescribeResponse, nc []byte) ([]WritableDC, error) {
+	dcs, err := dcsOfNC(resp, nc)
+	if err != nil {
+		return nil, err
+	}
+	var out []WritableDC
+	for _, dc := range dcs {
 		// Only a DC proven writable and reachable is a candidate: UNKNOWN is not writable.
 		if !dc.GetReachable() || dc.GetIsRodc() != connectorv1.TriState_TRI_STATE_FALSE {
 			continue
@@ -109,7 +133,7 @@ func writableDCsOf(resp *connectorv1.DescribeResponse, nc []byte) ([]WritableDC,
 		if host == "" || len(dc.GetIdentity().GetDsaGuid().GetValue()) != guid.Size || err != nil {
 			return nil, ErrDCIdentity
 		}
-		out = append(out, WritableDC{Host: host, DSAGUID: g.String()})
+		out = append(out, WritableDC{Host: host, DSAGUID: g.String(), Site: dc.GetIdentity().GetSite()})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Host < out[j].Host })
 	return out, nil

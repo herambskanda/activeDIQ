@@ -69,6 +69,11 @@ type fakeConnector struct {
 
 	searches []searchRec
 	describe int
+	// reads are the per-object Read requests (the password-change verdicts); pwStates and pwFaults
+	// shape the answer per object GUID text.
+	reads    []*connectorv1.ReadRequest
+	pwStates map[string]connectorv1.PasswordChangeState
+	pwFaults map[string]pwFault
 	// onEntries is called for every batch the fake sends (the memory test samples the heap there).
 	onBatch func()
 }
@@ -259,3 +264,67 @@ func (s *fstream) entry(n fnode) *connectorv1.DirectoryEntry {
 	}
 	return entry(n.n, n.dn, parent, as)
 }
+
+// pwFault is how the fake answers the include_password_change Read of one object.
+type pwFault string
+
+const (
+	pwErr       pwFault = "err"        // the call fails with a status whose message holds a value
+	pwMismatch  pwFault = "mismatch"   // a verdict naming another object
+	pwNoVerdict pwFault = "no_verdict" // a header without the verdict
+	pwCoded     pwFault = "coded"      // NOT_CONFIRMED with an error code
+	pwNoGUID    pwFault = "no_guid"    // a definite state with no object GUID
+)
+
+// Read serves the per-object read that carries the Cannot Change Password verdict. Without a fault the
+// object is NO_DENY_ACE unless pwStates names another state.
+func (f *fakeConnector) Read(_ context.Context, req *connectorv1.ReadRequest, _ ...grpc.CallOption) (grpc.ServerStreamingClient[connectorv1.ReadResponse], error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.reads) < 10_000 { // the memory test reads 100k users: the fake must not be what grows
+		f.reads = append(f.reads, req)
+	}
+	id := textOfWire(req.GetGuid())
+	hdr := &connectorv1.ReadHeader{}
+	if req.GetIncludePasswordChange() {
+		st := connectorv1.PasswordChangeState_PASSWORD_CHANGE_STATE_NO_DENY_ACE
+		if s, ok := f.pwStates[id]; ok {
+			st = s
+		}
+		v := &connectorv1.PasswordChangeVerdict{State: st, ObjectGuid: req.GetGuid()}
+		switch f.pwFaults[id] {
+		case pwErr:
+			return nil, status.Error(codes.Unavailable, "dc down: "+leakSentinel)
+		case pwMismatch:
+			v.ObjectGuid = gid(0xbad)
+		case pwNoVerdict:
+			v = nil
+		case pwCoded:
+			v = &connectorv1.PasswordChangeVerdict{State: connectorv1.PasswordChangeState_PASSWORD_CHANGE_STATE_NOT_CONFIRMED,
+				ErrorCode: connectorv1.ErrorCode_ERROR_CODE_INSUFFICIENT_RIGHTS}
+		case pwNoGUID:
+			v.ObjectGuid = nil
+		}
+		hdr.PasswordChange = v
+	}
+	return &readStream{msgs: []*connectorv1.ReadResponse{
+		{Event: &connectorv1.ReadResponse_Header{Header: hdr}},
+		{Event: &connectorv1.ReadResponse_Completed{Completed: &connectorv1.ReadCompleted{}}},
+	}}, nil
+}
+
+type readStream struct {
+	grpc.ClientStream
+	msgs []*connectorv1.ReadResponse
+}
+
+func (s *readStream) Recv() (*connectorv1.ReadResponse, error) {
+	if len(s.msgs) == 0 {
+		return nil, io.EOF
+	}
+	m := s.msgs[0]
+	s.msgs = s.msgs[1:]
+	return m, nil
+}
+
+func (s *readStream) CloseSend() error { return nil }
