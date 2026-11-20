@@ -20,7 +20,9 @@ the racing-create lab test are follow-ups under ADR-0015.
 **Capabilities required (`Requires()`):** none yet. **Platform matrix:** windows / linux-oci / saas: same.
 
 > **State.** `internal/modules/objects/` is a library package (T-1582): it has no `Module` yet and does not
-> register contributions. Registration is specified by ADR-0015 D2: `objects` registers as a Module with its stores
+> register contributions. Its pure definition model (Template, NamingFormat, `CheckInput`, `Render`, `Stored[T]`) lives in
+> `internal/directory/objectdef` since T-2249, so `ad` reads it without importing this module (§2 rule 4); this package keeps
+> the tables and the store. Registration is specified by ADR-0015 D2: `objects` registers as a Module with its stores
 > and its Template/NamingFormat definition Actions of target `store`, plus this page.
 
 **Ownership rule (ADR-0015 D2).** `objects` owns **no directory-writing Action**. The create/modify Actions

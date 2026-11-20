@@ -35,6 +35,8 @@
 #                    Update, delete, resume and run now are owner-only; manage_all grants none of them (T-0893 R1, R2):
 #                    update, delete and resume answer a non-owner 404, or a manage_all holder 403 not_owner; run now answers any non-owner 404. reports.deliver.external
 #                    is bound to NO operation: it guards only the external-recipient case of a schedule write (create, update, resume).
+#                    SYS-03 (T-1720) adds reports.replication.read (thresholds read; also checked inside createReportRun for the SYS-03 definition, not a second
+#                    x-permission) and reports.replication.configure (thresholds update, preview and undo pair): ordinary permissioned operations, no step-up row.
 #                    TM 7.4 has no reports row. Step-up is conditional and in-operation (TM-D30, kernel predicate): no stepUp row.
 #   helpdesk.*       issueCallerVerification and verifyCallerVerification (T-2145, modules/helpdesk.yaml) are ordinary permissioned operations:
 #                    x-permission helpdesk.caller.verify (not objects.user.reset_password: routing that permission would make it a step-up row, TM-D16), no step-up (the caller's proof stands in for the technician's MFA, TM-D16),

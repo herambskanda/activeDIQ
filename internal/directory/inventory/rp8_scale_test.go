@@ -181,3 +181,5 @@ func (e *env) bulkExec(t *testing.T, sql string, args ...any) error {
 		return err
 	})
 }
+
+func day(n int) time.Duration { return time.Duration(n) * 24 * time.Hour }

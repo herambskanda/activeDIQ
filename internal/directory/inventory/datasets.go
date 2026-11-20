@@ -301,6 +301,8 @@ func userAttributeColumns() []report.Column {
 			report.SQL("CASE WHEN {t}.attributes ->> 'logonHours' IS NULL THEN NULL ELSE position('0' in {t}.attributes ->> 'logonHours') > 0 END"), opsBool),
 		derived("has_thumbnail_photo", "Has thumbnail photo", report.TypeBool, report.SQL("COALESCE(({t}.attributes ->> 'hasThumbnailPhoto')::boolean, false)"), opsBool),
 		derived("has_jpeg_photo", "Has JPEG photo", report.TypeBool, report.SQL("COALESCE(({t}.attributes ->> 'hasJpegPhoto')::boolean, false)"), opsBool),
+		derived("has_photo", "Has photo", report.TypeBool,
+			report.SQL("(COALESCE(({t}.attributes ->> 'hasThumbnailPhoto')::boolean, false) OR COALESCE(({t}.attributes ->> 'hasJpegPhoto')::boolean, false))"), opsBool),
 	}
 }
 

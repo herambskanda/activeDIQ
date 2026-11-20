@@ -335,6 +335,11 @@ func (c *Client) Write(ctx context.Context, s step.Step, op WriteOp) (Result, er
 	return Result{Apply: resp}, nil
 }
 
+// groupMemberKind is true for kinds 11 and 12, whose target is the group (ADR-0017).
+func groupMemberKind(k connectorv1.WriteKind) bool {
+	return k == connectorv1.WriteKind_WRITE_KIND_GROUP_MEMBER_ADD || k == connectorv1.WriteKind_WRITE_KIND_GROUP_MEMBER_REMOVE
+}
+
 func (op WriteOp) derive() (wire, error) {
 	if op.DigestKind == "" || op.Target.Connection == "" {
 		return wire{}, ErrInvalidOp
@@ -379,7 +384,15 @@ func (op WriteOp) derive() (wire, error) {
 				return wire{}, fmt.Errorf("%w: identifier is not canonical", ErrInvalidOp)
 			}
 		}
-		if kind != connectorv1.WriteKind_WRITE_KIND_OBJECT_CREATE && op.Target.Class != "" {
+		switch {
+		case kind == connectorv1.WriteKind_WRITE_KIND_OBJECT_CREATE:
+		case groupMemberKind(kind):
+			// ADR-0017: the authz class of the group target. It is an assertion only: never hashed and
+			// never on the wire; the connector reads the group's class live and refuses a non-group.
+			if op.Target.Class != "" && op.Target.Class != "group" {
+				return wire{}, fmt.Errorf("%w: group-member target class", ErrInvalidOp)
+			}
+		case op.Target.Class != "":
 			return wire{}, fmt.Errorf("%w: class is read live", ErrInvalidOp)
 		}
 		if cc := change.GetObjectCreate(); cc != nil {

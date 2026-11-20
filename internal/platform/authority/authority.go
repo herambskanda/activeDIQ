@@ -19,6 +19,10 @@ const (
 	APIToken   PrincipalKind = "api_token"
 	Automation PrincipalKind = "automation"
 	System     PrincipalKind = "system"
+	// DirectoryUser is an end user acting on their own record after proving themselves in the AD plane
+	// (the AN-5 enrolment page, ENH-09 §6.1a): connection and objectGUID, never a console account. It
+	// cannot approve anything (only a Human can).
+	DirectoryUser PrincipalKind = "directory_user"
 )
 
 // PrincipalID is the pseudonymous, stable identifier of a principal. It is never a name or an

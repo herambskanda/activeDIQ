@@ -168,9 +168,12 @@ export function selectCandidates(state, now, config) {
 
   // dispatcher.only_milestone (CEO scope lock): only that milestone's ready tickets are launched. Work already
   // in flight (review, qa, in_progress) finishes either way, and meta tickets (triage, grooming) are unaffected.
+  // dispatcher.hold_ready (merge plan 4.4): no NEW work starts. Ready tickets and the grooming ticket (which makes
+  // more ready tickets) are held; review, qa, rework, continuations, triage and the digest still run.
+  const hold = config.dispatcher.hold_ready === true;
   const only = config.dispatcher.only_milestone ?? null;
   const pool = state.tickets
-    .filter((t) => t.status === 'ready' && idle(t))
+    .filter((t) => t.status === 'ready' && idle(t) && !hold)
     .filter((t) => only === null || t.milestone === only)
     .filter((t) => {
       const b = claimBlockers(t, tickets, decisions, unmerged);
@@ -178,6 +181,7 @@ export function selectCandidates(state, now, config) {
     })
     .map((t) => ({ sort: t, candidate: { kind: 'ready', ticket: t, role: t.owner, stage: 'in_progress', continuation: false } }));
   for (const p of metaProposals(state, now, config)) {
+    if (hold && p.kind === 'grooming') continue;
     const candidate = { kind: 'meta', ticket: null, create: p, role: p.owner, stage: 'in_progress', continuation: false };
     if (!skip.has(candidateKey(candidate))) {
       pool.push({ sort: { priority: p.priority, created: now.toISOString(), id: candidateKey(candidate) }, candidate });
