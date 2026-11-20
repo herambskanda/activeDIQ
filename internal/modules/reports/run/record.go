@@ -249,9 +249,9 @@ func load(ctx context.Context, tx store.Tx, id ID, lock bool) (Run, error) {
 
 const insertRun = `INSERT INTO public.report_runs
   (tenant_id, id, definition_id, definition_version, definition_sha256, preset, params, query_hash, scope_fingerprint,
-   runner_account, chain, rerun_of, state, columns, runner_zone)
+   runner_account, chain, rerun_of, state, columns, runner_zone, schedule_id)
 VALUES (NULLIF(current_setting('app.tenant_id', true), '')::uuid, $1::uuid, $2, $3, $4, $5, $6::jsonb, $7, $8,
-   $9::uuid, $10::jsonb, $11::uuid, 'queued', $12::jsonb, $13)`
+   $9::uuid, $10::jsonb, $11::uuid, 'queued', $12::jsonb, $13, $14::uuid)`
 
 // findReusable returns a run of the same runner, query and scope created in the last window and still
 // queued, running or succeeded (ADR-0010 reuse window, §6.1 step 3).

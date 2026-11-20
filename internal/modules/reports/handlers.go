@@ -31,11 +31,12 @@ import (
 // of the tag answer 501 until their rows land (pending.go).
 type Handlers struct {
 	pending
-	Runs    *run.Service
-	Exports *export.Service
-	Library Library
-	Now     func() time.Time
-	Log     *slog.Logger
+	Runs      *run.Service
+	Exports   *export.Service
+	Library   Library
+	Schedules *Schedules
+	Now       func() time.Time
+	Log       *slog.Logger
 }
 
 // Bind returns the tag's routes for apihost.Build.

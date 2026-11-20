@@ -64,6 +64,7 @@ export function makeFactory({ config, agents = AGENTS } = {}) {
   cfg.dispatcher.pre_merge = { ...cfg.dispatcher.pre_merge, enabled: false }; // fixture repos have no `make ci`; the gate's own tests switch it on
   cfg.dispatcher.post_merge_verify = { ...cfg.dispatcher.post_merge_verify, enabled: false }; // same reason; the verify's own tests switch it on
   cfg.dispatcher.post_merge_verify.raise_ticket = false; // the live config raises a P0 ticket when main goes red; fixture tests count tickets, and the raise's own tests switch it on
+  cfg.dispatcher.hold_ready = false; // the live config holds ready tickets while the merge queue drains; fixtures launch them
   cfg.dispatcher.shadow_gate = { ...cfg.dispatcher.shadow_gate, enabled: false }; // fixture repos have no `make fitness`; the shadow gate's own tests switch it on
   cfg.dispatcher.only_milestone = null; // the live milestone lock must not gate fixture tickets, which carry no milestone
   cfg.dispatcher.min_free_disk_gb = 0; // the host's free disk must not gate fixture launches

@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/skenzeriq/activediq/internal/platform/notify/delivery"
 	"github.com/skenzeriq/activediq/internal/platform/notify/syslog"
 	"log/slog"
 	"net"
@@ -148,9 +149,14 @@ func Run(ctx context.Context, cfg config.Config, getenv func(string) string) err
 	// requires one yet. Modules build their services from these kernel ports in Register (ADR-0013); the
 	// read-scope producer is made from what they contribute, so it is bound after Boot.
 	jreg := jobs.NewRegistry()
+	deliveries, err := delivery.New(ok.Chainer)
+	if err != nil {
+		return err
+	}
 	lateScopes := &rbac.LateReadScopes{}
 	deps := platform.Deps{DB: db, Jobs: jreg, Audit: ok.Chainer, Authz: authzr, ReadScopes: lateScopes, BlobDir: cfg.BlobDir,
-		StepUp: console.StepUp, Attestation: attest}
+		StepUp: console.StepUp, Attestation: attest,
+		Runner: ok.Runner, OwnerStatus: accountOwnerStatus{}, Deliveries: deliveries, Accounts: accountMail{}}
 	dirSvc := directoryServices(db)
 	dirSvc.Source, dirSvc.Reads = csrc, reads // the connector transport the directory module's user search reads over
 	perDCTr, err := client.NewGRPCPerDCTransport(csrc)

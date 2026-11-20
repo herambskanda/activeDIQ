@@ -25,6 +25,7 @@
       "reserved_slots": 2,
       "keep_unread_moves": true,
       "culprit_split": true,
+      "prescreen_ahead": true,
       "train_size_max": 2,
       "train_size": 1,
       "max_gate_failures": 2,

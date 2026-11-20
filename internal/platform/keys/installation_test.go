@@ -12,6 +12,7 @@ import (
 	"github.com/skenzeriq/activediq/internal/platform/keys"
 	"github.com/skenzeriq/activediq/internal/platform/store"
 	"github.com/skenzeriq/activediq/internal/platform/store/storetest"
+	"github.com/skenzeriq/activediq/internal/platform/tenant"
 )
 
 type recAuditor struct {
@@ -340,4 +341,46 @@ func TestInstallationRacingCreatorsRecordExactlyOneCreate(t *testing.T) {
 			t.Fatal("want one active key")
 		}
 	})
+}
+
+// FCS-5 (ADR-0008): the fleet_ca client-CA key and the fleet_server_ca key live in different seal domains. A
+// blob sealed for a fleet_ca cell never opens through OpenInstallation, nor a fleet_server_ca blob through
+// Open, even under the same key bytes, and the installation context has no tenant to stand in for.
+func TestInstallationDEKCannotOpenFleetCA(t *testing.T) {
+	dek, err := keys.NewDEK(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer dek.Destroy()
+	tid := tenant.New()
+	pt := []byte("pkcs8-private-key-stand-in")
+
+	tenantBlob, err := keys.Seal(dek, keys.Context{Tenant: tid, Table: "fleet_ca", Row: "r1", Column: "sealed_key", Version: 1}, pt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	instCtx := keys.InstallationContext{Table: "fleet_ca", Row: "r1", Column: "sealed_key", Version: 1}
+	if got, err := keys.OpenInstallation(dek, instCtx, tenantBlob); err == nil || got != nil {
+		t.Fatalf("a fleet_ca blob opened under the installation domain: %q %v", got, err)
+	}
+	serverCtx := keys.InstallationContext{Table: "fleet_server_ca", Row: "r1", Column: "sealed_key", Version: 1}
+	serverBlob, err := keys.SealInstallation(dek, serverCtx, pt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := keys.Open(dek, keys.Context{Tenant: tid, Table: "fleet_server_ca", Row: "r1", Column: "sealed_key", Version: 1}, serverBlob); err == nil || got != nil {
+		t.Fatalf("a fleet_server_ca blob opened under a tenant domain: %q %v", got, err)
+	}
+	// Moved to another row or table, it does not open either.
+	for _, c := range []keys.InstallationContext{
+		{Table: "fleet_server_ca", Row: "r2", Column: "sealed_key", Version: 1},
+		{Table: "fleet_ca", Row: "r1", Column: "sealed_key", Version: 1},
+	} {
+		if got, err := keys.OpenInstallation(dek, c, serverBlob); err == nil || got != nil {
+			t.Fatalf("server CA blob opened in cell %+v", c)
+		}
+	}
+	if got, err := keys.OpenInstallation(dek, serverCtx, serverBlob); err != nil || string(got) != string(pt) {
+		t.Fatalf("own cell: %q %v", got, err)
+	}
 }
