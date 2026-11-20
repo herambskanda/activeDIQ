@@ -133,7 +133,19 @@ func (s *Session) MoveObject(ctx context.Context, r MoveRequest, send ModifyDNFu
 		if err != nil {
 			return fail(CodeInvalidArgument, "rdn", err)
 		}
-		return mapWriteErr(ctx, send(conn, DNChange{Entry: cur.dn.String(), NewRDN: leaf.String(), DeleteOldRDN: true, NewSuperior: np.dn.String()}))
+		entry, err := dn.DNRef(cur.dn).ForRequest()
+		if err != nil {
+			return err
+		}
+		newRDN, err := dn.DNRef(leaf).ForRequest()
+		if err != nil {
+			return err
+		}
+		newSuperior, err := dn.DNRef(np.dn).ForRequest()
+		if err != nil {
+			return err
+		}
+		return mapWriteErr(ctx, send(conn, DNChange{Entry: entry, NewRDN: newRDN, DeleteOldRDN: true, NewSuperior: newSuperior}))
 	})
 }
 
@@ -156,7 +168,15 @@ func (s *Session) RenameObject(ctx context.Context, r RenameRequest, send Modify
 		if err != nil {
 			return fail(CodeInvalidArgument, "rdn", err)
 		}
-		return mapWriteErr(ctx, send(conn, DNChange{Entry: cur.dn.String(), NewRDN: leaf.String(), DeleteOldRDN: true}))
+		entry, err := dn.DNRef(cur.dn).ForRequest()
+		if err != nil {
+			return err
+		}
+		newRDN, err := dn.DNRef(leaf).ForRequest()
+		if err != nil {
+			return err
+		}
+		return mapWriteErr(ctx, send(conn, DNChange{Entry: entry, NewRDN: newRDN, DeleteOldRDN: true}))
 	})
 }
 
@@ -188,7 +208,11 @@ func (s *Session) RestoreObject(ctx context.Context, r RestoreRequest, send Rest
 		if err != nil {
 			return fail(CodeInvalidArgument, "rdn", err)
 		}
-		return mapWriteErr(ctx, send(conn, RestoreChange{Entry: r.Object.ObjectRef(), NewDN: nd.String(),
+		newDN, err := dn.DNRef(nd).ForRequest()
+		if err != nil {
+			return err
+		}
+		return mapWriteErr(ctx, send(conn, RestoreChange{Entry: r.Object.ObjectRef(), NewDN: newDN,
 			Controls: []ldap.Control{scope.ShowDeleted()}}))
 	})
 }

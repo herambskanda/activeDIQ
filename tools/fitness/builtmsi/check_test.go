@@ -39,8 +39,8 @@ func goodFx() fx {
 	return fx{
 		si: [][]string{{"Svc", "activeDIQAgent", `NT SERVICE\activeDIQAgent`, "", "C1", "16", "1"}},
 		mc: [][]string{
-			{"c1", "activeDIQAgent", "1", "3", "3", "C1"},
-			{"c2", "activeDIQAgent", "1", "4", "SeChangeNotifyPrivilege", "C1"},
+			{"c1", "activeDIQAgent", "1", "5", "3", "C1"},
+			{"c2", "activeDIQAgent", "1", "6", "SeChangeNotifyPrivilege", "C1"},
 		},
 		ca: [][]string{{"WriteConfig", "3106", "AgentDir", `"[AgentDir]agentsetup.exe" write-config`}},
 	}
@@ -109,15 +109,15 @@ func TestSIDTypeAndPrivileges(t *testing.T) {
 	wantFail(t, f, "must be 3 (restricted)")
 	f = goodFx()
 	f.mc = f.mc[1:]
-	wantFail(t, f, "no MsiServiceConfig row of ConfigType 3")
+	wantFail(t, f, "no MsiServiceConfig row of ConfigType 5")
 	f = goodFx()
 	f.mc[1][4] = "SeChangeNotifyPrivilege[~]SeBackupPrivilege"
 	wantFail(t, f, "must be exactly SeChangeNotifyPrivilege")
 	f = goodFx()
 	f.mc = f.mc[:1]
-	wantFail(t, f, "no MsiServiceConfig row of ConfigType 4")
+	wantFail(t, f, "no MsiServiceConfig row of ConfigType 6")
 	f = goodFx()
-	f.mc = append(f.mc, []string{"c3", "Spooler", "1", "4", "SeDebugPrivilege", "C1"})
+	f.mc = append(f.mc, []string{"c3", "Spooler", "1", "6", "SeDebugPrivilege", "C1"})
 	wantFail(t, f, `MsiServiceConfig row "c3"`)
 }
 
@@ -303,4 +303,24 @@ func TestServiceTypeAndErrorControl(t *testing.T) {
 	if v := run(t, f); len(v) != 0 {
 		t.Fatalf("vital bit flagged: %q", v)
 	}
+}
+
+// The MsiServiceConfig rows exactly as WiX 5.0.2 wrote them for Agent.wxs, read back with msidump from the
+// MSI built on the lab DC (T-0724): Event 5 (install + reinstall), ConfigType 5 (SERVICE_SID_INFO, restricted =
+// 3) and 6 (REQUIRED_PRIVILEGES_INFO). The checker once looked for ConfigType 3 and 4 (delayed auto start and the
+// failure-actions flag), so it judged neither the SID type nor the privileges of a real MSI.
+func TestRealWiX5ServiceConfigRows(t *testing.T) {
+	f := goodFx()
+	f.mc = [][]string{
+		{"activeDIQAgent.SS", "activeDIQAgent", "5", "5", "3", "C1"},
+		{"activeDIQAgent.RP", "activeDIQAgent", "5", "6", "SeChangeNotifyPrivilege", "C1"},
+	}
+	if v := run(t, f); len(v) != 0 {
+		t.Fatalf("real WiX 5.0.2 rows failed: %q", v)
+	}
+	f.mc[0][4] = "1"
+	wantFail(t, f, "must be 3 (restricted)")
+	f = goodFx()
+	f.mc = [][]string{{"activeDIQAgent.SS", "activeDIQAgent", "5", "5", "3", "C1"}, {"x", "activeDIQAgent", "5", "6", "SeDebugPrivilege", "C1"}}
+	wantFail(t, f, "must be exactly SeChangeNotifyPrivilege")
 }

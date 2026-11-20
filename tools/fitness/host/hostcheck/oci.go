@@ -245,8 +245,9 @@ func CollectOCI(ctx context.Context, repo string, pg *pgharness.Server, log func
 	defer func() { _, _ = docker(context.Background(), nil, "rmi", "-f", tag) }()
 
 	// --- remote DSN cases: each is a real boot of the real server, offered a DSN to a non-loopback host.
-	// 192.0.2.1 is TEST-NET-1 (RFC 5737): nothing answers, so "Contacted" is judged by how long the boot
-	// took to refuse, and by the refusal text, which the store emits before any dial.
+	// 192.0.2.1 is TEST-NET-1 (RFC 5737): nothing answers, so a dial would end in a network error in the
+	// logs, never in the store's refusal text, which it emits before any dial. "Contacted" is judged by
+	// that evidence, not by wall-clock time (container start under CI load takes seconds either way).
 	bad := []struct{ mode, extra string }{
 		{"disable", "sslmode=disable"},
 		{"allow", "sslmode=allow"},
@@ -277,7 +278,7 @@ func CollectOCI(ctx context.Context, repo string, pg *pgharness.Server, log func
 		took := time.Since(start)
 		c.rm()
 		refused := exited && code != 0 && strings.Contains(logs, "refusing the database connection")
-		o.DSN = append(o.DSN, DSNProbe{Mode: b.mode, Remote: true, Accepted: !refused, Contacted: !refused || took > 5*time.Second})
+		o.DSN = append(o.DSN, DSNProbe{Mode: b.mode, Remote: true, Accepted: !refused, Contacted: !refused || dialled(logs)})
 		log("dsn %-28s refused=%v exit=%d in %s", b.mode, refused, code, took.Round(time.Millisecond))
 	}
 
@@ -625,4 +626,14 @@ func dumpPosture(ctx context.Context, c *container, pid string) *Dumps {
 	}
 	// pprof: the default mux route must not answer.
 	return d
+}
+
+// dialled reports whether server logs show a network connection attempt to the remote host.
+func dialled(logs string) bool {
+	for _, m := range []string{"dial tcp", "i/o timeout", "connection refused", "no route to host", "network is unreachable", "192.0.2.1:5432"} {
+		if strings.Contains(logs, m) {
+			return true
+		}
+	}
+	return false
 }

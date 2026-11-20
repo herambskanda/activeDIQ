@@ -149,8 +149,8 @@ func measure(plan *planNode) work {
 // exactly equal; shared blocks are equal within 2 per scan-node loop; every plan has AC4's shape.
 //
 // The queries have at most W matches, so every candidate is rechecked and the order in which candidates reach
-// the LIMIT cannot differ between loads. W is 100, as in SE5 (T-1344 records what the planner does to the
-// hits join at the default W). The scale is ACTIVEDIQ_SEARCH_LARGE_OBJECTS objects for A (default 2,000);
+// the LIMIT cannot differ between loads. W is the default ceiling (T-1345: the hits join probes directory_objects per candidate at it, so directory_objects is
+// compared too). The scale is ACTIVEDIQ_SEARCH_LARGE_OBJECTS objects for A (default 2,000);
 // the AC names 50,000, which is the large switch.
 func Test_search_fuzzy_reads_only_the_tenants_own_postings(t *testing.T) {
 	n := 2000
@@ -158,7 +158,7 @@ func Test_search_fuzzy_reads_only_the_tenants_own_postings(t *testing.T) {
 		n = v
 	}
 	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
-		const w = 100
+		const w = inventory.DefaultSearchCeiling
 		e := setup(t, s)
 		e.hStructure(t, e.adA)
 		if _, err := e.populate(t, e.adA, hBase, sSrchUser(1, "praman", "Priya Raman")); err != nil {
@@ -178,6 +178,7 @@ func Test_search_fuzzy_reads_only_the_tenants_own_postings(t *testing.T) {
 		// Proof queries: a name of A with its third letter dropped, kept when it matches between 2 and w/2 keys of A
 		// by the index-free oracle, so that no candidate can be cut by the LIMIT.
 		var queries []string
+		extra := len(queries) // the queries from here on have no fuzzy class to shape-check
 		for _, g := range []int{17, n / 7, n / 3, n / 2, 2 * n / 3, n - 5, 31, 53, 101} {
 			if len(queries) == 4 || g < 1 || g > n {
 				continue
@@ -193,8 +194,16 @@ func Test_search_fuzzy_reads_only_the_tenants_own_postings(t *testing.T) {
 				queries = append(queries, q)
 			}
 		}
+		extra = len(queries)
 		if len(queries) < 3 {
 			t.Fatalf("only %d usable proof queries: %v", len(queries), queries)
+		}
+		// ... and an exact, a prefix and a one-letter query of a name of A (T-1345 AC2): their matches are far below W, so
+		// the hits join probes directory_objects once per candidate and the rows it examines cannot depend on B.
+		if nm := e.ownerRun(t, e.a, `SELECT key FROM public.inventory_search_keys WHERE key_kind = 1 ORDER BY key LIMIT 1 OFFSET $1`, n/5); len(nm) == 1 && len([]rune(nm[0])) >= 6 {
+			r := []rune(nm[0])
+			extra = len(queries)
+			queries = append(queries, nm[0], string(r[:4]), string(r[:1]))
 		}
 		t.Logf("A holds %d objects; proof queries %q", n, queries)
 
@@ -202,7 +211,7 @@ func Test_search_fuzzy_reads_only_the_tenants_own_postings(t *testing.T) {
 		measureAll := func() []work {
 			var out []work
 			shapes = nil
-			for _, q := range queries {
+			for qi, q := range queries {
 				// The first run of a statement in a session reads about 3 blocks more than every later run (the index's
 				// metapage and the catalog entries it needs are not cached yet): the run that is measured is the second.
 				e.analyze(t, e.scopeNC(e.adA), q, w, true)
@@ -215,9 +224,16 @@ func Test_search_fuzzy_reads_only_the_tenants_own_postings(t *testing.T) {
 					e.vacuumSearch(t)
 					plan = e.analyze(t, e.scopeNC(e.adA), q, w, true)
 				}
-				assertFuzzyPlan(t, plan)
 				shapes = append(shapes, q+describe(plan))
 				m := measure(plan)
+				if qi >= extra {
+					for _, v := range hitsJoinViolations(plan) {
+						t.Errorf("%q: %s", q, v)
+					}
+					out = append(out, m)
+					continue
+				}
+				assertFuzzyPlan(t, plan)
 				// (Before PostgreSQL 18 the JSON Actual Rows of a looped node is a rounded average per loop, so the key
 				// rows of a plan that rechecks few candidates may read 0: the loops are the proof that it ran.)
 				if m.rows["inventory_search_trigrams"] == 0 || m.loops["inventory_search_keys"] < 2 {
@@ -252,6 +268,9 @@ func Test_search_fuzzy_reads_only_the_tenants_own_postings(t *testing.T) {
 					if got[i].rows[rel] != rows {
 						t.Errorf("%q with B %s: %s examined %v rows, %v with B empty: another tenant's data is read", q, l.name, rel, got[i].rows[rel], rows)
 					}
+				}
+				if i >= extra {
+					continue // AC2 compares rows examined; the planner may flip the form of a wide key-range read as B grows
 				}
 				for rel, blocks := range base[i].blocks {
 					tol := 2 * math.Max(base[i].loops[rel], got[i].loops[rel])

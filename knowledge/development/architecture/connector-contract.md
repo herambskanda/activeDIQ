@@ -1,12 +1,12 @@
 ---
 title: "Connector contract v1.6: the read side (Describe, search, read, per-DC read, change feed), the write group (Plan, Apply) and VerifyConnection"
 date: 2026-10-02
-updated: 2026-11-13
+updated: 2026-11-15
 status: review
 owner: heramb
 author: directory-engineer
 ticket: T-0064
-amended_by: T-0236 (§8.1 C17/C18 live rows, CC-WRITE-15, author solution-architect), T-0091 (v1.1, author solution-architect), T-0122 (v1.2, author solution-architect: TM-D23 rules 7-11), T-0230 (§8.9, author security-architect: TM-D25 rule 7 guard input), T-0240 (§8.9, author security-architect: group-based licensing, canonical keys), T-1124 (v1.3, author solution-architect: §5.6 `ReadReplicationStatus`, §5.7 replication-metadata decoder, §9.4a), T-1581 (v1.4, author solution-architect: §8.10 the first ten `WriteKind` values, `SecretValue`, CC-WK-01..31), T-1621 (§8.9 `DELETE` op, §8.10.9 security review, author security-architect), T-1567 (v1.5, author solution-architect: §5.9 `attr/tsprops` read-only `userParameters` decoder and `TsPropertiesValue`, wire-value identity gate, `NOT_CONFIRMED` readability proof, `not_filterable` schema flag, §8.10.4 OID-resolved deny-list and `AllowedAttr`, §9.4b CC-TS-01..10, fitness TS1-TS8; rounds 2 and 3 after review: shared `wirevalue` builder, as-built T-1623 deny-list and its delta, rights-check token set), T-1643 (§8.1 basis C20, §8.10.3 kinds 7/9/10, CC-WK-27/28/36-40, TM-D34, author security-architect), T-1730 (§8.10.3 kind 6 step-7 read mechanics, §8.10.9 R2 conflict resolved, §8.4 R15 (b) findings, CC-WK-32..35, author security-architect), T-1751 (§8.10.3 kind 6 step 4a, §8.10.9 R2 amendment, CC-WK-41..44, author security-architect), T-1632 (§8.10.9 DELETE as built; security review: delete of a manager also checked as CLEAR_MANAGER; author directory-engineer), T-1899 (v1.6, author solution-architect: §8.10 kinds 11-13 `GROUP_MEMBER_ADD`, `GROUP_MEMBER_REMOVE`, `COMPUTER_ACCOUNT_RESET`, CC-WK-45..62, §5.3a `ReadHeader.child_count` for OU delete, fitness GM1-GM4)
+amended_by: T-0236 (§8.1 C17/C18 live rows, CC-WRITE-15, author solution-architect), T-0091 (v1.1, author solution-architect), T-0122 (v1.2, author solution-architect: TM-D23 rules 7-11), T-0230 (§8.9, author security-architect: TM-D25 rule 7 guard input), T-0240 (§8.9, author security-architect: group-based licensing, canonical keys), T-1124 (v1.3, author solution-architect: §5.6 `ReadReplicationStatus`, §5.7 replication-metadata decoder, §9.4a), T-1581 (v1.4, author solution-architect: §8.10 the first ten `WriteKind` values, `SecretValue`, CC-WK-01..31), T-1621 (§8.9 `DELETE` op, §8.10.9 security review, author security-architect), T-1567 (v1.5, author solution-architect: §5.9 `attr/tsprops` read-only `userParameters` decoder and `TsPropertiesValue`, wire-value identity gate, `NOT_CONFIRMED` readability proof, `not_filterable` schema flag, §8.10.4 OID-resolved deny-list and `AllowedAttr`, §9.4b CC-TS-01..10, fitness TS1-TS8; rounds 2 and 3 after review: shared `wirevalue` builder, as-built T-1623 deny-list and its delta, rights-check token set), T-1643 (§8.1 basis C20, §8.10.3 kinds 7/9/10, CC-WK-27/28/36-40, TM-D34, author security-architect), T-1730 (§8.10.3 kind 6 step-7 read mechanics, §8.10.9 R2 conflict resolved, §8.4 R15 (b) findings, CC-WK-32..35, author security-architect), T-1751 (§8.10.3 kind 6 step 4a, §8.10.9 R2 amendment, CC-WK-41..44, author security-architect), T-1632 (§8.10.9 DELETE as built; security review: delete of a manager also checked as CLEAR_MANAGER; author directory-engineer), T-1899 (v1.6, author solution-architect: §8.10 kinds 11-13 `GROUP_MEMBER_ADD`, `GROUP_MEMBER_REMOVE`, `COMPUTER_ACCOUNT_RESET`, CC-WK-45..62, §5.3a `ReadHeader.child_count` for OU delete, fitness GM1-GM4), T-1909 (§5.9.1 `Millis`, T7 Windows findings: ANSI/`W` twin rule, little-endian, inherit precedence, missing `CtxCfgFlags1`; author solution-architect)
 binding_sources: blueprint §7.1-7.2, safe-primitives §3.6-3.7, domain-model DM-10, DM-13..DM-20, DM-24, DM-25, threat-model §6.2-§6.6 (TM-D1, TM-D2, TM-D4, TM-D5, TM-D23), §16.1 TM-R14..R17, §6.3 R1/R2 and TM-TB3-*, ADR-0005 rules 2, 4, 5, 7
 ---
 
@@ -285,6 +285,15 @@ reserved for the SD flags) asks for `ReadHeader.child_count`, a `ChildCount{coun
   Deleting a non-empty OU is a different, later kind (subtree delete, every descendant a touched object),
   not a bigger count here.
 
+**As built (T-1586).** `read.ChildCounter` is an optional half of `Source` (`ADSource.CountChildren`); a
+Source without it answers `CAPABILITY_UNSUPPORTED`. `client.ConnectorReads.ObjectWithChildCount` treats a
+count that is present when not asked, or absent when asked, as `ErrReadProtocol`. The Action
+(`ad.ou.delete`, `modules/ad.md`) turns children into a Plan refusal naming the count; cascade is refused.
+Kinds 11-13 themselves are T-1913's (`kinds_group.go`, `writechange`); the module digests kinds 11/12
+with the group as target class `group` and the member GUID and class as `~member`/`~memberClass`. The
+Plan-time `member` write-property probe and the C20 refusals are not built; kind 13's cluster-object
+refusal is proven on Windows only (CC-WK-59).
+
 ### 5.4 Typed values
 
 The connector's codecs (P3) decode, so no caller sees raw bytes of a known syntax.
@@ -523,7 +532,7 @@ Counts}`:
 - `BlobReason` is the closed reason enum of spec §4 rule 6. It is set when `State` is not
   `Configured`.
 - `Fields` holds one `Field[T]` per row of spec §3, each `{Status: Value | NotConfigured |
-  Unreadable, Reason, Value T}`. `T` is `bool`, `uint32`, a `Shadow` enum, a `Minutes` value or a
+  Unreadable, Reason, Value T}`. `T` is `bool`, `uint32`, a `Shadow` enum, a `Millis` value (u32 milliseconds, T-1909) or a
   bounded display `Text`.
 - `Counts` is `{unknown_properties, skipped_properties, duplicates}`.
 
@@ -539,7 +548,7 @@ Nothing else is exported except these types and their constants.
 | T4 | **Not a filter or sort attribute.** `userParameters` stays readable, but no filter or sort may name it. A substring or ordering filter on it would be a byte-by-byte oracle on `ReservedData` (spec §4 rule 1). The control is a schema flag that survives a reload: see §5.9.3 | TS6 `TestUserParameters_not_filterable`, CC-TS-06, CC-TS-10 |
 | T5 | **Spec §4 rules 2 to 11 hold as written.** These are the hard bounds, strict hex, signature and `CtxCfgPresent` gate, per-field status, duplicate policy, typed output, text hygiene, cost budget and logging rule. Limits are constants in the package, and a test pins each one to the spec's number | TS1, unit tests |
 | T6 | **Pure.** Imports only the **tsprops import allowlist**: `unicode/utf16`, `unicode/utf8`, `encoding/binary`, `errors`, `math`, `strings` and `internal/directory/attr/codec`. This one list is used by T6, §5.9.7 and TS4. That excludes the X6 deny list of §5.7 (`net`, `os`, `net/http`, `io/ioutil`, `os/exec`, `plugin`, `unsafe`, `reflect`) and any `log`, `log/slog` or project logger. Logging happens in the read path, with only the object GUID, the reason enum and the counts (spec §4 rule 11). At most 256 KiB allocated per call | TS4, TS1 |
-| T7 | **Ships only with Windows fixtures.** The text encoding of each text field is chosen from the fixtures captured in T-1565 (spec §2 trap 2). Until those fixtures are committed under `testdata/tsprops/windows/`, `Decode` returns `Unreadable(bad_encoding)` for every text field, and the D16 text columns stay off. The build ticket (T-1566) may not close without them | T-1566 acceptance, CC-TS-01 |
+| T7 | **Windows fixtures are committed; the decoder follows them (T-1565 became T-1890, T-1909).** The fixtures are under `testdata/tsprops/windows/` (Windows Server 2025 build 26100; 2019/2022 re-capture is a follow-up) and TSP-W01 to TSP-W18 join `attr.tsprops.jsonl`. The decoder rules they fix, normative in spec §3 and §4: **(a)** u32 values are little-endian; session limits are **milliseconds**, typed `Millis`, any u32 valid, no minute bound; **(b)** each text field is an ANSI property plus a `W` UTF-16LE twin: ANSI accepted only as printable ASCII, `W` strict UTF-16, `W`-only accepted only with a non-ASCII code point, both present must be equal, anything else `unreadable(bad_encoding)`; the twin names are known names and never count as unknown; **(c)** `inherit_initial_program` is the 0x10000000 bit **and** no `CtxInitialProgram`/`W` present; **(d)** duplicates stay `unreadable(duplicate)` (a twin is not a duplicate of its pair); **(e)** a blob without `CtxCfgFlags1` is `NotConfigured(bad_signature)`; **(f)** KD-1: an all-zero `ReservedData` that Windows ignores is **not** emulated. The old interim `Unreadable(bad_encoding)` for every text field no longer applies and the D16 text columns may turn on when T-1566 lands. The build ticket may not close until TSP-W01 to TSP-W18 pass | T-1566 acceptance, CC-TS-01, TSP-W01 to TSP-W18, TSP-44 to TSP-48 |
 
 #### 5.9.3 Not filterable: the schema flag (T4)
 
@@ -600,7 +609,13 @@ as Basis *Default*. That breaks rule 10. So:
   is safe. A missing deny-carrying SID gives a false *Yes*, and so a false `NOT_CONFIGURED`. T-1741
   exports that set as `TokenSet {IdentityGUID, DomainSID, Epoch, SIDs, Complete}`: the identity's
   `objectSid`, its `tokenGroups`, the implicit SIDs and its `sIDHistory`, recorded with the newest
-  clean rights check (§8.4). The principal is built from it with `WithObjectSID(target objectSid)`,
+  clean rights check (§8.4). **As built (T-1741):** `rights.TokenSet` is recorded by
+  `EpochState.CompleteWithTokens` only when the run's verdict is PASS, and `EpochState.TokenSet() (TokenSet, ok)`
+  returns a copy; `Epoch` is the run's `verification_id`. `ok` is false before any run in this process (the set is in
+  memory only, like the gate), after a run that did not pass, and after a failed `Complete`. `Complete` is
+  false when the domain SID cannot be derived, `tokenGroups` came back empty or a `sIDHistory` value did not decode.
+  `rights.PrincipalFromTokenSet(ts)` returns an `sd.Principal` that is Incomplete unless `Complete`. The
+  principal gets `WithObjectSID(target objectSid)`,
   so PRINCIPAL_SELF ACEs apply. The proof uses it only when **all** of these hold, and otherwise
   answers `readability_unknown`:
   1. The identity that bound this session (its object GUID) is the rights check's `IdentityGUID`.
@@ -614,6 +629,10 @@ as Basis *Default*. That breaks rule 10. So:
      A forest that puts `userParameters` in the filtered set (`searchFlags` 0x200) already makes it a
      SecretAttr (§3.7, `internal/connector/ad/secrets.go`). This condition covers a schema snapshot
      older than the RODC's set.
+- **Lab record (T-1762, Samba AD 4.x):** a live `sIDHistory` on the identity is in `TokenSet` (`TestLabADTokenSetSIDHistory`).
+  Samba's `tokenGroups` does **not** hold the `sIDHistory` of a group the user belongs to, and the exported set
+  does not either. Windows result for the same case, and `tokenGroups` vs the real access token, is **not yet
+  recorded** `[LAB: Windows]` (follow-up ticket); T-1763 item 2 must not treat Samba as proof for Windows.
 - **The answer maps to a state:**
   - `Yes`, not `Incomplete` and not `Anomalous`: `NOT_CONFIGURED`, `blob_reason: absent`.
   - `No`: `NOT_CONFIRMED`, `read_denied`.
@@ -802,6 +821,14 @@ LDAP result code, never on the Windows text. Replays and near-full resyncs after
 are the third outcome in DM-19.I4 and cannot be detected; the pre-checks exist so that is only
 reachable by a DNS change that the `dsa_guid` check missed. The margin is provisional (the larger of
 one day and 10 % of the lifetime) `[OPEN → T-0065]`.
+
+**The caller (T-1198).** `sync.Engine.IncrementalCycle` is the DM-19 caller for one AD naming context. It stores the
+whole marshalled `FeedCookie` (not only `provider_state`) with the SyncCursor; per batch it commits the lease claim,
+the applied patches and the cursor advance in one transaction (I1); and it treats any `ResyncRequired` error, a
+`SERVER_REJECTED` or unreadable stored cookie, and a batch the applier could not apply in full (`NeedsRead`) as I3:
+`resync_required` is written first, then prime, full read, forest-wide reconcile and cookie store happen in one
+re-establish step. `UNREACHABLE_DC`, `THROTTLED` and an incomplete feed are retryable and leave cookie and cursor
+untouched. A suspended connection pauses the NC and resumes as a resync. Not yet wired to a job (follow-up).
 
 ### 6.4 The batch
 
@@ -1846,14 +1873,14 @@ by the member's class (parameterise, don't clone): there is no `NEST` kind and n
   an ordinary object permission scoped to the group; it is not in `GroupMembershipPermissions` because
   removal cannot grow anyone's reach. **Residual for security-architect (R-GM-1):** removal widens access
   where the group is used in a *deny* ACE, a deny GPO filter or a "deny logon" right; the connector cannot
-  see where a group is referenced. Default here: not guarded; the call is TM §6.9, route T-1918.
+  see where a group is referenced. **Ruled (T-1918, TM-D36, [threat model §6.9a](threat-model.md)):** class `none`, no new permission; removal from a built-in restrictive group (Protected Users, Denied RODC Password Replication, by RID) or a tenant-designated one needs conditional step-up decided on the server; the preview carries the fixed deny-rule warning; the audit event carries `restrictive`.
 - **Class matrix.** Target: `group` only (any other live class, `ClassNotAllowed`). Member: `user`
   (including `inetOrgPerson`), `computer`, `contact`, `group`. A `foreignSecurityPrincipal`, a
   `msDS-ManagedServiceAccount` and a container are `ClassNotAllowed`. A group of any `groupType`
   (security or distribution, any scope) is a valid target; the DC's scope rules (a global group may
   hold only global groups of its domain; a domain-local group is not a member of a global one) are
   enforced by the DC and surface as `INVALID_ARGUMENT` `GroupScopeRule` with fixed text
-  (`unwillingToPerform`, `[UNVERIFIED Windows]` for the exact result code; CC-WK-51 S proves it on Samba).
+  (`unwillingToPerform`, `[UNVERIFIED Windows]` for the exact result code; Samba accepts the add (measured, T-1919), so only CC-WK-51 on Windows proves the DC refusal).
 - **Tier-0, the group basis (§8.1 step 6, TM-D2).** Two touched objects, each needing its own
   `CorrelationStatement`: the **group** and the **member**. Either `tier0` is `TIER0_REFUSED` before any
   directory call, add or remove alike. The group is `tier0` by C1 or C13 identity (Domain Admins,
@@ -1886,12 +1913,12 @@ by the member's class (parameterise, don't clone): there is no `NEST` kind and n
 
 | Rule id (`INVALID_ARGUMENT`) | When | Why |
 | --- | --- | --- |
-| `SelfMembership` | the member is the group (kind 11) | AD refuses a group as its own member; refused before the DC is asked |
-| `NestingCycle` | kind 11 with `member_class` GROUP and the member's SID is in the group's `tokenGroups` (the group already sits below the member) | closes a loop that would make every member of either a member of both, and make the C2 read of §8.1 step 7 ambiguous for a Tier-0 group `[UNVERIFIED Windows]` whether AD itself accepts the loop; refusing is our decision, not an AD limit |
+| `SelfMembership` | the member is the group (kind 11) | product-side refusal, before the DC is asked; Samba accepts a group as its own member (measured, T-1919) and the docs do not show AD refusing it, so whether Windows refuses is `[UNVERIFIED Windows]` |
+| `NestingCycle` | kind 11 with `member_class` GROUP and the member's SID is in the group's `tokenGroups` (the group already sits below the member) | closes a loop that would make every member of either a member of both, and make the C2 read of §8.1 step 7 ambiguous for a Tier-0 group. **Samba accepts a loop and a group as its own member (measured, T-1919, [findings](../domain/group-membership-and-computer-reset-findings.md))**, so this and `SelfMembership` are product-side refusals that Samba tests prove; whether Windows accepts a loop is `[UNVERIFIED Windows]`. Refusing is our decision, not an AD limit |
 | `PrimaryGroupMember` | kind 12 and the member's `primaryGroupID` equals the group's RID | the membership is not in `member`; there is nothing to delete. Changing a primary group is `primaryGroupID`, which TM-D28 `denied` forbids in this slice (§8.10.4); the preview says "this is the account's primary group" |
 | `MemberClassMismatch` | `member_class` differs from the live class | binds the permission to the class, above |
 | `CrossDomainMemberUnsupported` | the member is not in the group's domain NC | later kind |
-| `GroupScopeRule` | the DC refuses the scope combination (`unwillingToPerform`) | fixed text, no DN |
+| `GroupScopeRule` | the DC refuses the scope combination (`unwillingToPerform` expected; the Win32 detail is 8514-8520 `ERROR_DS_GLOBAL_CANT_HAVE_LOCAL_MEMBER` and kin, [WinError](https://learn.microsoft.com/en-us/windows/win32/debug/system-error-codes--8200-8999-); the LDAP result code is `[UNVERIFIED Windows]`). **Samba never refuses (measured): a Samba pass cannot prove this rule** | fixed text, no DN |
 | `ClassNotAllowed` | target not a group; member class outside the matrix | |
 
   `OBJECT_NOT_FOUND` for a member or group GUID that is not live. A member that is a ghost (a deleted
@@ -1899,7 +1926,7 @@ by the member's class (parameterise, don't clone): there is no `NEST` kind and n
   is not live, so the call is `OBJECT_NOT_FOUND` and a "clean dead members" kind is a later spec.
 - **Compare-and-set and the precondition.** The value-level `add` and `delete` of one `member` value in one
   `ModifyRequest` is the compare-and-set: the DC fails an `add` of a present value
-  (`attributeOrValueExists`) and a `delete` of an absent one (`noSuchAttribute`), mapped to
+  (`attributeOrValueExists`) and a `delete` of an absent one (`noSuchAttribute` per the spec reading; **Samba returns `unwillingToPerform` 53, measured T-1919**, so accept either and resolve by the member-side read), mapped to
   `ALREADY_APPLIED` when the member's side confirms the target state on the pinned DC and to
   `TARGET_CHANGED` otherwise. **`state_digest` does not cover the group's `uSNChanged` or its `member`
   list**: every other membership change on a busy group moves them, and a two-technician race on
@@ -1926,7 +1953,7 @@ There is **one directory operation**; "password" and "trust relationship" are tw
 kinds or a mode. Machine-side repair is outside the connector: the account is made valid for a rejoin
 (the object, its SID, group memberships and OU stay), but the machine must `Reset-ComputerMachinePassword`,
 `Test-ComputerSecureChannel -Repair` or rejoin with credentials that have Reset Password on the object
-`[UNVERIFIED Windows]`. Running that on the machine is a later kind on the agent tier [M3], not an LDAP write.
+(Microsoft documents `-Credential` only as "a user account that has permission", [Reset-ComputerMachinePassword](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.management/reset-computermachinepassword); the exact ACE stays `[UNVERIFIED Windows]`, T-1919). Running that on the machine is a later kind on the agent tier [M3], not an LDAP write.
 - **No known value.** ADUC's *Reset Account* sets the password to the computer name
   ([Active Directory Cookbook, "Resetting a Computer"](https://www.oreilly.com/library/view/active-directory-cookbook/0596004648/ch08s08.html);
   the exact format is `[UNVERIFIED]`). A password derived from the account name is a credential anyone can
@@ -1944,7 +1971,7 @@ kinds or a mode. Machine-side repair is outside the connector: the account is ma
   connector's host computer account and the bound gMSA's retrieval-list computers before `ClassNotAllowed`.
   A failover-cluster name object (CNO) or virtual computer object (VCO) is `INVALID_ARGUMENT`
   `ClusterObject`: resetting it takes the cluster offline. Detection is the cluster SPN class
-  `MSServerClusterMgmtAPI` or `MSClusterVirtualServer` on the object `[UNVERIFIED Windows]`; CC-WK-59 is W.
+  `MSClusterVirtualServer` (Microsoft's own marker for CNO and VCO, [source](https://thewindowsupdate.com/2019/10/07/identifying-stale-cluster-computer-objects/)), `MSServerClusterMgmtAPI` or `MSServerCluster` on the object; which class sits on CNO vs VCO is `[UNVERIFIED Windows]`. A **prestaged, disabled** cluster account has no SPN yet and is not detected (the Plan says so). The filter is testable on Samba with hand-made SPNs; CC-WK-59 is W only for a real cluster ([findings](../domain/group-membership-and-computer-reset-findings.md)).
 - **Plan** reads and shows `pwdLastSet`, `lastLogonTimestamp`, `userAccountControl` and the computer's
   `operatingSystem`; a computer seen in the last 14 days is shown with a warning that its sign-ins and
   services will fail until it repairs (display only; the decision is the technician's). A disabled
@@ -2050,7 +2077,8 @@ can mean" limits of safe-primitives §5.6 apply to the connector's copies as to 
 | `USER_PASSWORD_RESET` | **true** | **true** | **Irreversible** | A reset gives the actor (or whoever they hand it to) a known credential for a sign-in account; safe-primitives §5.6 and ADR-0005 rule 1 name "setting a password" as the Irreversible example. `StepUp`: see below |
 | `OBJECT_CREATE` (USER) | false | true when `has_secret_input` | Reversible (the inverse deletes the new account) | A new account backs no one yet (TM-D28 rule 3: create is outside the classes) |
 | `COMPUTER_ACCOUNT_RESET` | **true** | false (the value is generated in the connector; no `secret_input`) | **Irreversible** | The old machine password cannot be restored and the machine falls off the domain until it repairs or rejoins (outage of a server or a workstation). No credential is handed to the actor, so this is not the §7.4 password-reset row; it has its own (below) |
-| `GROUP_MEMBER_ADD`, `GROUP_MEMBER_REMOVE` | false | false | Reversible | Authorised by the TM-D18 permission on the group, not by step-up (R-GM-1) |
+| `GROUP_MEMBER_ADD` | false | false | Reversible | Authorised by the TM-D18 permission on the group, not by step-up |
+| `GROUP_MEMBER_REMOVE` | **conditional** (true when the group is restrictive, TM-D36) | false | Reversible | Removal widens access where a group denies (R-GM-1, T-1918); the server decides `restrictive`, never the caller |
 | all others | false | false | per §8.10.1 | |
 
 **StepUp and TM-D16.** [Threat model §7.4](threat-model.md) (TM-D16 part 1) is a closed list of operations
@@ -2099,7 +2127,7 @@ contains no value, DN or directory response (CC-WRITE-13).
 | 8 unlock | Supported (W) | Supported (T-1628, measured): `replace lockoutTime 0` and delete-old + add-0 both unlock and reset `badPwdCount`; stale old value fails `noSuchAttribute`; a non-zero write is wrongly accepted (see §8.10.3 kind 8) | `CAPABILITY_UNSUPPORTED` |
 | 9, 10 enable, disable | Supported (W, S) | Supported (S) | `CAPABILITY_UNSUPPORTED` (Graph `accountEnabled` is a separate kind) |
 | 11, 12 group member add, remove | Supported (W, S) | Supported (S); a Samba pass proves the LDAP shape, not Windows scope rules or result codes (`GroupScopeRule` is `[UNVERIFIED Windows]`) | `CAPABILITY_UNSUPPORTED` (Graph group members is an Entra-slice kind) |
-| 13 computer account reset | Supported (W) | Supported (S); whether Samba applies the same machine-password semantics is `[UNVERIFIED]`, CC-WK-57 measures it | `CAPABILITY_UNSUPPORTED` |
+| 13 computer account reset | Supported (W) | Supported (S); Samba measured (T-1919): `replace unicodePwd` works, `pwdLastSet` advances, the old password stops binding, no complexity rule on a workstation account ([findings](../domain/group-membership-and-computer-reset-findings.md)) | `CAPABILITY_UNSUPPORTED` |
 
 Asymmetry is a decision: Samba is a CI lab, not a customer target of v1, so a Samba gap is recorded
 here and in `Describe`, not hidden. A provider reports `PLAN` and `APPLY` `SUPPORTED` once at least
@@ -2185,6 +2213,12 @@ plus `pwdLastSet` 0 when must-change is set, with the non-critical policy-hints 
 an `AccountProvider`, so these kinds are `CAPABILITY_UNSUPPORTED` there. Samba cannot prove the
 policy-hints control, the `lockoutTime` and `userAccountControl` modify forms or Windows reset
 semantics; those are `[UNVERIFIED]` until the Windows-lab ticket for CC-WK-19, 21, 24 and 26 runs.
+
+**Kinds 11 to 13 as built (T-1913, directory-engineer, 2026-11-13).** Operation-table rows and `kindTable` rows are wired together.
+- Kinds 11 and 12 live in `internal/connector/write/kinds_group.go`; their digest codec is `writechange` (`ad.group.addMember`, `ad.group.removeMember`; attributes `~member` = the member's objectGUID as canonical text and `~memberClass`; the target is the group and the **digest carries no class**). **Amended (T-2214, ADR-0017, 2026-11-16):** `WriteOp.Target.Class` for kinds 11 and 12 must be empty or exactly `group`; the value is the kernel's authz class (`Descriptor.TargetClass=group`, GM1 text-identity) and is an unhashed assertion, never put on the wire or in the digest. The connector's live `objectClass` read of the group is the enforcement. Fitness GM5. They run through `ad.Tx`: two base-scope GUID reads (group: `objectClass`, `objectSid`, `groupType`, `tokenGroups`, `adminCount`; member: `objectClass`, `objectSid`, `primaryGroupID`, `memberOf`, `adminCount`), one `ModifyRequest` built by `ops.ModifyObject` (`add` or `delete` of the one member value, addressed `<GUID=group>`), and a read-after-write on the same DC. The group's `member` is never read. `state_digest` is `{group objectSid, groupType, group adminCount, member objectSid, member class, member parent DN, member adminCount}`; Tier-0 facts are not hashed because the guard re-reads them at step 7 on Apply (`TIER0_REFUSED` is the stronger answer), and the member's parent is hashed as its DN rather than its GUID (a rename of the parent OU fails the compare and re-plans, the conservative direction). `CrossDomainMemberUnsupported` compares the `DC=` suffix of the two DNs. A DC `unwillingToPerform` is `GroupScopeRule`; `attributeOrValueExists`/`noSuchAttribute` re-reads the member and answers `ALREADY_APPLIED` or `TARGET_CHANGED`.
+- Kind 13 is a fifth `accountkind` spec (`ad.computer.resetAccount`, class computer, rights family R5): `accountOp` is reused with its own `state_digest` (`{uSNChanged, pwdLastSet, userAccountControl, objectSid}`), preview (`pwdLastSet`, `lastLogonTimestamp`, `userAccountControl`, `operatingSystem`), `ClusterObject` test (SPN class `MSServerClusterMgmtAPI` or `MSClusterVirtualServer`) and sender `resetComputer`, which checks the verified-TLS proof first and only then draws 128 printable characters from `crypto/rand` (rejection sampling) and sends `replace unicodePwd` through the kind 7 sender without `pwdLastSet`. `ad.AccountState` gains `LastLogonTS`, `OperatingSystem` and `SPNs`, read for every account kind.
+- **Not done here, and why.** `guarded.ComputerReset()` and the `[object class]` key of the `guarded-v1` table (B1, B3, B4, GM3) have no code to extend: no `internal/directory/guarded` package exists in the tree. Follow-up T-1925 (backend-engineer) filed. The CC-WK-45..62 S cases are written as unit cases over a fake `groupTx` and the real refusal, digest and request code (`kinds_group_test.go`, `account_computer_test.go`); the lab (`-tags lab`) cases were not run because this worktree has no Docker, so the Samba proof of CC-WK-45..48, 50..53, 55..57 and 62 is still owed and T-1926 (test-engineer) carries the lab run and the Windows cases CC-WK-47, 51, 56 (ghost), 57, 58 and 59.
+- **Samba lab run (T-1913, `groupkinds_lab_test.go`, `-tags lab`).** Passed on Samba: CC-WK-45, 46, 48, 49, 53, 54, 55, 56 (remove race and Tier-0 nesting between Plan and Apply), 47 (Domain Admins, Account Operators, nested group), 52 (1,600-member group, unrelated membership change between Plan and Apply), 57 (`pwdLastSet` advances, `SecretInputMismatch`), 58 (user and contact target `ClassNotAllowed`; a DC target `TIER0_REFUSED` when `CN=DC1` exists). The lab found a bug fixed here: a contact has no `objectSid`, so the member read refused every contact member. **Not provable on Samba:** `NestingCycle` (Samba returns no `tokenGroups` for a group object) and `GroupScopeRule` (Samba's LDAP path accepts a domain-local group in a global group); both are unit cases and are Windows-lab cases for T-1926. Not run: CC-WK-59 (W), the proxy-log assertions of CC-WK-45/52, CC-WK-61 retry, CC-WK-62 dynamic-group guard, the old-machine-password secure-channel bind of CC-WK-57.
 
 #### 8.10.8 Follow-ups this section creates
 
@@ -2382,7 +2416,7 @@ properties. AC-TS07 runs end to end as TS8 (T-1733). These are the contract-leve
 
 | ID | Case | Expectation | Lab |
 | --- | --- | --- | --- |
-| CC-TS-01 | Windows fixtures | `Read` of each T-1565 fixture user returns `TsPropertiesValue` whose fields equal the fixture's expected file, which was checked against ADUC (spec V4) | W |
+| CC-TS-01 | Windows fixtures | `Read` of each T-1565/T-1890 fixture user (TSP-W01 to TSP-W18) returns `TsPropertiesValue` whose fields equal the fixture's expected file, which was checked against ADUC (spec V4) | W |
 | CC-TS-02 | Never raw | `Read`, `ScopedSearch` and `ChangeFeed` (once served) asking for `userParameters`, `userparameters`, `userParameters;binary` and the OID return only `TsPropertiesValue`, never `octets` or `text`. This holds with the live schema (syntax 2.5.5.12, which would otherwise route to `text`), with `DefaultSchema`, and with a schema that lacks the attribute. A value forced across a `ValueChunk` boundary is typed too, and so is `wirevalue.Of` called directly the way the `Plan` before-image calls it. A wire capture (FI proxy) of each response has no byte of the fixture's `ReservedData` sentinel | S, FI |
 | CC-TS-03 | Absent and gated | `Read`, with readability proved, of a user with no `userParameters`, one with signature "Q", and one without `CtxCfgPresent`: each gives `state: NOT_CONFIGURED` with no field `UNREADABLE` (FR-TS03, AC-TS04). A `Read` that names the attribute **by OID** (`1.2.840.113556.1.4.138`) for a user whose blob is set gives `CONFIGURED`. The DC returns the value under the name `userParameters`, so a builder that filters returned attributes by the requested string would drop it and fall into the absent path | S |
 | CC-TS-04 | Read right withheld | The connection identity is denied `READ_PROPERTY` on `userParameters` by (a) a per-object deny ACE on one user and (b) an OU-inherited deny on the property set. `Read` gives `NOT_CONFIRMED`, `read_denied` for both, never `NOT_CONFIGURED`. An identity that cannot read the DACL, and a connection with no clean rights check in the current epoch, give `NOT_CONFIRMED`, `readability_unknown`. So do: a session bound as an identity other than the rights check's; a target user in another domain of the forest; and a base read served by an RODC. A deny ACE on (c) Everyone or Authenticated Users, (d) a SID in the identity's `sIDHistory`, and (e) a domain-local group of the target's domain gives `read_denied`, never `NOT_CONFIGURED`. An ACE with (f) the user class GUID as object type applies, and one with (g) an object-type GUID the snapshot cannot resolve gives `readability_unknown`. A user with the attribute absent in `ScopedSearch` gives `NOT_CONFIRMED`, `readability_not_evaluated`. On Windows, each `sd.Grants` answer equals the DC's own (an LDAP read as that identity). Samba rows do not count as evidence of the access check | S, W |
@@ -2558,7 +2592,7 @@ is `TIER0_REFUSED` before the kind's code (CC-WK-28).
 | CC-WK-48 | group member add, Tier-0 member | the member is a C1 user, a DC computer, and the connector's own bound principal; the group is ordinary | `TIER0_REFUSED` basis C1, C4, C20; no write | S |
 | CC-WK-49 | group member add, `ALREADY_APPLIED` | the member is already in the group; the member's `primaryGroupID` is the group's RID (Domain Users); the member is added by another technician between Plan and Apply | `no_op` at Plan; `ALREADY_APPLIED` with `read_back`; `ALREADY_APPLIED` at Apply, never `TARGET_CHANGED` | S |
 | CC-WK-50 | group member add, refusals | the group as its own member; a group whose `tokenGroups` holds the member (loop); a member in another domain; a `foreignSecurityPrincipal`, a gMSA and an OU as member; a user as the target | `SelfMembership`; `NestingCycle`; `CrossDomainMemberUnsupported`; `ClassNotAllowed` for the next three; `ClassNotAllowed` for the target; nothing sent | S |
-| CC-WK-51 | group member add, DC scope rule | a domain-local group added to a global group | `GroupScopeRule` with fixed text, no DN or DC message in the response, audit event or log. The result code is `[UNVERIFIED Windows]`: the Windows run records it | S, W |
+| CC-WK-51 | group member add, DC scope rule | a domain-local group added to a global group | `GroupScopeRule` with fixed text, no DN or DC message in the response, audit event or log. The result code is `[UNVERIFIED Windows]`: the Windows run records it. **Samba accepts the add (measured), so the S column proves only the product-side path; W is the real proof** | S, W |
 | CC-WK-52 | group member add, large group | add to `GG-Big` (3,000 members) and to an empty group | both succeed; the proxy log shows no `member` read and no ranged read of the group; `state_digest` is equal across an unrelated membership change on `GG-Big` between Plan and Apply (no `TARGET_CHANGED`) | S, FI |
 | CC-WK-53 | group member remove (12) | remove a user, a computer and a nested group; then the inverse `GROUP_MEMBER_ADD` | one `delete member` request; the member's `memberOf` loses the group; the inverse restores it | S, W |
 | CC-WK-54 | group member remove, `ALREADY_APPLIED` and primary | the member is not in the group; the group is the member's primary group | `ALREADY_APPLIED` (`no_op`); `PrimaryGroupMember`, nothing sent | S |
@@ -2566,7 +2600,7 @@ is `TIER0_REFUSED` before the kind's code (CC-WK-28).
 | CC-WK-56 | group member remove, race | the member removed by another technician between Plan and Apply; the group becomes nested under Domain Admins between Plan and Apply; a ghost member (deleted object still listed) | `ALREADY_APPLIED`; `TIER0_REFUSED` basis C2 at Apply; `OBJECT_NOT_FOUND`, nothing removed | S, FI (W for the ghost) |
 | CC-WK-57 | computer account reset (13) | a domain-joined lab computer; Plan then Apply with step-up | `unicodePwd` replaced over LDAPS; `pwdLastSet` advances; a secure-channel bind with the old machine password now fails; the value sent is not derivable from `sAMAccountName` (two resets differ; assert on length and entropy of the encoded value in the proxy); the response, audit event and connector log hold no value (canary, CC-WRITE-13) | S, W |
 | CC-WK-58 | computer account reset, class and Tier-0 | a user, a contact and a gMSA as target; a DC, an RODC, a C12 computer and a computer in the Domain Controllers OU; the connector host's computer account and a gMSA retrieval-list computer | `ClassNotAllowed` ×3; `TIER0_REFUSED` basis C4, C4, C12, C3; C20 ×2 before `ClassNotAllowed`; no write | S, W |
-| CC-WK-59 | computer account reset, cluster object | a CNO and a VCO of a lab failover cluster; a plain computer with a lookalike name | `ClusterObject` for the first two; the plain computer is reset. Detection by SPN class is `[UNVERIFIED Windows]` | W |
+| CC-WK-59 | computer account reset, cluster object | a CNO and a VCO of a lab failover cluster; a plain computer with a lookalike name | `ClusterObject` for the first two; the plain computer is reset. Detection by SPN class: the filter is S-testable with hand-made SPNs; a real CNO/VCO's SPN set is `[UNVERIFIED Windows]` | S, W |
 | CC-WK-60 | computer account reset, input and transport | `has_secret_input` true; a `secret_input` present; a non-TLS channel | `SecretInputMismatch` twice; `TRANSPORT_SECURITY` before any value is generated (assert no `crypto/rand` call in the test build) | S |
 | CC-WK-61 | computer account reset, retry and Descriptor | the same step retried after a lost reply; an Action for kind 13 declaring `objects.user.reset_password`; the Descriptor of the Action | `TARGET_CHANGED` with Verify reading `pwdLastSet` (no `ALREADY_APPLIED`); `ErrGuardedUndeclared`; `StepUp = true`, `SecretInput = false`, `Irreversible` (`TestDescriptorStepUpMatrix`) | S, unit |
 | CC-WK-62 | kinds 11 and 12, dynamic-group guard | a designated dynamic closure whose scope holds `memberOf`, then `mail`, then `RefuseAll`; a closure whose scope holds only `department` | kinds 11 and 12 refused `designated_dynamic_rule` for any target group in the first three (either plane); not refused in the fourth. Not skippable by the override (D11) | S |
@@ -2775,6 +2809,27 @@ session, same DC) and calls `DACLWrite.VerifyAfter` (SD-R10). A mismatch is `sd.
 User-Change-Password deny ACEs for Everyone and SELF; four states, see safe-primitives-security-descriptor
 §14). The state is `NotConfirmed` exactly when the error is non-nil; the sync records "Not confirmed" and
 continues. One base read per user: `nTSecurityDescriptor` is not searchable in bulk (`constructedReadOnly`).
+
+### As served to the sync (T-1551)
+
+`ReadRequest.include_password_change` (field 17) asks for `ReadHeader.password_change`, a
+`PasswordChangeVerdict{state, object_guid, error_code}`. The connector classifies; **no descriptor byte
+crosses the contract**. A failed, withheld, malformed or out-of-order descriptor is not an error of the
+call: it is `state = NOT_CONFIRMED` with a fixed `error_code` (`read.PasswordChanger` is an optional
+`Source` half; without it the code is `CAPABILITY_UNSUPPORTED`). The AD sync (`directory/sync`,
+`engine_pwchange.go`) asks once per live `user`/`inetOrgPerson` of the main pass, pinned to the DC of the
+pre-scan, and stores `password_change_state` + `password_change_at` for **every** such user:
+
+- any failure (transport, status, no verdict, second header, `NOT_CONFIRMED`) stores `not_confirmed`
+  *with* the as-of time, never the previous value and never `no_deny_ace`;
+- a verdict whose `object_guid` is not the observed object (or a definite state without one) is refused
+  the same way, so a foreign state is never stored for the object;
+- the report counts outcomes by fixed key (`DomainReport.PasswordChange`) and the domain log line carries
+  `password_change.<outcome>` counts with the connector's error-code name, no descriptor and no message.
+
+Cost: one extra Read per user per full read, sequential in the main pass. A bounded-concurrency read is a
+follow-up. Samba proves the mechanics and the decode of what it stores; the Windows ACE shape and ACL
+ordering remain a Windows-lab test (T-1484).
 
 ## User search path (T-0669, walking skeleton 2/4)
 

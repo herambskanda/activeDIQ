@@ -471,7 +471,7 @@ I6 depend on it.
 (`not_after` within the reminder window) `→ rotated` (replaced, I5) `| revoked`. `rotated` and
 `revoked` are terminal.
 
-### DM-12 Component · T · owner `platform/fleet`
+### DM-12 Component · T (components, client CAs) and P (server CA) · owner `platform/fleet`
 **Definition.** An enrolled remote process with its own mTLS identity. In v1 that is a remote
 **connector**; from M3 also agent modules (**addc**, **fileserver**). The embedded connector has no identity and is not a
 Component (ADR-0002). One shape covers both kinds ("parameterise, don't clone").
@@ -484,6 +484,10 @@ from a message. I2 An enrollment token is single-use, expiring, stored hashed, a
 account holding the enrollment permission. I3 Certificate rotation keeps the Component identity.
 **Lifecycle.** `pending` (token issued) `→ enrolled → active → revoked → removed`. Reachability is
 health.
+**Server CA (T-0735, ADR-0008).** One installation-scope row (`fleet_server_ca`, no `tenant_id`) signs the gateway's
+ServerAuth leaves and nothing else; its pin is the one pin every tenant's enrolment material carries. Its key is
+sealed under the installation DEK and destroyed when the row leaves `active` (`active → retired → withdrawn`).
+Component identities stay under the per-tenant client CAs (`fleet_ca`).
 
 ### DM-13 ConnectorBinding · T · owner `directory/connection` (ADR-0003 F1)
 **Definition.** It routes a connection to the connector(s) that serve it. The binding is data, not
@@ -710,7 +714,7 @@ I4 A DirSync cookie is reused only on the DC that issued it. On another DC it ma
 return everything, or be rejected with `0000203D`. All three outcomes end in `resync_required`
 ([DirSync](https://learn.microsoft.com/en-us/windows/win32/ad/polling-for-changes-using-the-dirsync-control)).
 I5 DirSync does not report the children of a moved or renamed parent. Their `dn` and `ancestry`
-are re-derived from the parent's new position, not awaited from the feed. I6 A Graph delta token
+are re-derived from the parent's new position, not awaited from the feed. Realised (T-0948, T-0988): on a move the inventory writer rewrites `ancestry`, then each descendant's `dn` (typed `dn.Rebase`, by RDN position, not a text replace) and its dn search key in the same transaction; an unrebasable dn becomes empty (unknown), never stale. I6 A Graph delta token
 expires after 7 days (`syncStateNotFound`), and `410 Gone` also means a full sync
 ([delta query](https://learn.microsoft.com/en-us/graph/delta-query-overview)). The AD reader
 contract (show-deleted control `1.2.840.113556.1.4.417` with DirSync, an `objectClass` filter
@@ -2035,6 +2039,43 @@ collection.
 **Invariants.** I1 `tenant_id` and `component_id` are stamped from the client certificate; nothing in the
 payload names them (S1). I2 `(tenant_id, component_id, agent_seq)` is unique, so redelivery of an identical record is
 idempotent; the same seq with a different `content_sha256` is a divergence (alert, stored row kept). I3 `reported_dc_guid` is data to cross-check, never identity.
+
+### DM-90 MigrationProject · T · owner `modules/migration`
+**Definition.** One ManageEngine-to-activeDIQ migration effort of a tenant: the container its import jobs
+sit in. Created by an admin holding `migration.import` through the Action `migration.project.create`.
+**Key attributes:** `project_id` · `name` · `created_by` · `created_at` · `closed_at`.
+**Invariants.** I1 only the Action creates one; the runtime role cannot delete. I2 `created_by` is the
+real human requester of the chain, never the token that carried it.
+
+### DM-91 MigrationJob · T · owner `modules/migration`
+**Definition.** One intake of one source (a file upload; spec e2-11 §6.1) in a project. It records who
+submitted it, the source kind, the SHA-256 of the source, the ADMP build and the size, and starts in
+`quarantined`: nothing is parsed until a later stage releases it. A source over its size limit (spec §7)
+is recorded as `rejected` with the limit hit, having never been read.
+**Key attributes:** `job_id` · `project_id` · `actor` · `source_kind` · `source_sha256` · `admp_build` ·
+`size_bytes` · `state` · `limit_hit` · `created_at` · `finished_at`.
+**Invariants.** I1 `actor`, `source_kind`, `source_sha256`, `admp_build` and `size_bytes` never change
+after insert (trigger). I2 at most 3 active jobs (`quarantined`, `running`) per tenant and 1 per actor,
+checked under a per-tenant advisory lock. I3 `limit_hit` is set exactly when `state = rejected`, and a
+rejected job has no SHA-256 (nothing was read).
+
+### DM-92 MigrationFidelityRow · T · owner `modules/migration`
+**Definition.** The fidelity report (MIG-03) of one import job: exactly one row per parsed item, classed `exact`,
+`changed` (with its diff), `manual` or `not_supported`, with a reason code for the last two. A script body is kept
+only as bounded, escaped text on a `manual` row.
+**Key attributes:** `job_id` · `item_seq` · `item_ref` · `item_kind` · `item_name` · `class` · `reason` · `diff` · `detail`.
+**Invariants.** I1 insert-only for the runtime role; a job is recorded once. I2 `class` is decided server-side by
+`Classify`, never by the importer: what §6.4 never imports (tenant-owner, RBAC/delegation/connections permissions,
+tier0 or unresolvable scopes, credentials, raw SQL, open requests) is `not_supported`, a script is `manual`.
+I3 text is data and is re-encoded on every output (the CSV export goes through the shared encoder).
+
+### DM-93 MigrationProposal · T · owner `modules/migration`
+**Definition.** A stored, inert description of intended configuration and the grants it carries, for one `exact` or
+`changed` item. It grants nothing and no authorisation, job, schedule or notification path reads it; a later Action
+applies it (spec §6.3).
+**Key attributes:** `job_id` · `item_seq` · `class` · `config` · `grants`.
+**Invariants.** I1 at most one per item; its `class` is part of the foreign key to the fidelity row, so an item that
+is `manual` or `not_supported` cannot have one. I2 insert-only for the runtime role.
 
 ---
 
