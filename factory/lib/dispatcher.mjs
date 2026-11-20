@@ -47,6 +47,7 @@ export { selectCandidates, launchGate } from './candidates.mjs';
  * @returns {number|null}
  */
 /** At most this many conflicting tickets are reopened in one merge pass, so a long run of them cannot start a burst of reworks. */
+const MAX_PRESCREEN_FAILURES = 3;
 const MAX_CONFLICT_REOPENS_PER_PASS = 5;
 
 export function diskFreeBytes(dir) {
@@ -140,6 +141,9 @@ export class Dispatcher {
     this.runShadow = runShadowGate; // (ctx, ticket, {mainSha, branchSha, verdict, signal}) → record; replaceable in tests
     this.shadowRun = null; // shadow gate in flight (logs only, never blocks or decides anything)
     this.shadowAbort = null;
+    this.prescreenRun = null; // merge plan 4.4: pre-screen of a ticket at the front of the line, in flight
+    this.prescreenAbort = null;
+    this.prescreened = new Map(); // ticket id → the branch commit already pre-screened
     this.verifyRun = null; // post-merge ci-full check in flight (never blocks a merge)
     this.verifyAbort = null;
     this.nextVerifyAt = 0; // ms; the cooldown between verify runs
@@ -464,7 +468,7 @@ export class Dispatcher {
     const settings = preMergeSettings(this.ctx.config);
     const gated = settings.enabled;
     const concurrency = gated ? settings.concurrency : 1;
-    if (gated && this.gateLanes.length >= concurrency) return;
+    if (gated && this.gateLanes.length >= concurrency) { await this.guard('pre-screen', () => this.prescreenAhead(settings)); return; }
     const claimed = new Set(this.gateLanes.flatMap((lane) => lane.ids));
     const done = listEntities(this.ctx, 'tickets').filter((t) => t.status === 'done' && !claimed.has(t.id));
     const code = (t) => isCodeType(this.ctx.config, t.type);
@@ -523,6 +527,44 @@ export class Dispatcher {
     // Try to fill another lane in this same pass: the selection above already excludes this
     // lane's tickets (`claimed`), so a second call picks a disjoint train, up to `concurrency`.
     if (this.gateLanes.length < concurrency) await this.mergePass();
+  }
+
+  /**
+   * Merge plan 4.4: while every gate lane is busy, run the cheap pre-screen (`pre_merge.prescreen_argv`) on the first
+   * tickets of the line, one at a time and in the background. A ticket that fails it is reopened to its owner with no
+   * strike: the failure costs no gate run. A pass changes nothing, the ticket still gets the full gate. A ticket is
+   * pre-screened once per branch commit, and given up on after MAX_PRESCREEN_FAILURES so it cannot loop.
+   */
+  async prescreenAhead(settings) {
+    if (!settings.prescreen_ahead || this.prescreenRun || this.stopping || !this.gateLanes.length) return;
+    const { ctx } = this;
+    const claimed = new Set(this.gateLanes.flatMap((lane) => lane.ids));
+    const all = listEntities(ctx, 'tickets');
+    const done = all.filter((t) => t.status === 'done' && !claimed.has(t.id) && isCodeType(ctx.config, t.type) && t.links?.worktree);
+    const head = this.heldOnMain.size ? await mainSha(ctx) : null;
+    for (const ticket of orderDoneQueue(done, all).slice(0, Math.max(1, effectiveTrainSize(ctx, settings)))) {
+      if ((ticket.tags ?? []).includes(EMBARGO_TAG) || (ticket.prescreen_failures ?? 0) >= MAX_PRESCREEN_FAILURES) continue;
+      if (head && this.heldOnMain.get(ticket.id) === head) continue;
+      const sha = (await git(ctx.root, ['rev-parse', '--verify', '-q', `refs/heads/${branchName(ticket.id)}`])).stdout.trim();
+      if (!sha || this.prescreened.get(ticket.id) === sha) continue;
+      this.prescreened.set(ticket.id, sha); // set first: a run that throws is not retried every tick
+      this.prescreenAbort = new AbortController();
+      this.prescreenRun = this.guard(`pre-screen ${ticket.id}`, () => this.prescreenOne(ticket, settings, this.prescreenAbort.signal))
+        .finally(() => { this.prescreenRun = null; this.prescreenAbort = null; this.requestTick = true; this.wake?.(); });
+      return;
+    }
+  }
+
+  async prescreenOne(ticket, settings, signal) {
+    const { ctx } = this;
+    const verdict = await this.runGate(ctx, [ticket], { signal, argv: settings.prescreen_argv });
+    if (verdict.status !== 'blocked' || verdict.mainBroken) return;
+    const now = listEntities(ctx, 'tickets').find((t) => t.id === ticket.id);
+    if (!now || now.status !== 'done' || this.gateLanes.some((lane) => lane.ids.includes(ticket.id))) return; // it moved on meanwhile
+    const failures = (now.prescreen_failures ?? 0) + 1;
+    updateEntity(ctx, 'tickets', ticket.id, (t) => { t.prescreen_failures = failures; });
+    appendEvent(ctx, { actor: 'dispatcher', kind: 'ticket', ticket: ticket.id, text: `${ticket.id} failed the pre-screen (${settings.prescreen_argv.join(' ')}) while the gate was busy with another run, so it is reopened with no gate run spent and no strike: ${verdict.summary}` });
+    reopenTicket(ctx, ticket.id, 'dispatcher', blockedNote(verdict, ctx.config.dispatcher.main_branch));
   }
 
   /**
@@ -1169,6 +1211,10 @@ export class Dispatcher {
       for (const lane of this.gateLanes) lane.abort.abort();
       await this.gateIdle();
     }
+    if (this.prescreenRun) { // restart only; the pre-screen belongs to this process
+      this.prescreenAbort?.abort();
+      await this.prescreenRun;
+    }
     if (this.verifyRun) { // restart only; a verify belongs to this process the same way a gate does
       this.verifyAbort?.abort();
       await this.verifyIdle();
@@ -1215,6 +1261,7 @@ export class Dispatcher {
     for (const lane of this.gateLanes) lane.abort.abort();
     this.verifyAbort?.abort();
     this.shadowAbort?.abort();
+    this.prescreenAbort?.abort();
     this.wake?.();
   }
 
