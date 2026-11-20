@@ -84,3 +84,7 @@ lab/windows/.win-lab-gmsa.json
 /internal/webui/dist/*
 !/internal/webui/dist/.gitkeep
 /keycustody
+
+# Go build output from a bare `go build ./pkg`
+/operation
+.search-latency.lock

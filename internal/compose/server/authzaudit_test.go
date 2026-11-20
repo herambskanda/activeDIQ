@@ -10,8 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/skenzeriq/activediq/internal/directory/connection"
-	"github.com/skenzeriq/activediq/internal/modules/directory"
 	"github.com/skenzeriq/activediq/internal/platform/apihost"
 	"github.com/skenzeriq/activediq/internal/platform/audit"
 	"github.com/skenzeriq/activediq/internal/platform/store"
@@ -126,8 +124,8 @@ func TestSearchWithoutDirectoryReadIs403AndAudited(t *testing.T) {
 	pr := apihost.Principal{ID: "acct-1", Tenant: auditTenant, Kind: apihost.KindSession, SessionID: "s"}
 	base := failClosedPorts(openLimiter{})
 	ports := apihost.Ports{Authn: sessionAuthn{pr}, Authz: newAudited(fixedAuthz{}, tx, sink), Limits: base.Limits, StepUp: base.StepUp}
-	boom := directory.Handlers{Connections: panicConns{}, Search: nil}
-	srv, err := apihost.Build(doc, []apihost.TagHandlers{boom.Bind()}, pol, permissionCatalogue(), ports)
+	boom := &panicRoute{}
+	srv, err := apihost.Build(doc, []apihost.TagHandlers{boom.Bind()}, pol, bootedCatalogue(), ports)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -155,13 +153,4 @@ func (openLimiter) AllowIP(context.Context, string, string) (apihost.Decision, e
 }
 func (openLimiter) AllowPrincipal(context.Context, string, apihost.Principal) (apihost.Decision, error) {
 	return apihost.Decision{Allowed: true}, nil
-}
-
-type panicConns struct{}
-
-func (panicConns) List(context.Context, tenant.ID, bool) ([]connection.Connection, error) {
-	panic("handler ran for a caller without directory.read")
-}
-func (panicConns) Health(context.Context, tenant.ID, connection.ID, bool, time.Time) (connection.Health, error) {
-	panic("handler ran for a caller without directory.read")
 }

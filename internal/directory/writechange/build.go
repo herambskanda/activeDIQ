@@ -3,7 +3,7 @@ package writechange
 import (
 	"fmt"
 
-	"github.com/skenzeriq/activediq/internal/platform/operation/step"
+	"github.com/skenzeriq/activediq/internal/platform/operation/digest"
 	connectorv1 "github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1"
 )
 
@@ -16,7 +16,13 @@ type Edit struct {
 
 // CreateSpec is a user create as the lifecycle Action plans it. Every attribute value is text.
 type CreateSpec struct {
-	RDN string
+	// Class is the object class label ("user", "group", "computer", "contact", "organizationalUnit");
+	// empty means user.
+	Class string
+	RDN   string
+	// GroupScope ("global", "domainLocal", "universal") and GroupSecurity apply to a group only.
+	GroupScope    string
+	GroupSecurity bool
 	// Enabled creates the account enabled; a user then needs a password (HasSecret).
 	Enabled   bool
 	HasSecret bool
@@ -46,17 +52,33 @@ func edits(in []Edit) ([]*connectorv1.AttributeEdit, error) {
 	return out, nil
 }
 
-// CreateAttrs returns the digest attributes of a user create. It goes through Encode, so the list is
+// CreateAttrs returns the digest attributes of a create. It goes through Encode, so the list is
 // the one the connector's Decode round-trips.
-func CreateAttrs(c CreateSpec) ([]step.Attr, error) {
+func CreateAttrs(c CreateSpec) ([]digest.Attr, error) {
 	ed, err := edits(c.Set)
 	if err != nil {
 		return nil, err
 	}
-	_, attrs, err := Encode(&connectorv1.WriteChange{Change: &connectorv1.WriteChange_ObjectCreate{ObjectCreate: &connectorv1.ObjectCreate{
-		ObjectClass: connectorv1.DirectoryObjectClass_DIRECTORY_OBJECT_CLASS_USER, RdnValue: c.RDN,
-		Initial: ed, AccountEnabled: c.Enabled, HasSecretInput: c.HasSecret,
-	}}})
+	class := connectorv1.DirectoryObjectClass_DIRECTORY_OBJECT_CLASS_USER
+	if c.Class != "" {
+		var ok bool
+		if class, ok = ClassOf(c.Class); !ok {
+			return nil, ErrEncoding
+		}
+	}
+	oc := &connectorv1.ObjectCreate{ObjectClass: class, RdnValue: c.RDN,
+		Initial: ed, AccountEnabled: c.Enabled, HasSecretInput: c.HasSecret, GroupIsSecurity: c.GroupSecurity}
+	if c.GroupScope != "" {
+		for k, v := range scopeNames {
+			if v == c.GroupScope {
+				oc.GroupScope = k
+			}
+		}
+		if oc.GroupScope == 0 {
+			return nil, ErrEncoding
+		}
+	}
+	_, attrs, err := Encode(&connectorv1.WriteChange{Change: &connectorv1.WriteChange_ObjectCreate{ObjectCreate: oc}})
 	if err != nil {
 		return nil, fmt.Errorf("%w", err)
 	}
@@ -64,11 +86,28 @@ func CreateAttrs(c CreateSpec) ([]step.Attr, error) {
 }
 
 // UpdateAttrs returns the digest attributes of an update.
-func UpdateAttrs(in []Edit) ([]step.Attr, error) {
+func UpdateAttrs(in []Edit) ([]digest.Attr, error) {
 	ed, err := edits(in)
 	if err != nil {
 		return nil, err
 	}
 	_, attrs, err := Encode(&connectorv1.WriteChange{Change: &connectorv1.WriteChange_ObjectUpdate{ObjectUpdate: &connectorv1.ObjectUpdate{Edits: ed}}})
+	return attrs, err
+}
+
+// GroupMemberAttrs returns the digest attributes of kinds 11 and 12: the member's objectGUID (canonical
+// lower-case text) and the class the Action declared ("user", "computer", "contact" or "group"). It goes
+// through Encode, so the list is the one the connector's Decode round-trips.
+func GroupMemberAttrs(member, class string) ([]digest.Attr, error) {
+	g, err := guidFromText(member)
+	if err != nil {
+		return nil, err
+	}
+	c, ok := ClassOf(class)
+	if !ok {
+		return nil, ErrEncoding
+	}
+	_, attrs, err := Encode(&connectorv1.WriteChange{Change: &connectorv1.WriteChange_GroupMemberAdd{
+		GroupMemberAdd: &connectorv1.GroupMemberAdd{Member: g, MemberClass: c}}})
 	return attrs, err
 }

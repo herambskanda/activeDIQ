@@ -44,12 +44,17 @@ type Endpoint struct {
 // CA bundle. It owns no transport: the gateway passes the transport peer address and the bytes.
 type Enroller struct {
 	Enrollment *Enrollment
-	Keys       KeySource  // the tenant DEK that seals the CA key
+	Keys       KeySource  // the tenant DEK that seals the tenant (client) CA key
 	Alerts     Alerter    // installation alerts (TM-D24 D2)
 	Audit      audit.Sink // enrolment is recorded in the same transaction that makes it
 	Endpoints  []Endpoint // returned to the component, in preference order
 	LeafTTL    time.Duration
-	Clock      func() time.Time // tests only
+	// InstallationKeys gives the installation DEK that seals the server CA key (ADR-0008); ServerAudit records
+	// every server leaf issued. Both are needed by ServerPin and SignServerLeaf only.
+	InstallationKeys InstallationKeySource
+	ServerAudit      ServerCertAuditor
+	serverLimiter    serverLeafLimiter
+	Clock            func() time.Time // tests only
 }
 
 // Enrolled is what the component receives.
@@ -186,27 +191,20 @@ func publicErr(err error) error {
 	return err
 }
 
-// CAPin returns the "sha256:<hex>" pin of the tenant's CA public key for the enrolment material
-// (TM-D24 D1), creating the CA the first time. Call it inside the issuing flow's tenant transaction.
-func (e *Enroller) CAPin(ctx context.Context, tx store.Tx, tid tenant.ID) (string, error) {
+// InitTenant is a tenant initialiser (provision.Initialiser): it creates the tenant's client CA so the
+// first Enroll does not.
+func (e *Enroller) InitTenant(ctx context.Context, tx store.Tx, tid tenant.ID) error {
 	if err := e.ready(); err != nil {
-		return "", err
+		return err
 	}
 	cas, err := e.ensureCA(ctx, tx, tid)
 	if err != nil {
-		return "", err
+		return err
 	}
 	if len(cas) == 0 || !cas[0].active {
-		return "", errCAIntegrity
+		return errCAIntegrity
 	}
-	return PinOf(cas[0].cert), nil
-}
-
-// InitTenant is a tenant initialiser (provision.Initialiser): it creates the tenant's CA so the first
-// Enroll does not.
-func (e *Enroller) InitTenant(ctx context.Context, tx store.Tx, tid tenant.ID) error {
-	_, err := e.CAPin(ctx, tx, tid)
-	return err
+	return nil
 }
 
 // issue signs the leaf and builds the bundle inside tx.

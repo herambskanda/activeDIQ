@@ -1,7 +1,7 @@
 ---
 title: "Threat model v0 — activeDIQ security architecture"
 date: 2026-10-02
-updated: 2026-11-07
+updated: 2026-11-14
 status: review
 owner: heramb
 author: security-architect
@@ -247,7 +247,7 @@ proof is direction, not a control; the proof table says which ticket builds each
 | TM-TB1-T6 | I | X1/X3 steals a session token (script, logs, URL) → A4 | `__Host-` cookie, `HttpOnly`, `Secure`; tokens never in URLs; session ID stored hashed (DM-31); HSTS | TM-F-SESSION | — |
 | TM-TB1-T7 | I | X4 reads a secret from an API response (the CVE-2022-24978 pattern, ME-SEC §4.1) → A2, A7 | Secret fields write-only in the OpenAPI schema; response linter; LAPS/BitLocker only through the reveal endpoint with step-up (§7) | TM-F-SECRETOUT | — |
 | TM-TB1-T8 | I | X4 sees objects outside their scope in search, reports or counts → A6 | RBAC trimming in queries; counts and pages after authorisation (SP LF-39); report compiler injects scope (BP §10) | TM-F-AUTHZ, FF-SP4 | — |
-| TM-TB1-T8a | I | X4 (scoped technician) reads the **refine state** of universal search (ADR-0011 rule 12) to learn about objects outside their scope → A6 | `refine: true` is computed from `ceil`, the unscoped class cut, and depends only on tenant, normalised query and which gated kinds' permissions the caller holds (M4). Never on any scope's extent. No counts, `more` flags or cursor in that state. The classes ranked above the ceiling class are answered from admitted rows only. **What it reveals, exactly:** the tenant holds more than W (`MaxSearchMatches`, `[PROPOSED]` 10,000, T-1102 sets it) key rows of that class matching the query text. The value is the same for every caller holding the same permissions. It names no object and no OU, and a hidden OU cannot flip it for a scoped caller alone. The type facet is applied after the cut, so it does **not** lower the ceiling (a UX note for T-1094/T-1100, not a leak) | SE3 (invariance: add or remove hidden matches without crossing W gives identical scoped responses; `refine` equal for unscoped and scoped callers with the same permissions; world below, at and above W). Proof owner: SE3 (T-1126) | Any same-permission caller learns "the tenant has more than W matching keys for this text", i.e. a coarse tenant-wide volume bit. **Accepted** (T-1137 AC2): it is caller-independent, so it is not a scope leak. An attacker who could add objects (X3 who controls attributes in AD) can drive the bit but gains nothing about hidden objects |
+| TM-TB1-T8a | I | X4 (scoped technician) reads the **refine state** of universal search (ADR-0011 rule 12) to learn about objects outside their scope → A6 | `refine: true` is computed from `ceil`, the unscoped class cut, and depends only on tenant, normalised query and which gated kinds' permissions the caller holds (M4). Never on any scope's extent. No counts, `more` flags or cursor in that state. The classes ranked above the ceiling class are answered from admitted rows only. **What it reveals, exactly:** the tenant holds more than W (`MaxSearchMatches`, 7,000, measured by T-1303 from the T-1102 sweep, ADR-0011 rule 13) key rows of that class matching the query text. The value is the same for every caller holding the same permissions. It names no object and no OU, and a hidden OU cannot flip it for a scoped caller alone. The type facet is applied after the cut, so it does **not** lower the ceiling (a UX note for T-1094/T-1100, not a leak) | SE3 (invariance: add or remove hidden matches without crossing W gives identical scoped responses; `refine` equal for unscoped and scoped callers with the same permissions; world below, at and above W). Proof owner: SE3 (T-1126) | Any same-permission caller learns "the tenant has more than W matching keys for this text", i.e. a coarse tenant-wide volume bit. **Accepted** (T-1137 AC2): it is caller-independent, so it is not a scope leak. An attacker who could add objects (X3 who controls attributes in AD) can drive the bit but gains nothing about hidden objects |
 | TM-TB1-T8b | I | X4 times fuzzy search to learn about hidden objects → A6 | The fuzzy class reads the tenant's postings for the query's trigrams in full, then one key lookup per candidate (rule 13). Response time therefore grows with the **tenant-wide** volume of keys matching the query's trigrams, never with the caller's scope: scope is applied only to `hits`, at most 3(W + 1) rows after the cut. Work is bounded by the tenant's own postings, the 3-32 rune rule (at most 48 posting lists) and the 2 s `statement_timeout` (generic 503, no count). Platform 429 rate limit on `directory.search` | SE5 (`Test_search_work_is_bounded`: scoped technician with H in {0, W-10, W+10, 20,000} hidden matches, plan shape, 32-rune worst case from the tenant's most frequent trigrams, posting rows read recorded for SE6). Proof owner: SE5 (T-1126; T-1335 AC6 measures the worst case; T-1102 sets the numbers) | Timing reveals tenant-wide matching volume to anyone with `directory.read`. A caller in a tenant can learn roughly "how many keys in this tenant look like this text", not which objects or where. **Accepted** (T-1137 AC2) as the same class as T8a, at finer resolution |
 | TM-TB1-T8c | I | X4 repeats rate-limited **exact-identifier** queries and compares timings to confirm that a named hidden object exists → A6 | An exact match on a hidden object adds 1-3 key rows to `m_exact`, one primary-key join to `directory_objects` and one scope check that then rejects it, against a query with no match. The difference is microseconds, far below network and scheduler noise. Controls: the 429 rate limit (T-1094 AC4); only same-tenant `directory.read` holders can probe at all; the response body is identical (zero hits, no count); search text never reaches logs (rule 15), so an operator cannot be used as an oracle. Not mitigated by padding: a constant-time search is not built | SE3 proves the body is identical. The timing difference itself is **not yet measured**: T-1102 measures per-sample cost and noise. Proof owner: SE5/T-1102 | In principle a per-identifier existence oracle. Samples needed per decision: `[UNVERIFIED]` until T-1102 measures it. **Accepted** (T-1137 AC2) on these grounds: the attacker must already be an authenticated same-tenant reader, must already know the identifier (the oracle confirms, it does not enumerate), and is rate-limited. If T-1102 finds a distinguishable signal at the 429 limit, reopen with a ticket against ADR-0011 rule 13 |
 | TM-TB1-T8d | I | X4 learns something from the **Postgres-shared** state that their own tenant's search touches (multi-tenant database: SaaS cell or MSP) → another tenant's data | Rule 16 / rev 3: the posting B-tree and the `(tenant_id, key_id)` index lead with `tenant_id`, so every stage reads only the tenant's own entries (the cross-tenant GIN-timing residual of rev 2 is **closed by construction**, see TM-TB17-T9). Four residuals remain and are listed in TM-TB17-T9 because they exist only in a multi-tenant database | Rule 16 proof, T-1335 AC5. Proof owner: T-1335 | Self-hosted profiles hold exactly one tenant row (ADR-0002), so this row has no residual there |
@@ -2216,6 +2216,72 @@ fails the nightly job on an unexplained one. The Entra and SSPR rows rest on lab
 generate from the table), `internal/directory/guarded` and the `client.Write` check
 (directory-engineer), `fitness-backing` (devops-engineer). Lab G17 → T-0075.
 
+#### Ruling R-GM-1: removing a member from a group that denies (T-1918, DECISION TM-D36)
+
+**Threat.** Kind 12 (`GROUP_MEMBER_REMOVE`, connector-contract §8.10.3) removes a member from a group.
+Where the group is a *deny* (a deny ACE, a deny GPO security filter, "Deny log on locally / through RDP",
+Protected Users, Denied RODC Password Replication), removal **widens** the member's access. Attacker: a
+technician or a hijacked technician session holding `objects.group.remove_member` on the group. Asset: the
+restriction the customer placed on an account. Neither the connector nor we can see where a group is
+referenced (an ACE on any object, SYSVOL `GptTmpl.inf`, a file server, another domain), so a general
+"is this a deny group" test does not exist and is not promised.
+
+**Ruling.**
+1. **Kind 12 stays class `none` and gets no new permission.** Guarding every removal as an escalation
+   would stop help-desk group hygiene and still miss every deny group we cannot see. The control is aimed
+   at the groups we *can* name.
+2. **A closed `restrictive` set gets conditional step-up.** A group is *restrictive* when it is (a) one of the
+   built-in set `restrictive-v1`, matched by domain-relative RID of the live `objectSid`, never by name:
+   Protected Users (525) and Denied RODC Password Replication Group (572)
+   ([well-known SIDs](https://learn.microsoft.com/en-us/windows-server/identity/ad-ds/manage/understand-security-identifiers),
+   RIDs `[UNVERIFIED]` against the lab until G17 reads them); or (b) designated restrictive by the tenant.
+   A removal from a restrictive group requires a fresh MFA, enforced by the operation kernel for every
+   origin (UI, API token, workflow), as TM-D30 does for external recipients. The predicate is computed on
+   the **server** from its own designation list and the Plan's group SID, never from a caller field. If the
+   designation list cannot be read, the group is treated as restrictive (fail closed).
+3. **Designation is a tenant-owner act.** `groups.restrictive.designate` / `.undesignate`: no default grant
+   beyond `tenant-owner`, step-up (§7.4), audited, like §6.4. The console suggests candidates only from
+   what we already read (names matching `deny`/`block`, Protected Users, groups appearing in a deny ACE
+   we collected for reports); suggestion never designates.
+4. **Honest preview.** Every kind 12 preview says: "Removing this member can widen access if this group
+   is used in a deny rule; activeDIQ cannot see where a group is used." For a restrictive group the
+   preview names the reason and shows the step-up prompt. No "safe" wording for the undesignated case.
+5. **Audit and alert.** The Action audit event carries `restrictive: true|false` and the basis (built-in
+   RID or designation). A removal from a *designated* restrictive group also notifies `tenant-owner`.
+6. **Bulk.** One step-up covers one operation; an operation removing from restrictive groups is capped at
+   25 members (above: `BULK_LIMIT`, no partial run), because a fresh MFA must not authorise an
+   unbounded unlock. `[OPEN → product-manager]` whether 25 is the right default; it is a number, not a design.
+7. **Add is not gated by this ruling.** Adding to a deny group tightens, so it is not an escalation; it
+   can lock someone out (availability) and is accepted, authorised by TM-D18 as before.
+
+**Proof.** Kernel tests `Test_group_remove_restrictive_requires_stepup` (built-in RID 525 and 572 match
+whatever the group is named and whichever DC it is read from; a renamed Protected Users still matches; a
+group named "Protected Users" without that RID does not), `Test_group_remove_designated_requires_stepup`,
+`Test_group_remove_designation_unreadable_fails_closed`, `Test_group_remove_caller_cannot_claim_unrestricted`
+(a request carrying a "restrictive=false" field is ignored), `Test_group_remove_restrictive_bulk_cap` and
+`Test_group_remove_audit_carries_restrictive`. A drift check pins `restrictive-v1` to the Go table the same
+way B1 pins `guarded-v1`. Lab G17 reads RIDs 525 and 572 on Samba and Windows.
+
+**Residual (TM-R30).** An undesignated group used in a deny rule is removed from by anyone holding the
+scoped `remove_member` permission without step-up. Accepted: scoping `remove_member` to the group (the
+least-privilege default) is the mitigation, the preview says so, and the audit trail attributes the change.
+Reconsider if a "where is this group used" read becomes reliable.
+
+**Review of the other T-1899 edits (T-1918).** *TM-D28 `reset_computer`: accepted with three requirements.*
+(R1) **Class follows the most specific live class, not "contains user".** In AD a computer's `objectClass`
+contains `user`, and a gMSA's contains `computer` and `user`. B5 gains the cases: kind 7 aimed at a computer,
+kind 13 aimed at a user, a gMSA or an MSA, each `ClassNotAllowed` before any directory call, and
+`unicodePwd[user]` matches only an object whose most specific structural class is `user` or `inetOrgPerson`.
+Test `Test_reset_class_is_most_specific_not_contains` (CC-WK-57..61 must include it). (R2) **Bulk cap.** The
+step-up authorises an operation, not an item: a hijacked, freshly step-upped session could reset every
+workstation, which is a domain-wide outage. `COMPUTER_ACCOUNT_RESET` operations are capped at 25 computers
+(`BULK_LIMIT`, no partial run) and every reset notifies `tenant-owner` above 10 in an hour per actor
+`[OPEN → product-manager]` on the numbers. (R3) **No value leaves the connector.** The generated password is
+absent from `PlanResponse`, `ApplyResponse`, audit, logs, errors and crash dumps; the test greps all five
+with a canary generator (`Test_computer_reset_value_never_leaves`). Residual: a reset of a non-Tier-0 but
+business-critical server (CA, AD FS, a sync server) is an outage, not a takeover; the value is unknown to
+anyone, so no credential is disclosed. Accepted; the Plan's 14-day last-logon warning is the mitigation.
+
 ---
 
 ## 7. Console authentication, sessions and RBAC
@@ -2381,7 +2447,9 @@ These operations require a fresh MFA within a short window, whatever the session
 | Designating or un-designating `tier0` objects (§6.4) | Widens or narrows the guard |
 | Report schedule writes (`reports.schedule.create`, `update`, `resume`, and their undo) whose after-state has an **external** recipient; conditional, kernel-enforced (DECISION TM-D30, T-0893) | Opens a standing outbound data channel that outlives the session (TM-TB15-T9) |
 | Notification settings: allowed recipient domains and SMTP relay (`notify.settings.update`, TM-D30 SX-7) | Turns external addresses internal, or re-points every outbound mail (TM-TB15-T10) |
-| Computer account reset: every Action that uses the connector's `COMPUTER_ACCOUNT_RESET` kind (`objects.computer.reset_account`, TM-D28 class `reset_computer`; T-1899, connector-contract §8.10.3 kind 13) | Takes the machine off the domain until it repairs its secure channel or rejoins, and cannot be undone (ADR-0005 rule 1); on a server it is an outage. The new password is generated inside the connector and known to no one, so this is not a credential disclosure, but a technician's session alone does not authorise it |
+| Computer account reset: every Action that uses the connector's `COMPUTER_ACCOUNT_RESET` kind (`objects.computer.reset_account`, TM-D28 class `reset_computer`; T-1899, connector-contract §8.10.3 kind 13) | Takes the machine off the domain until it repairs its secure channel or rejoins, and cannot be undone (ADR-0005 rule 1); on a server it is an outage. The new password is generated inside the connector and known to no one, so this is not a credential disclosure, but a technician's session alone does not authorise it. One step-up covers one operation of at most 25 computers (§6.9a, T-1918) |
+| Group member removal from a *restrictive* group: every Action that uses `GROUP_MEMBER_REMOVE` where the group is in `restrictive-v1` (Protected Users, Denied RODC Password Replication) or tenant-designated; conditional, kernel-enforced (DECISION TM-D36, R-GM-1, T-1918) | Removal widens access where a group denies; the connector cannot see where a group is used, so the closed named set is the guard (§6.9a). Removal from any other group stays under TM-D18 only (TM-R30) |
+| Designating or un-designating a restrictive group (`groups.restrictive.designate`, TM-D36) | Widens or narrows the guard above |
 | Directory password reset: every Action that uses the connector's `USER_PASSWORD_RESET` kind, helpdesk resets included (`objects.user.reset_password`, TM-D28 class `reset_password`, §6.9a; ADM-136, ADM-162; T-1581 §8.10.5, T-1621) | Hands the actor a credential they know for a sign-in account, and it cannot be undone (ADR-0005 rule 1). On a hybrid-synced account the new password reaches Entra through hash sync or pass-through (C16, TM-R14). Same class as a LAPS reveal: a credential that outlives the session. A technician's session alone, however fresh the login, does not authorise it |
 
 **Secret-reveal harvesting.** A technician (X4) may reveal secrets one by one within scope. Each
@@ -2602,8 +2670,8 @@ contract is stale and fails A13, and an entry with a `host` fails until T-0018 l
 hostname-binding table. So the seed carries the non-API routes of AN-1 to AN-3, and the two AN-1
 operations entered with their contract (T-0034). AN-8 and AN-10
 (`signInBreakGlassPassword`, `createWebAuthnSignInChallenge`, `verifyWebAuthnSignIn`, `verifyTotpSignIn`)
-and the `authenticated` rows `signOut` and `getCsrfToken` entered with theirs (T-0193); their handlers
-answer 501 until the build tickets land (`getCsrfToken` is real since T-0854; `signOut` stays 501 until T-0802; `createWebAuthnSignInChallenge` and `verifyWebAuthnSignIn` are real once a `WebAuthnCookieVerifier` is supplied, T-0207: the challenge is consumed by the first assertion naming the pending sign-in, `webauthn_replay`; user verification is required; the signature counter must advance when the authenticator counts). The AN-8 failure is one `401 /problems/sign-in-failed` for
+and the `authenticated` rows `signOut` and `getCsrfToken` (and later `getSession`) entered with theirs (T-0193); their handlers
+answer 501 until the build tickets land (`getCsrfToken` is real since T-0854; `getSession` (T-1562, `authenticated`, display only) lists the catalogue permission names the cookie session holds at tenant scope; `signOut` stays 501 until T-0802; `createWebAuthnSignInChallenge` and `verifyWebAuthnSignIn` are real once a `WebAuthnCookieVerifier` is supplied, T-0207: the challenge is consumed by the first assertion naming the pending sign-in, `webauthn_replay`; user verification is required; the signature counter must advance when the authenticator counts). The AN-8 failure is one `401 /problems/sign-in-failed` for
 every cause (rule 2). AN-4, AN-5 and AN-7 enter with their operations. AN-5 and AN-7 also need their hostname binding
 from T-0018. AN-9 (`GET /auth/negotiate`) enters with its route mounting in T-0492 (console-sso.md §9). The file's header lists each pending row.
 
@@ -3423,6 +3491,7 @@ control.
 | TM-R26 | **External report schedule with a stolen second factor, accepted (T-0893).** An attacker holding a hijacked session and the victim's MFA factor can still create a schedule that mails owner-scope data outside the organisation | Step-up cannot defend a stolen factor; the schedule is visible to its owner and `manage_all` holders, every write, fire and delivery is audited with the confirmed addresses, and the owner-authority rule pauses it when the owner is disabled (TM-D30) | security-architect | If customers ask for four-eyes on external delivery, add an optional approval gate for SX-1 writes |
 | TM-R28 | **TM-D33, accepted.** Where a customer grants R15 (b), the connection identity's credential, and a compromised server through kind-6 Plans by GUID, can enumerate every deleted object of that domain (name, DN, GUID, class) and read each one's attributes as far as its retained descriptor allows | The only grant that makes the restore gate work (T-1633). Bounded by retained descriptors (measured for explicit ACEs). The identity already reads the live directory; deleted members of live groups are visible to anyone through control 2065. Password hashes are never LDAP-readable; that confidential attributes still need CONTROL_ACCESS on a deleted object is **measured** (T-1734: `msLAPS-Password` and `unixUserPassword` on a deleted computer were returned only to the identity holding Control Access, exactly as live; and an inherited deny on the OU applies to the deleted child, whose descriptor is byte-identical to its live one, so TM-D33 rule 7's triggers did not fire). Optional and per domain; activeDIQ issues no listing (TM-F-RIGHTS (b)); every Plan audited | security-architect | A deleted object more readable than it was live, or a secret-bearing attribute readable on a deleted object without its live right (TM-D33 rule 7) |
 | TM-R29 | **TM-D35, accepted.** An attacker who controls the verify helper host, or obtains the helper gMSA, holds `DS-Replication-Manage-Topology` on the partition heads the customer delegated: they can call `DsReplicaVerifyObjects` with `ulOptions = 0` (expunge) and the DRS topology methods from any host `[UNVERIFIED — LAB: Windows, T-1121 §10 L3]`. Our read-only guarantee is about our code (TM-F-LINGER), not the right | The right is not read-only; the API offers no weaker one | security-architect; customer (host hardening) | A weaker right is found in the lab, or the 2b removal Action is specified |
+| TM-R30 | **R-GM-1, accepted (T-1918, TM-D36).** Removing a member from an undesignated group that is used in a deny rule widens access without step-up | No "where is this group used" read exists; the closed `restrictive-v1` set plus tenant designation covers what we can name | security-architect | A reliable group-usage read |
 
 ### 16.2 Decisions owed to the CEO (not asked now)
 
@@ -3580,6 +3649,7 @@ External, in order of first use:
 
 ## Changelog
 
+- 2026-11-14 · T-1918 (review of T-1899). §6.9a gains DECISION TM-D36 (ruling R-GM-1): kind 12 stays class `none`; removal from a closed `restrictive-v1` set or a tenant-designated group needs conditional step-up; honest preview; audit flag; residual TM-R30. `reset_computer` accepted with three requirements (most-specific-class matching, a 25-computer bulk cap, the value never leaves the connector). §7.4 gains two rows and the bulk note. Build routed in the ticket note.
 - 2026-11-13 · T-1899. TM-D28 `guarded-v1` gains `reset_computer: unicodePwd[computer]` (key is attribute plus target class; `reset_password` is `unicodePwd[user]`) and §7.4 gains the computer account reset row, for connector-contract §8.10 kinds 11 to 13. Kinds 11 and 12 are class `none` and are guarded by TM-D18 on the group; the deny-group removal residual R-GM-1 is routed to security-architect (T-1918).
 - 2026-11-13 · T-1907 (T-1892 nits). TM-F-LINGER row added to the §15 fitness table with owners by build-order step; ruling 3 control 3 pins the `ntdsapi` allowlist to exact symbols (`DsBindWithCredW` removed); TM-D35 stub in §6.2.
 - 2026-11-13 · T-1892 (Tier-0 review of T-1121 §9). New boundary TB20 (§5.20, rows TM-TB20-T1 to T14: lingering-object verify helper, its gMSA, `DsReplicaVerifyObjects`, Directory Service log read); §6.3 R16 (optional, off by default, write-capable right, own identity); DECISION TM-D35 ([lingering-object-detection-tier0-ruling.md](../decisions/lingering-object-detection-tier0-ruling.md)); TM-R29; proof TM-F-LINGER (L1 to L8). Ephemeral Domain Admin rejected; on-DC agent and native RPC rejected. Follow-ups: product-manager (reports-2a §9 A4 wording), solution-architect (helper contract).

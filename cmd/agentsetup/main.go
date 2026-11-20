@@ -7,6 +7,8 @@
 //	agentsetup grant-channel     add a read-only ACE for the service SID to the Security channel
 //	agentsetup revoke-channel    remove it
 //	agentsetup prepare-datadir   create the data directory with the pinned DACL
+//	agentsetup configure-service set service recovery (restart x3) and register the Application event source
+//	agentsetup unconfigure-service remove the event source
 //	agentsetup write-config      write agent.json (local ceilings) next to the executable
 //	agentsetup repin <pin>       adopt a new server-CA pin received out of band, keeping the identity
 //
@@ -36,12 +38,13 @@ func main() {
 }
 
 func usage() int {
-	fmt.Fprintln(os.Stderr, "usage: agentsetup grant-channel | revoke-channel | write-config | prepare-datadir | repin sha256:<hex>")
+	fmt.Fprintln(os.Stderr, "usage: agentsetup grant-channel | revoke-channel | write-config | prepare-datadir | configure-service | unconfigure-service | repin sha256:<hex>")
 	return 2
 }
 
 // verbs are the only commands. A command line is exactly one of them and nothing else (T-0688 ruling 4a).
-var verbs = map[string]bool{"grant-channel": true, "revoke-channel": true, "write-config": true, "prepare-datadir": true}
+var verbs = map[string]bool{"grant-channel": true, "revoke-channel": true, "write-config": true, "prepare-datadir": true,
+	"configure-service": true, "unconfigure-service": true}
 
 // parseVerb returns the verb of args, or false when args is not exactly one known verb.
 func parseVerb(args []string) (string, bool) {
