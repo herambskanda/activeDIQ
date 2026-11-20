@@ -381,7 +381,7 @@ func TestAuditDownloadDenialAndExpiry(t *testing.T) {
 			t.Fatalf("missing: %v", err)
 		}
 		den := e.sink.of(export.KindDownloadDenied)
-		if len(den) != 2 || den[0].Reason != "creator" || den[1].Reason != "exists" || string(den[0].Actor.Requester.ID) != bob {
+		if len(den) != 2 || den[0].Reason != "delivery" || den[1].Reason != "exists" || string(den[0].Actor.Requester.ID) != bob {
 			t.Fatalf("denied events: %+v", den)
 		}
 		if _, err := e.exp.Get(context.Background(), e.tid, chainOf(bob), x.ID); !errors.Is(err, export.ErrExportNotFound) {

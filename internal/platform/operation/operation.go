@@ -226,6 +226,11 @@ type PlanContext struct {
 	Tx    store.Tx    // the runner opens it READ ONLY; Plan has no way to commit or roll it back
 	Facts PinnedFacts // reads on a clone of the request's pins; Plan cannot choose a DC (rule 5)
 	Pins  authority.Pins
+	// Tenant and Actor are who the plan is for: the requester's chain as the runner received it, for the
+	// rules of an Action that depend on the caller (an owner-only write, TM-D30 R1). They never widen
+	// authorisation: the runner authorises every target on its own.
+	Tenant tenant.ID
+	Actor  authority.Chain
 	// Templates refuses a Template the requester's authority does not permit (ADM-132). The Runner binds
 	// it to the operation's own chain and tenant, so a Plan cannot name either. Order inside a Plan:
 	// Templates, then Template.CheckInput, then Render, then the first read (ADR-0015 D1). A hand-built

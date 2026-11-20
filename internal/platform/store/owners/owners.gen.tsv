@@ -46,6 +46,7 @@ directory_object_changes	inventory	system
 directory_objects	inventory	system
 enrollment_tokens	fleet	config
 fleet_ca	fleet	system
+fleet_server_ca	fleet	system
 helpdesk_caller_verifications	helpdesk	system
 helpdesk_request_keys	helpdesk	system
 hybrid_links	connection	config
@@ -84,6 +85,10 @@ platform_rate_buckets	limiter	system
 report_exports	reports	system
 report_run_rows	reports	system
 report_runs	reports	system
+report_schedule_fires	report	system
+report_schedule_recipients	report	config
+report_schedule_versions	report	config
+report_schedules	report	config
 sync_cursors	sync	system
 tenant_keys	keys	system
 tenants	tenant	system

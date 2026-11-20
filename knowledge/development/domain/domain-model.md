@@ -471,7 +471,7 @@ I6 depend on it.
 (`not_after` within the reminder window) `→ rotated` (replaced, I5) `| revoked`. `rotated` and
 `revoked` are terminal.
 
-### DM-12 Component · T · owner `platform/fleet`
+### DM-12 Component · T (components, client CAs) and P (server CA) · owner `platform/fleet`
 **Definition.** An enrolled remote process with its own mTLS identity. In v1 that is a remote
 **connector**; from M3 also agent modules (**addc**, **fileserver**). The embedded connector has no identity and is not a
 Component (ADR-0002). One shape covers both kinds ("parameterise, don't clone").
@@ -484,6 +484,10 @@ from a message. I2 An enrollment token is single-use, expiring, stored hashed, a
 account holding the enrollment permission. I3 Certificate rotation keeps the Component identity.
 **Lifecycle.** `pending` (token issued) `→ enrolled → active → revoked → removed`. Reachability is
 health.
+**Server CA (T-0735, ADR-0008).** One installation-scope row (`fleet_server_ca`, no `tenant_id`) signs the gateway's
+ServerAuth leaves and nothing else; its pin is the one pin every tenant's enrolment material carries. Its key is
+sealed under the installation DEK and destroyed when the row leaves `active` (`active → retired → withdrawn`).
+Component identities stay under the per-tenant client CAs (`fleet_ca`).
 
 ### DM-13 ConnectorBinding · T · owner `directory/connection` (ADR-0003 F1)
 **Definition.** It routes a connection to the connector(s) that serve it. The binding is data, not

@@ -26,6 +26,11 @@
       "owner": "internal/platform/keys"
     },
     {
+      "table": "public.fleet_server_ca",
+      "reason": "The fleet gateway's server CA belongs to the installation, not to a tenant (ADR-0008): one CA, one pin, one presented chain for every tenant, so its row has no tenant_id and no RLS (ADR-0002 rule 4). It signs ServerAuth leaves only and is never in the client pool. sealed_key is sealed under the installation DEK and destroyed when the row leaves the active state (CHECK and guard trigger); the runtime role cannot DELETE or TRUNCATE. Any tenant transaction can read it, so only its owning package may name it in SQL.",
+      "owner": "internal/platform/fleet/fleetsql"
+    },
+    {
       "table": "public.update_verifier_floor",
       "reason": "The update verifier's rollback floor is install-level: one monotone row shared by the server, connector and agent update paths, read before and outside any tenant transaction, so it has no tenant_id and no RLS. The guard trigger refuses any lowering and the runtime role cannot DELETE or TRUNCATE it (ENH-07, TM-D12 rule 2). Any tenant transaction can read it, so only its owning package may name it in SQL.",
       "owner": "internal/platform/updateverify/floorpg"
@@ -48,6 +53,12 @@
       "reason": "The gateway's client-CA pool holds every tenant's CA certificates, so one read runs in platform scope and calls the SECURITY DEFINER function fleet_ca_trust_anchors(), the only path to those rows: its owner role can read public certificate columns only, never sealed_key, and the function refuses a tenant context (T-0712, T-0733; TM-A11, TM-D24). It parses the tenant IDs the function returns from fleet_ca rows into typed IDs; it grants no access with them and a per-tenant check of the leaf's issuer still runs on every RPC (TM-Q8).",
       "withPlatform": true,
       "mintsTenantID": true
+    },
+    {
+      "package": "internal/platform/fleet/fleetsql",
+      "function": "Enroller.SignServerLeaf",
+      "reason": "The gateway's ServerAuth leaf is signed by the installation server CA, a registered-global row that belongs to no tenant, and unsealing its key needs the installation DEK (also global), so the call runs in platform scope. It is not reachable from any RPC, takes no principal, key or CSR, checks every name against the configured fleet endpoints, is rate-capped per node and audits each issuance (ADR-0008 item 7, T-0735; TM-TB6-T15, T16).",
+      "withPlatform": true
     },
     {
       "package": "internal/platform/tenant/provision",
@@ -345,7 +356,7 @@
     {
       "column": "public.authn_authenticator_enrollments.expires_at",
       "value": "2030-01-01T00:00:00Z",
-      "reason": "INSERT trigger: an enrolment starts pending with an expiry (DM-37, ENH-09 \u00a75); the probe row is a pending enrolment."
+      "reason": "INSERT trigger: an enrolment starts pending with an expiry (DM-37, ENH-09 §5); the probe row is a pending enrolment."
     },
     {
       "column": "public.authn_ad_attempts.key_hash",
@@ -595,7 +606,7 @@
     {
       "column": "public.connection_attestation_attempts.code_verifier",
       "value": "probe-code-verifier-0123456789-0123456789-0123",
-      "reason": "CHECK: a PKCE code_verifier is 43..128 characters (RFC 7636 \u00a74.1)."
+      "reason": "CHECK: a PKCE code_verifier is 43..128 characters (RFC 7636 §4.1)."
     },
     {
       "column": "public.connection_attestation_attempts.state_hash",
@@ -1063,6 +1074,46 @@
       "column": "public.helpdesk_request_keys.state",
       "value": "pending",
       "reason": "CHECK: helpdesk_rk_state/helpdesk_rk_done: pending carries no completed_at; the probe row is pending."
+    },
+    {
+      "column": "public.report_schedules.definition_id",
+      "value": "probe-report",
+      "reason": "CHECK: definition_id matches ^[a-z][a-z0-9-]{1,63}$ (report_schedules_definition_id_check)."
+    },
+    {
+      "column": "public.report_schedules.time_zone",
+      "value": "UTC",
+      "reason": "CHECK: time_zone is an IANA-shaped name (report_schedules_time_zone_check)."
+    },
+    {
+      "column": "public.report_schedules.state",
+      "value": "active",
+      "reason": "CHECK: state is one of a closed set and ties pause_reason and next_run_at to it; the probe row is active."
+    },
+    {
+      "column": "public.report_schedule_recipients.kind",
+      "value": "address",
+      "reason": "CHECK: kind is account or address and each kind requires its own column; the probe row is an address recipient, so account stays NULL."
+    },
+    {
+      "column": "public.report_schedule_recipients.address",
+      "value": "probe@example.test",
+      "reason": "CHECK: an address recipient carries an address of 3 to 254 characters."
+    },
+    {
+      "column": "public.report_schedule_recipients.formats",
+      "value": "{csv}",
+      "reason": "CHECK: formats is a non-empty subset of csv, xlsx, pdf, html."
+    },
+    {
+      "column": "public.report_schedule_recipients.delivery",
+      "value": "attachment",
+      "reason": "CHECK: delivery is attachment or link, and an address recipient is attachment only."
+    },
+    {
+      "column": "public.report_schedule_fires.state",
+      "value": "queued",
+      "reason": "CHECK: state is one of a closed set (report_schedule_fires_state_check)."
     },
     {
       "column": "public.migration_fidelity.class",
