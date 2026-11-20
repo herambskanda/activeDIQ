@@ -141,3 +141,15 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+.rp-subjects {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--diq-space-3);
+  margin-block: var(--diq-space-4);
+  max-inline-size: 40rem;
+}
+.rp-subjects > :first-child {
+  inline-size: 100%;
+}

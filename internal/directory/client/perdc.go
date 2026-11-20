@@ -65,6 +65,9 @@ type PerDCConfig struct {
 	InFlight int
 	// FanOut is the max_concurrency asked of the connector for one call (it may lower it).
 	FanOut int
+	// Describe is the connector source DCsInScope counts DCs through (Describe with refresh). Without
+	// it DCsInScope fails with ErrNoDescribe; the reads do not need it.
+	Describe ConnectorSource
 }
 
 // ConnectorPerDC reads attributes that are not replicated from every DC of an object's domain, over
@@ -72,6 +75,7 @@ type PerDCConfig struct {
 type ConnectorPerDC struct {
 	conns  ConnectionSource
 	tr     PerDCTransport
+	desc   ConnectorSource
 	flight int
 	fanOut uint32
 
@@ -80,7 +84,10 @@ type ConnectorPerDC struct {
 	sems  map[tenant.ID]chan struct{}
 }
 
-var _ report.PerDCReader = (*ConnectorPerDC)(nil)
+var (
+	_ report.PerDCReader = (*ConnectorPerDC)(nil)
+	_ report.DCCounter   = (*ConnectorPerDC)(nil)
+)
 
 // NewConnectorPerDC returns the reader. Every port is required.
 func NewConnectorPerDC(conns ConnectionSource, tr PerDCTransport, cfg PerDCConfig) (*ConnectorPerDC, error) {
@@ -99,7 +106,7 @@ func NewConnectorPerDC(conns ConnectionSource, tr PerDCTransport, cfg PerDCConfi
 	if cfg.InFlight < 0 || cfg.InFlight > MaxPerDCInFlight || cfg.FanOut < 0 || cfg.FanOut > MaxPerDCFanOut {
 		return nil, errors.New("client: per-DC read bounds out of range")
 	}
-	return &ConnectorPerDC{conns: conns, tr: tr, flight: cfg.InFlight, fanOut: uint32(cfg.FanOut), sems: map[tenant.ID]chan struct{}{}}, nil
+	return &ConnectorPerDC{conns: conns, tr: tr, desc: cfg.Describe, flight: cfg.InFlight, fanOut: uint32(cfg.FanOut), sems: map[tenant.ID]chan struct{}{}}, nil
 }
 
 // Reads is the number of ReadPerDC calls made to the connector since the reader was built. The run
@@ -510,4 +517,53 @@ func wireScopeOf(s report.PerDCScope) (connectorv1.PerDcScope, error) {
 		return connectorv1.PerDcScope_PER_DC_SCOPE_ALL, nil
 	}
 	return 0, ErrPerDCScope
+}
+
+// DCsInScope implements report.DCCounter: how many DCs a per-DC read of the domain nc would ask, from a
+// live Describe. Scope all counts every DC of the domain, RODCs and unreachable ones included (nothing the
+// connector lists is dropped, so the read cap refuses on the larger number). Scope writable counts every
+// DC not proven read-only, so an UNKNOWN role still counts. A count that cannot be had is an error.
+func (p *ConnectorPerDC) DCsInScope(ctx context.Context, conn, nc authz.ObjectID, scope report.PerDCScope) (int, error) {
+	if _, err := wireScopeOf(scope); err != nil {
+		return 0, err
+	}
+	if conn.IsZero() || nc.IsZero() {
+		return 0, fmt.Errorf("%w: connection or naming context", ErrInvalidOp)
+	}
+	if p.desc == nil {
+		return 0, ErrNoDescribe
+	}
+	tid, err := readTenant(ctx)
+	if err != nil {
+		return 0, err
+	}
+	connID := formatUUID(wireGUID(conn).Value)
+	c, err := p.conns.Get(ctx, tid, connection.ID(connID))
+	if err != nil || string(c.ID) != connID || c.RetiredAt != nil || c.Kind != connection.KindADForest {
+		return 0, ErrReadConnection
+	}
+	ident := directoryOf(c)
+	if ident == nil {
+		return 0, ErrReadDirectory
+	}
+	resp, err := describeDCs(ctx, p.desc, connID, ident, "DC count")
+	if err != nil {
+		return 0, err
+	}
+	return countDCs(resp, wireGUID(nc).Value, scope)
+}
+
+func countDCs(resp *connectorv1.DescribeResponse, nc []byte, scope report.PerDCScope) (int, error) {
+	dcs, err := dcsOfNC(resp, nc)
+	if err != nil {
+		return 0, err
+	}
+	n := 0
+	for _, dc := range dcs {
+		if scope == report.ScopeWritable && dc.GetIsRodc() == connectorv1.TriState_TRI_STATE_TRUE {
+			continue
+		}
+		n++
+	}
+	return n, nil
 }

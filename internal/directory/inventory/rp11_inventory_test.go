@@ -168,6 +168,10 @@ func Test_dataset_reveals_nothing_outside_scope(t *testing.T) {
 					rpContacts(t, e, reg, c, cols, now, at)
 				case inventory.DatasetPrincipals:
 					rpPrincipals(t, e, reg, c, cols, now, at)
+				case inventory.DatasetObjectChanges:
+					rpObjectChanges(t, e, reg, c, cols, now, at)
+				case inventory.DatasetPrinters:
+					rpPrinters(t, e, reg, c, cols, now, at)
 				default:
 					t.Fatalf("no RP11 world for %s", src.ID)
 				}
@@ -552,5 +556,25 @@ func rpContacts(t *testing.T, e *env, reg *reportsql.Registry, c inventory.Conne
 	checkNoLeaks(t, res, map[string]string{strings.ToLower(base): realDN("base-contact")})
 	if got := cellStr(res.rows[base], "mail"); got != "base-contact@example.test" {
 		t.Errorf("mail = %q", got)
+	}
+}
+
+func rpPrinters(t *testing.T, e *env, reg *reportsql.Registry, c inventory.ConnectionID, cols []report.ColumnID, now, at time.Time) {
+	mk := func(g, name string) inventory.Observation {
+		return named(inventory.Observation{Object: inventory.GUID(g), NC: inventory.GUID(hDom), Kind: inventory.KindPrintQueue, Class: "printQueue", State: inventory.ObjLive,
+			Parent: inventory.GUID(hOU), Ancestry: []inventory.GUID{inventory.GUID(hOU), inventory.GUID(hDom)},
+			Attributes: map[string]any{"printerName": name, "serverName": "srv.example.test", "location": "HQ", "printColor": true}}, name)
+	}
+	base := hGUID(9, 1)
+	if _, err := e.populate(t, c, at, mk(base, "base-printer"), mk(sentinelGUID(1), sentinel+"-printer")); err != nil {
+		t.Fatal(err)
+	}
+	res := e.run(t, reg, hQuery{dataset: inventory.DatasetPrinters, cols: cols, scope: scopeOf(c, base), now: now})
+	if len(res.rows) != 1 || res.count != 1 {
+		t.Fatalf("rows = %d, count = %d, want 1 and 1", len(res.rows), res.count)
+	}
+	checkNoLeaks(t, res, map[string]string{strings.ToLower(base): realDN("base-printer")})
+	if got := cellStr(res.rows[base], "printer_name"); got != "base-printer" {
+		t.Errorf("printer_name = %q", got)
 	}
 }

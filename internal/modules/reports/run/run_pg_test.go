@@ -6,6 +6,7 @@ import (
 	"encoding/json/jsontext"
 	jsonv2 "encoding/json/v2"
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"slices"
@@ -146,7 +147,9 @@ type codec struct{}
 
 func (codec) Decode(raw jsontext.Value, _ report.Definition) (report.RunParams, error) {
 	var v struct {
-		Columns []string `json:"columns"`
+		Columns     []string                    `json:"columns"`
+		Sort        []struct{ Col, Dir string } `json:"sort"`
+		MinFailures *int64                      `json:"minFailures"`
 	}
 	if err := jsonv2.Unmarshal(raw, &v); err != nil {
 		return report.RunParams{}, err
@@ -154,6 +157,16 @@ func (codec) Decode(raw jsontext.Value, _ report.Definition) (report.RunParams, 
 	var p report.RunParams
 	for _, c := range v.Columns {
 		p.Columns = append(p.Columns, report.ColumnID(c))
+	}
+	for _, k := range v.Sort {
+		d := report.Asc
+		if k.Dir == "desc" {
+			d = report.Desc
+		}
+		p.Sort = append(p.Sort, report.SortKey{Column: report.ColumnID(k.Col), Dir: d})
+	}
+	if v.MinFailures != nil {
+		p.Filters = append(p.Filters, report.Cmp{Column: "failures_on_dc", Op: report.OpGe, Value: report.IntV(*v.MinFailures)})
 	}
 	return p, nil
 }
@@ -178,24 +191,48 @@ type env struct {
 	scopes *fakeScopes
 	sink   *recSink
 	clock  *time.Time
+	runID  run.ID // the run a hook acts on
 }
 
-func dataset() report.Dataset {
+func dataset() report.Dataset { return datasetWith(false) }
+
+// datasetWith, when perDC is set, adds the two helper columns and the per-DC columns of USR-04.
+func datasetWith(perDC bool) report.Dataset {
 	anchor := report.Anchor{ID: "t", Table: "rpt_objects", Mode: report.RowAnchor, Project: []report.Ident{"object_guid"},
 		Connection: "connection_id", NC: "nc_guid", Object: "object_guid", Parent: "parent_guid", Ancestry: "ancestry", Complete: "ancestry_complete"}
+	cols := []report.Column{
+		{ID: "sam", Label: "Account", Type: report.TypeText, Source: report.Attr{Col: "sam"}, Sortable: true, Default: true},
+		{ID: "enabled", Label: "Enabled", Type: report.TypeBool, Source: report.Attr{Col: "enabled"}, Default: true},
+		{ID: "display", Label: "Display", Type: report.TypeText, Source: report.Attr{Col: "display"}},
+	}
+	if perDC {
+		pd := func(id report.ColumnID, t report.ValueType, src report.PerDC) report.Column {
+			return report.Column{ID: id, Label: string(id), Type: t, Source: src, Sortable: true,
+				Filter: []report.Op{report.OpEq, report.OpGe, report.OpGt, report.OpLt, report.OpPresent, report.OpAbsent}}
+		}
+		cols = append(cols,
+			report.Column{ID: "connection_id", Label: "Connection", Type: report.TypeGUID, Source: report.Attr{Col: "connection_id"}},
+			report.Column{ID: "domain", Label: "Domain", Type: report.TypeGUID, Source: report.Attr{Col: "nc_guid"}},
+			pd("real_last_logon", report.TypeTime, report.PerDC{Attr: report.PerDCLastLogon, Agg: report.AggMax}),
+			pd("real_logon_dc", report.TypeText, report.PerDC{Attr: report.PerDCLastLogon, Agg: report.AggMax, Part: report.PartFromDC}),
+			pd("dc_coverage", report.TypeText, report.PerDC{Attr: report.PerDCLastLogon, Agg: report.AggMax, Part: report.PartCoverage}),
+			pd("failures_on_dc", report.TypeInt, report.PerDC{Attr: report.PerDCBadPwdCount, Agg: report.AggMax, Part: report.PartAtWinner, Of: report.PerDCBadPasswordTime}),
+		)
+	}
 	return report.Dataset{
 		ID: "tst.objects", Base: report.Relation{Table: "rpt_objects"}, RowKey: report.SQL("{t}.object_guid"),
-		Anchors: []report.Anchor{anchor},
-		Columns: []report.Column{
-			{ID: "sam", Label: "Account", Type: report.TypeText, Source: report.Attr{Col: "sam"}, Sortable: true, Default: true},
-			{ID: "enabled", Label: "Enabled", Type: report.TypeBool, Source: report.Attr{Col: "enabled"}, Default: true},
-			{ID: "display", Label: "Display", Type: report.TypeText, Source: report.Attr{Col: "display"}},
-		},
+		Anchors:   []report.Anchor{anchor},
+		Columns:   cols,
 		Freshness: report.FreshNCWatermark, Tables: []string{"rpt_objects"},
 	}
 }
 
-func setup(t *testing.T, s *storetest.Server) *env {
+func setup(t *testing.T, s *storetest.Server) *env { return setupWith(t, s, nil) }
+
+// pdConf makes the environment a per-DC one: n objects on conn1 (sam "u000".."u<n-1>") and the definition's PerDC spec.
+type pdConf struct{ n int }
+
+func setupWith(t *testing.T, s *storetest.Server, pc *pdConf) *env {
 	t.Helper()
 	ctx := context.Background()
 	d := s.NewDatabase(t)
@@ -204,12 +241,26 @@ func setup(t *testing.T, s *storetest.Server) *env {
 		t.Fatal(err)
 	}
 	tid := tenanttest.Seed(t, d.ExecOwner, "t")
-	for i, r := range []struct {
+	seed := []struct {
 		conn authz.ObjectID
 		sam  string
-	}{{conn1, "ann"}, {conn1, "cat"}, {conn1, "bob"}, {conn2, "dan"}} {
+	}{{conn1, "ann"}, {conn1, "cat"}, {conn1, "bob"}, {conn2, "dan"}}
+	if pc != nil {
+		seed = nil
+		for i := range pc.n {
+			seed = append(seed, struct {
+				conn authz.ObjectID
+				sam  string
+			}{conn1, fmt.Sprintf("u%03d", i)})
+		}
+	}
+	for i, r := range seed {
+		oidv := oid(byte(0x30 + i))
+		if pc != nil {
+			oidv = pdOID(i)
+		}
 		if err := d.ExecOwner(ctx, `INSERT INTO public.rpt_objects (tenant_id, connection_id, object_guid, nc_guid, sam, enabled)
-			VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5, true)`, tid.String(), report.GUIDString(r.conn), report.GUIDString(oid(byte(0x30+i))), report.GUIDString(nc1), r.sam); err != nil {
+			VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5, true)`, tid.String(), report.GUIDString(r.conn), report.GUIDString(oidv), report.GUIDString(nc1), r.sam); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -218,7 +269,7 @@ func setup(t *testing.T, s *storetest.Server) *env {
 		t.Fatal(err)
 	}
 	t.Cleanup(db.Close)
-	src := dataset()
+	src := datasetWith(pc != nil)
 	var reg *reportsql.Registry
 	if err := db.WithTenant(ctx, tid, func(ctx context.Context, tx store.Tx) error {
 		sc, err := reportsql.CatalogSchema(ctx, tx)
@@ -234,6 +285,9 @@ func setup(t *testing.T, s *storetest.Server) *env {
 	def := report.Definition{ID: "tst-01", Version: 1, Category: report.CategoryUsers, Title: "Test", Dataset: src.ID,
 		Columns: []report.ColumnID{"sam", "enabled"}, Sort: []report.SortKey{{Column: "sam", Dir: report.Asc}},
 		Presets: []report.Preset{{ID: "all"}}}
+	if pc != nil {
+		def.PerDC = &report.PerDCSpec{Scope: report.ScopeAll}
+	}
 	now := time.Now().UTC().Truncate(time.Second)
 	e := &env{t: t, db: db, d: d, tid: tid, reg: jobs.NewRegistry(), sink: &recSink{}, clock: &now,
 		scopes: &fakeScopes{m: map[string]authz.ReadScope{alice: authztest.ReadScope(grant(conn1)), bob: authztest.ReadScope(grant(conn1))}, e: map[string]error{}}}

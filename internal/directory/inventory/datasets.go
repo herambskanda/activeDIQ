@@ -11,6 +11,8 @@ const (
 	DatasetComputers report.DatasetID = "inventory.computers"
 	// DatasetPrincipals is users and computers in one dataset, for GRP-04 (T-0962).
 	DatasetPrincipals report.DatasetID = "inventory.principals"
+	// DatasetPrinters is the published printers (printQueue objects) for SYS-02 (T-1719, D13).
+	DatasetPrinters report.DatasetID = "inventory.printers"
 )
 
 // SecretKey reports whether a JSON attribute key is a secret (D8, TM-TB15-T3): the one predicate the
@@ -21,7 +23,7 @@ func SecretKey(key string) bool { return secretKey(key) }
 // Datasets returns the datasets this package registers. compose/server hands them to report.NewHost
 // with the owner key "inventory" (boot refuses them until the table-owner map lists their tables).
 func Datasets() []report.Dataset {
-	return []report.Dataset{usersDataset(), computersDataset(), groupsDataset(), groupMembersDataset(), ousDataset(), contactsDataset(), principalsDataset()}
+	return []report.Dataset{usersDataset(), computersDataset(), groupsDataset(), groupMembersDataset(), ousDataset(), contactsDataset(), principalsDataset(), objectChangesDataset(), printersDataset()}
 }
 
 func idents(s ...string) []report.Ident {
@@ -54,19 +56,22 @@ var (
 )
 
 var enumLabels = map[string]string{
+	"observed": "Value observed", "not_observed": "No value observed (absent or unreadable)", "unknown_denied": "Unreadable (denied)",
 	"locked": "Locked out", "not_locked": "Not locked out", "not_applicable": "Not applicable",
 	"unknown_input_missing": "Unknown (input missing)",
 	"never_account_flag":    "Never expires (account flag)", "not_applicable_smartcard": "Not applicable (smartcard required)",
 	"must_change": "Must change at next logon", "never_policy": "Never expires (policy)", "expired": "Password expired", "expires": "Expires",
 	"not_expired": "Not expired", "never": "Never", "recorded": "Recorded", "none_recorded": "None recorded",
+	"blocked": "Blocked", "blocked_one_ace": "Blocked (one deny ACE only)", "no_deny_ace": "No deny ACE", "not_confirmed": "Not confirmed",
 	"spn_set": "servicePrincipalName set", "none": "None",
 	"uac_not_read": "userAccountControl not read", "lockout_time_not_read": "lockoutTime not read", "pwd_last_set_not_read": "pwdLastSet not read",
 	"account_expires_not_read": "accountExpires not read", "last_logon_not_read": "lastLogonTimestamp not read",
 	"activity_inputs_not_read": "pwdLastSet and lastLogonTimestamp not read", "domain_policy_not_read": "Domain password policy not read",
 	"pso_set_not_read": "Password settings objects not read for this domain", "pso_not_read": "A password settings object that applies was not read",
 	"pso_precedence_not_read": "A password settings object has no precedence", "pso_interval_not_read": "The password settings object's interval was not read",
-	"account_inputs_not_read": "Account attributes that select the policy (userAccountControl, SID, logon name) not read",
-	"workstation":             "Workstation", "server": "Server", "domain_controller": "Domain controller", "read_only_dc": "Read-only domain controller",
+	"account_inputs_not_read":  "Account attributes that select the policy (userAccountControl, SID, logon name) not read",
+	"group_closure_incomplete": "Group membership closure not current or over budget, so a group-linked policy could not be ruled out",
+	"workstation":              "Workstation", "server": "Server", "domain_controller": "Domain controller", "read_only_dc": "Read-only domain controller",
 	"managed_account": "Group managed service account", "unconstrained": "Unconstrained", "constrained": "Constrained",
 	"protocol_transition": "Constrained with protocol transition",
 	"logon":               "Replicated logon", "password_set": "Password last set", "created": "Created",
@@ -79,6 +84,11 @@ func attr(id report.ColumnID, label string, t report.ValueType, col string, ops 
 func jsonText(id report.ColumnID, label, key string) report.Column {
 	return report.Column{ID: id, Label: label, Type: report.TypeText, Source: report.JSONAttr{Col: "attributes", Key: key, As: report.TypeText},
 		Filter: opsText, Sortable: true}
+}
+
+func jsonBool(id report.ColumnID, label, key string) report.Column {
+	return report.Column{ID: id, Label: label, Type: report.TypeBool, Source: report.JSONAttr{Col: "attributes", Key: key, As: report.TypeBool},
+		Filter: opsBool, Sortable: true}
 }
 
 func derived(id report.ColumnID, label string, t report.ValueType, sql report.Fragment, ops []report.Op) report.Column {
@@ -144,8 +154,13 @@ func usersDataset() report.Dataset {
 		derived("logon_sync_interval_days", "Domain logon time sync interval (days)", report.TypeInt, report.SQL(logonSyncSQL), opsInt),
 		derived("policy_source", "Policy source", report.TypeText, report.SQL(policySourceSQL), opsText),
 		derived("probable_service_account", "Probable service account", report.TypeBool, report.SQL(probableSvcSQL), opsBool),
+		state("password_change_right", "Password change right", report.SQL(pwChangeSQL), "blocked", "blocked_one_ace", "no_deny_ace", "not_confirmed"),
+		attr("descriptor_as_of", "Descriptor as of", report.TypeTime, "password_change_at", opsTime, false),
 		state("probable_service_account_reason", "Service account reason", report.SQL(probableReasonSQL), "spn_set", "none"),
 	)
+	cols = append(cols, userAttributeColumns()...)
+	cols = append(cols, readStateColumns()...)
+	cols = append(cols, userPerDCColumns()...)
 	return report.Dataset{
 		ID:     DatasetUsers,
 		Base:   report.Relation{Table: "directory_objects", Where: report.SQL("{t}.kind IN ('user', 'inetorgperson') AND {t}.state = 'live'")},
@@ -156,6 +171,8 @@ func usersDataset() report.Dataset {
 		Rels: []report.Rel{
 			{ID: "memb", Kind: report.RelEdge, Table: "links", Project: idents("connection_id", "source_guid", "target_guid", "link_attr"),
 				Where: report.SQL("state = 'active'")},
+			{ID: "clo", Kind: report.RelEdge, Table: "inventory_group_members", Project: idents("connection_id", "group_guid", "member_guid", "edge_kind", "cut")},
+			{ID: "dirty", Kind: report.RelEdge, Table: "inventory_group_closure_dirty", Project: idents("connection_id")},
 			{ID: "applies", Kind: report.RelEdge, Table: "inventory_pso_applies", Project: idents("connection_id", "pso_guid", "target_guid"),
 				Where: report.SQL("state = 'active'")},
 			{ID: "psoval", Kind: report.RelInput, Table: "inventory_psos",
@@ -165,14 +182,34 @@ func usersDataset() report.Dataset {
 		},
 		Columns:   cols,
 		Freshness: report.FreshNCWatermark,
-		Tables:    []string{"directory_objects", "links", "inventory_pso_applies", "inventory_psos", "inventory_domain_policies"},
+		Tables:    []string{"directory_objects", "links", "inventory_group_members", "inventory_group_closure_dirty", "inventory_pso_applies", "inventory_psos", "inventory_domain_policies"},
+	}
+}
+
+// userPerDCColumns are the columns filled after the query by a live read of every DC (reports.md §6.5). The
+// replicated lastLogonTimestamp lags by days; lastLogon, badPasswordTime and badPwdCount are per DC and are
+// never summed: a time is the latest over the DCs that answered, a count is the count at the DC of the
+// latest failed logon.
+func userPerDCColumns() []report.Column {
+	perDC := func(id report.ColumnID, label string, t report.ValueType, src report.PerDC, ops []report.Op) report.Column {
+		return report.Column{ID: id, Label: label, Type: t, Source: src, Filter: ops, Sortable: true}
+	}
+	return []report.Column{
+		perDC("real_last_logon", "Real last logon", report.TypeTime, report.PerDC{Attr: report.PerDCLastLogon, Agg: report.AggMax}, opsTime),
+		perDC("real_logon_dc", "From DC", report.TypeText, report.PerDC{Attr: report.PerDCLastLogon, Agg: report.AggMax, Part: report.PartFromDC}, nil),
+		perDC("days_since_real_logon", "Days since real logon", report.TypeInt, report.PerDC{Attr: report.PerDCLastLogon, Agg: report.AggMax, Part: report.PartDaysSince}, opsInt),
+		perDC("dc_coverage", "DC coverage", report.TypeText, report.PerDC{Attr: report.PerDCLastLogon, Agg: report.AggMax, Part: report.PartCoverage}, nil),
+		perDC("last_failed_logon", "Last failed logon", report.TypeTime, report.PerDC{Attr: report.PerDCBadPasswordTime, Agg: report.AggMax}, opsTime),
+		perDC("failed_logon_dc", "From DC", report.TypeText, report.PerDC{Attr: report.PerDCBadPasswordTime, Agg: report.AggMax, Part: report.PartFromDC}, nil),
+		perDC("failures_on_dc", "Failures on that DC", report.TypeInt,
+			report.PerDC{Attr: report.PerDCBadPwdCount, Agg: report.AggMax, Part: report.PartAtWinner, Of: report.PerDCBadPasswordTime}, opsInt),
 	}
 }
 
 // reasonValues are the causes of an unknown policy-dependent state, led by the account's own input.
 func reasonValues(own string) []string {
 	return []string{"none", "uac_not_read", own, "domain_policy_not_read", "pso_set_not_read", "pso_not_read",
-		"pso_precedence_not_read", "pso_interval_not_read", "account_inputs_not_read"}
+		"pso_precedence_not_read", "pso_interval_not_read", "account_inputs_not_read", "group_closure_incomplete"}
 }
 
 func withUnknown(c report.Column, state report.ColumnID) report.Column {
@@ -188,6 +225,8 @@ func computersDataset() report.Dataset {
 		state("delegation", "Delegation", report.SQL(delegationSQL), "none", "unconstrained", "constrained", "protocol_transition", report.UnknownInputMissing),
 		withUnknown(derived("days_since_activity", "Days since last activity", report.TypeInt, report.SQL(daysSinceActivitySQL), opsInt), "activity_source"),
 		jsonText("dns_host_name", "DNS host name", "dNSHostName"),
+		jsonText("managed_by", "Managed by", "managedBy"),
+		jsonText("description", "Description", "description"),
 		jsonText("operating_system", "Operating system", "operatingSystem"),
 		jsonText("operating_system_version", "Operating system version", "operatingSystemVersion"),
 		uacFlag("trusted_to_auth_for_delegation", "Trusted to authenticate for delegation (protocol transition)", report.SQL("("+uac+" & 16777216) <> 0")),
@@ -237,5 +276,111 @@ func principalsDataset() report.Dataset {
 		Columns:   cols,
 		Freshness: report.FreshNCWatermark,
 		Tables:    []string{"directory_objects", "links"},
+	}
+}
+
+// userAttributeColumns are the registered columns of the user-attribute reports (T-1111, D11). Every one
+// reads a key the mapper wrote; a photo is a flag, never its bytes. A cell is empty when the attribute has
+// no value (or was not read): AD does not tell the two apart on a read.
+func userAttributeColumns() []report.Column {
+	return []report.Column{
+		jsonText("mail", "Email", "mail"),
+		jsonText("employee_id", "Employee ID", "employeeID"),
+		jsonText("department", "Department", "department"),
+		jsonText("title", "Title", "title"),
+		jsonText("company", "Company", "company"),
+		jsonText("telephone_number", "Telephone number", "telephoneNumber"),
+		jsonText("mobile", "Mobile", "mobile"),
+		jsonText("description", "Description", "description"),
+		jsonText("manager", "Manager (distinguished name)", "manager"),
+		jsonText("logon_script", "Logon script", "scriptPath"),
+		jsonBool("dialin_allowed", "Dial-in: allow access", "msNPAllowDialin"),
+		jsonBool("skype_enabled", "Skype/Lync enabled", "msRTCSIP-UserEnabled"),
+		jsonText("logon_hours", "Logon hours (168 bits, Sunday 00:00 UTC first)", "logonHours"),
+		derived("logon_hours_restricted", "Logon hours restricted", report.TypeBool,
+			report.SQL("CASE WHEN {t}.attributes ->> 'logonHours' IS NULL THEN NULL ELSE position('0' in {t}.attributes ->> 'logonHours') > 0 END"), opsBool),
+		derived("has_thumbnail_photo", "Has thumbnail photo", report.TypeBool, report.SQL("COALESCE(({t}.attributes ->> 'hasThumbnailPhoto')::boolean, false)"), opsBool),
+		derived("has_jpeg_photo", "Has JPEG photo", report.TypeBool, report.SQL("COALESCE(({t}.attributes ->> 'hasJpegPhoto')::boolean, false)"), opsBool),
+		derived("has_photo", "Has photo", report.TypeBool,
+			report.SQL("(COALESCE(({t}.attributes ->> 'hasThumbnailPhoto')::boolean, false) OR COALESCE(({t}.attributes ->> 'hasJpegPhoto')::boolean, false))"), opsBool),
+	}
+}
+
+// The per-attribute read marker the user sync writes under attributes.attrRead (T-2216, T-1112 AC2).
+// observed: the sync saw a value. not_observed: it saw none, which is absent OR unreadable (AD omits a
+// denied attribute exactly as it omits an empty one). unknown_denied is reserved for a DACL verdict
+// (T-2220) and is never written. A row with no marker (not yet resynced, or not a user) reads NULL.
+const (
+	ReadMarkerKey     = "attrRead"
+	ReadObserved      = "observed"
+	ReadNotObserved   = "not_observed"
+	ReadUnknownDenied = "unknown_denied"
+)
+
+// readStateColumns exposes one read-state column per marked attribute. Additive: no existing column moves.
+// Each fragment is a literal constant (RP1/FF-SP2): the key is spelled out, never joined in.
+func readStateColumns() []report.Column {
+	rs := func(id, label string, sql report.Fragment) report.Column {
+		return state(report.ColumnID(id+"_read_state"), label+": read state", sql, ReadObserved, ReadNotObserved, ReadUnknownDenied)
+	}
+	return []report.Column{
+		rs("mail", "Email", report.SQL("{t}.attributes -> 'attrRead' ->> 'mail'")),
+		rs("employee_id", "Employee ID", report.SQL("{t}.attributes -> 'attrRead' ->> 'employeeID'")),
+		rs("department", "Department", report.SQL("{t}.attributes -> 'attrRead' ->> 'department'")),
+		rs("title", "Title", report.SQL("{t}.attributes -> 'attrRead' ->> 'title'")),
+		rs("company", "Company", report.SQL("{t}.attributes -> 'attrRead' ->> 'company'")),
+		rs("telephone_number", "Telephone number", report.SQL("{t}.attributes -> 'attrRead' ->> 'telephoneNumber'")),
+		rs("mobile", "Mobile", report.SQL("{t}.attributes -> 'attrRead' ->> 'mobile'")),
+		rs("description", "Description", report.SQL("{t}.attributes -> 'attrRead' ->> 'description'")),
+		rs("manager", "Manager", report.SQL("{t}.attributes -> 'attrRead' ->> 'manager'")),
+		rs("logon_script", "Logon script", report.SQL("{t}.attributes -> 'attrRead' ->> 'scriptPath'")),
+		rs("dialin_allowed", "Dial-in: allow access", report.SQL("{t}.attributes -> 'attrRead' ->> 'msNPAllowDialin'")),
+		rs("skype_enabled", "Skype/Lync enabled", report.SQL("{t}.attributes -> 'attrRead' ->> 'msRTCSIP-UserEnabled'")),
+		rs("logon_hours", "Logon hours", report.SQL("{t}.attributes -> 'attrRead' ->> 'logonHours'")),
+		rs("thumbnail_photo", "Thumbnail photo", report.SQL("{t}.attributes -> 'attrRead' ->> 'thumbnailPhoto'")),
+		rs("jpeg_photo", "JPEG photo", report.SQL("{t}.attributes -> 'attrRead' ->> 'jpegPhoto'")),
+	}
+}
+
+// printersDataset is the published printers (reports-2-second-slice 7.2, D13): the printQueue objects the
+// directory holds under their server's computer object. Published is not installed, and the row is the
+// directory's record as of the sync, so observed_at is a column the report shows as the as-of time. The
+// scope is the object's own ancestry, which runs through the server's computer object and its OUs: a
+// printer is trimmed by its server's ancestry, and an unknown ancestry grants nothing (reports-2a 8.1).
+func printersDataset() report.Dataset {
+	// The OU path of the server is the dn column: a printQueue's DN is CN=<queue>,CN=<server>,<server's OU path>,
+	// and the library's ou_path_is_dn convention shows the path from it. A second column derived from the
+	// DN would name the parent OUs outside the dn cell, which RP11 refuses.
+	cols := []report.Column{
+		attr("object_guid", "Object GUID", report.TypeGUID, "object_guid", opsGUID, false),
+		attr("connection_id", "Connection", report.TypeGUID, "connection_id", opsGUID, false),
+		attr("domain", "Domain (naming context)", report.TypeGUID, "nc_guid", opsGUID, true),
+		attr("dn", "Distinguished name", report.TypeText, "dn", opsText, false),
+		jsonText("printer_name", "Printer name", "printerName"),
+		jsonText("server_name", "Print server", "serverName"),
+		jsonText("unc_name", "Share / UNC path", "uNCName"),
+		jsonText("share_name", "Share name", "printShareName"),
+		jsonText("location", "Location", "location"),
+		jsonText("description", "Description", "description"),
+		jsonText("driver_name", "Driver", "driverName"),
+		jsonBool("color", "Colour", "printColor"),
+		jsonBool("duplex", "Duplex", "printDuplexSupported"),
+		attr("when_created", "Created", report.TypeTime, "when_created", opsTime, true),
+		attr("observed_at", "Observed at", report.TypeTime, "observed_at", opsTime, true),
+	}
+	for i := range cols {
+		switch cols[i].ID {
+		case "printer_name", "server_name", "unc_name", "location", "driver_name", "color", "duplex", "dn":
+			cols[i].Default = true
+		}
+	}
+	return report.Dataset{
+		ID:        DatasetPrinters,
+		Base:      report.Relation{Table: "directory_objects", Where: report.SQL("{t}.kind = 'printqueue' AND {t}.state = 'live'")},
+		RowKey:    report.SQL("{t}.object_guid"),
+		Anchors:   []report.Anchor{rowAnchorT()},
+		Columns:   cols,
+		Freshness: report.FreshNCWatermark,
+		Tables:    []string{"directory_objects"},
 	}
 }

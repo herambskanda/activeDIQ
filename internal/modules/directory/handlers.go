@@ -60,6 +60,7 @@ type ReadScopes interface {
 // principal; the text of q reaches the directory only as a value inside a typed filter tree. Results
 // are trimmed to the principal's ReadScope for directory.read; without a producer nothing is answered.
 type Handlers struct {
+	explorerPending
 	Connections Connections
 	Search      UserSearcher
 	Scopes      ReadScopes

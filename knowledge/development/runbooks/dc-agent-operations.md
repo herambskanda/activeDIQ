@@ -49,10 +49,10 @@ Events 110–119 carry a fixed text (the class and, for 118/119, a code-literal 
 ## Building the MSI
 
 ```
-wix build Agent.wxs -ext WixToolset.Util.wixext -arch x64 -wx -sw1149 -d Version=<x.y.z> -d AgentExe=<path>\activediq-agent.exe -d SetupExe=<path>\agentsetup.exe -o activediq-agent-<x.y.z>.msi
+wix build Agent.wxs -arch x64 -wx -sw1149 -d Version=<x.y.z> -d AgentExe=<path>\activediq-agent.exe -d SetupExe=<path>\agentsetup.exe -o activediq-agent-<x.y.z>.msi
 ```
 
-WiX 5.0.2. `-wx` turns every warning into an error, so the build fails on any warning not suppressed on purpose. The one suppression is `-sw1149`: WIX1149 is raised by the **core** `ServiceConfig` itself, the only element that can set `ServiceSid="restricted"` and `RequiredPrivilege` (`util:ServiceConfig` has neither; ADR-0006 A2 needs both; T-0648 read back on a DC that it applies them). The recovery actions (restart x3, 30 s, reset 1 day) are on `util:ServiceConfig`, the only element that has them (the core one has no failure-action attributes: WIX0004); `sc qfailure activeDIQAgent` reads them back (T-0833). The release pipeline (devops-engineer) must use the same flags; `agent-unenrolled-verify` checks both fixtures.
+WiX 5.0.2. `-wx` turns every warning into an error, so the build fails on any warning not suppressed on purpose. The one suppression is `-sw1149`: WIX1149 is raised by the **core** `ServiceConfig` itself, the only element that can set `ServiceSid="restricted"` and `RequiredPrivilege` (T-0648 read back on a DC that it applies them). No WiX extension is used: the recovery actions (restart x3, 30 s, reset 1 day) and the `activeDIQ Agent` event source are set by `agentsetup configure-service` (T-0724), because WiX 5.0.2's core `ServiceConfigFailureActions` writes names where Windows Installer wants integers (error 1939) and the util extension adds a DLL custom action and HKLM\SYSTEM rows that `fitness-built-msi` refuses; `sc qfailure activeDIQAgent` reads them back (lab case A6). The release pipeline (devops-engineer) must use the same flags; `agent-unenrolled-verify` checks both fixtures.
 
 ## Install order
 

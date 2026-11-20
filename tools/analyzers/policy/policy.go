@@ -175,6 +175,7 @@ var TestSupport = []string{
 	"internal/platform/jobs/jobstest",           // fleet-wide claim lapse: a product import could double-run jobs
 	"internal/testlab",                          // lab environment discovery (.lab.env, LDAPS dial to the lab DC); imported by *_test.go and storetest only (T-0800)
 	"internal/testlab/harnessdocker",            // docker run/rm/reap of harness Postgres containers, fixed argv (T-0377, T-0800)
+	"internal/directory/inventory/invtest",      // exported inventory test kit: starts storetest databases and seeds tenants; tests only (ADR-0013 §4, T-2233)
 	"internal/connector/labadmin",               // lab-only LDAP admin that builds hostile DNs by hand in lab tests (T-0800)
 }
 

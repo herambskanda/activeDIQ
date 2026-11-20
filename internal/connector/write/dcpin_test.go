@@ -134,7 +134,7 @@ func TestPlanPreconditionDCEqualsThePin(t *testing.T) {
 	rec := withTestOp(r)
 	id := mk(10)
 	q := planReq(id, ctxFor(id))
-	q.Kind = 1
+	q.Kind, q.Change = 1, testChange()
 	resp, err := r.h.Plan(context.Background(), q)
 	if err != nil {
 		t.Fatal(err)
@@ -192,5 +192,24 @@ func TestADProviderShareOneSession(t *testing.T) {
 	}
 	if _, err := p.BoundDC(context.Background()); !errors.Is(err, ErrNoBoundDC) {
 		t.Fatalf("mismatched binder answered: %v", err)
+	}
+}
+
+// The secret material on an Apply request is wiped even when the call is refused early.
+func TestApplyWipesSecretOnEarlyRefusal(t *testing.T) {
+	run := passRun(nil)
+	r := newRig(t, &run)
+	id := mk(10)
+	q := applyReq(id, ctxFor(id))
+	q.Precondition.Dc = nil // refused at the DC check
+	mat := []byte("Sup3r-secret-pw")
+	q.SecretInput = &connectorv1.SecretValue{Material: mat}
+	if _, err := r.h.Apply(context.Background(), q); err == nil {
+		t.Fatal("expected refusal")
+	}
+	for i, b := range mat {
+		if b != 0 {
+			t.Fatalf("secret byte %d not wiped", i)
+		}
 	}
 }
