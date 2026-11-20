@@ -9,7 +9,7 @@ import path from 'node:path';
 // The real config, with the dispatcher tuning these tests are written against pinned, so raising
 // slots or the grooming floor in production does not break the selection-mechanism tests.
 const config = JSON.parse(fs.readFileSync(path.join(REAL_FACTORY, 'config.json'), 'utf8'));
-Object.assign(config.dispatcher, { max_parallel: 2, grooming_min_ready: 3 });
+Object.assign(config.dispatcher, { max_parallel: 2, grooming_min_ready: 3, only_milestone: null, hold_ready: false });
 const NOW = new Date(2026, 9, 2, 10, 0, 0); // local 10:00: before the digest hour
 const EVENING = new Date(2026, 9, 2, 19, 0, 0);
 
@@ -258,4 +258,60 @@ test('real work is not starved by auto-created grooming and digest', () => {
   const t = [ticket({ id: 'T-0001', priority: 'P0' }), ticket({ id: 'T-0070', status: 'backlog' })];
   const wide = { ...config, dispatcher: { ...config.dispatcher, max_parallel: 3 } };
   assert.deepEqual(ids(pick(state({ tickets: t }), EVENING, wide)), ['T-0001', 'meta:digest', 'meta:grooming']);
+});
+
+test('only_milestone launches just that milestone\'s ready tickets but still resumes work in flight', () => {
+  const t = [
+    ticket({ id: 'T-0020', milestone: 'M2b', priority: 'P0' }),
+    ticket({ id: 'T-0021', milestone: 'M2a', priority: 'P2' }),
+    ticket({ id: 'T-0022', milestone: 'M2b', status: 'in_progress', priority: 'P2' }),
+    ...filler(),
+  ];
+  const locked = { ...config, dispatcher: { ...config.dispatcher, only_milestone: 'M2a', max_parallel: 5 } };
+  const got = ids(pick(state({ tickets: t }), NOW, locked));
+  assert.ok(got.includes('T-0021') && got.includes('T-0022'));
+  assert.ok(!got.includes('T-0020'), 'an M2b ready ticket is not launched');
+  const open = ids(pick(state({ tickets: t }), NOW, { ...locked, dispatcher: { ...locked.dispatcher, only_milestone: null } }));
+  assert.ok(open.includes('T-0020'));
+});
+
+test('hold_ready starts no ready ticket or grooming but still runs review, rework and the digest', () => {
+  const t = [
+    ticket({ id: 'T-0030', priority: 'P0' }),
+    ticket({ id: 'T-0031', status: 'review' }),
+    ticket({ id: 'T-0032', status: 'in_progress' }),
+    ticket({ id: 'T-0033', status: 'backlog' }),
+  ];
+  const wide = { ...config, dispatcher: { ...config.dispatcher, max_parallel: 6 } };
+  const open = ids(pick(state({ tickets: t }), EVENING, wide));
+  assert.ok(open.includes('T-0030') && open.includes('meta:grooming'));
+  const held = ids(pick(state({ tickets: t }), EVENING, { ...wide, dispatcher: { ...wide.dispatcher, hold_ready: true } }));
+  assert.deepEqual(held.sort(), ['T-0031', 'T-0032', 'meta:digest']);
+});
+
+test('hold_ready still runs a ready ticket that was started before (refused or unblocked), not a never-started one', () => {
+  const old = ticket({ id: 'T-0040', priority: 'P2' });
+  old.history = [{ ts: 'x', by: 'qa', from: 'qa', to: 'done', note: 'ok' }, { ts: 'y', by: 'cli', from: 'blocked', to: 'ready', note: 'retry' }];
+  const fresh = ticket({ id: 'T-0041', priority: 'P0' });
+  const held = { ...config, dispatcher: { ...config.dispatcher, max_parallel: 6, hold_ready: true } };
+  assert.deepEqual(ids(pick(state({ tickets: [old, fresh] }), NOW, held)).filter((x) => x.startsWith('T-')), ['T-0040']);
+});
+
+test('T-1617: a gate run in flight holds reserved_slots back from max_parallel', () => {
+  const c = { ...config, dispatcher: { ...config.dispatcher, max_parallel: 4, pre_merge: { ...config.dispatcher.pre_merge, reserved_slots: 2 } } };
+  const t = ['T-7001', 'T-7002', 'T-7003', 'T-7004'].map((id) => ticket({ id }));
+  const dispatcher = (gate) => ({ backoff_until: null, runs_today: { date: null, count: 0 }, merge_gates: gate ? [gate] : [] });
+  const gate = { ticket: 'T-1', tickets: ['T-1'], started_at: NOW.toISOString() };
+  const open = pick(state({ tickets: t, dispatcher: dispatcher(null) }), NOW, c);
+  assert.equal(open.length, 4, 'no gate: every slot is free');
+  const gated = pick(state({ tickets: t, dispatcher: dispatcher(gate) }), NOW, c);
+  assert.equal(gated.length, 2, 'gate in flight: max_parallel - reserved_slots');
+  const busy = pick(state({ tickets: t, runs: [run('T-8001'), run('T-8002')], dispatcher: dispatcher(gate) }), NOW, c);
+  assert.deepEqual(busy, [], 'two workers already running fill the capped slots; none are stopped, none start');
+  c.dispatcher.max_parallel = 12; // raising max_parallel keeps the reservation
+  const many = Array.from({ length: 12 }, (_, i) => ticket({ id: `T-71${String(i).padStart(2, '0')}` }));
+  assert.equal(pick(state({ tickets: many, runs: Array.from({ length: 10 }, (_, i) => run(`T-82${i}`)), dispatcher: dispatcher(gate) }), NOW, c).length, 0);
+  assert.ok(pick(state({ tickets: many, runs: Array.from({ length: 10 }, (_, i) => run(`T-82${i}`)), dispatcher: dispatcher(null) }), NOW, c).length > 0, 'without the gate the same state launches');
+  c.dispatcher.pre_merge.reserved_slots = 99;
+  assert.equal(pick(state({ tickets: t, dispatcher: dispatcher(gate) }), NOW, { ...c, dispatcher: { ...c.dispatcher, max_parallel: 4 } }).length, 1, 'always leaves one slot');
 });

@@ -63,6 +63,17 @@ func PrincipalFromToken(user sid.SID, tokenGroups []sid.SID) Principal {
 	return p
 }
 
+// PrincipalFromSIDSet builds a principal from a full access-token SID set (user, groups, implicit
+// logon SIDs, sIDHistory). The caller states whether the set is complete; an empty set is never
+// complete.
+func PrincipalFromSIDSet(sids []sid.SID, complete bool) Principal {
+	p := Principal{sids: make(map[sid.SID]struct{}, len(sids)), incomplete: !complete || len(sids) == 0}
+	for _, s := range sids {
+		p.sids[s] = struct{}{}
+	}
+	return p
+}
+
 // PrincipalFromSIDs builds a principal from a bare SID list with no claim to completeness: the
 // result is always Incomplete.
 func PrincipalFromSIDs(sids ...sid.SID) Principal {

@@ -4,10 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"time"
 
 	jsonv2 "encoding/json/v2"
 
+	"github.com/skenzeriq/activediq/internal/directory/objectdef"
 	"github.com/skenzeriq/activediq/internal/platform/operation/step"
 	"github.com/skenzeriq/activediq/internal/platform/store"
 	"github.com/skenzeriq/activediq/internal/platform/tablekind"
@@ -21,30 +21,10 @@ var (
 // Store errors. None carries a definition's content.
 var (
 	ErrNoTenant = errors.New("objects: no tenant context")
-	ErrNotFound = errors.New("objects: definition or version not found")
+	ErrNotFound = objectdef.ErrNotFound
 	ErrConflict = errors.New("objects: the version is not in a state that allows this change")
 	ErrPurpose  = errors.New("objects: a definition's object kind and purpose cannot change between versions")
 )
-
-// State is a version's lifecycle state. A template's live state is published; a naming format's is active.
-type State string
-
-// Version states.
-const (
-	StateDraft     State = "draft"
-	StatePublished State = "published"
-	StateActive    State = "active"
-	StateArchived  State = "archived"
-)
-
-// Stored is one stored version of a definition.
-type Stored[T any] struct {
-	ID        string
-	Version   int
-	State     State
-	Def       T
-	UpdatedAt time.Time
-}
 
 // rowSet is the part of a pgx result set the store reads; the store's transaction hands back pgx rows
 // and this package may not name pgx (tenancy T5).
@@ -129,7 +109,7 @@ func (v versioned[T]) saveDraftTx(ctx context.Context, tx store.Tx, id string, d
 		}
 		return id, 1, wrap(v.b.insert(ctx, tx, id, 1, def, body))
 	}
-	if !IsGUID(id) {
+	if !objectdef.IsGUID(id) {
 		return "", 0, ErrNotFound
 	}
 	ver, state, ident, err := v.b.lock(ctx, tx, id)
@@ -170,7 +150,7 @@ func (v versioned[T]) transitionTx(ctx context.Context, tx store.Tx, id string, 
 	if err := tenantOK(ctx, tx); err != nil {
 		return err
 	}
-	if !IsGUID(id) {
+	if !objectdef.IsGUID(id) {
 		return ErrNotFound
 	}
 	n, err := v.b.move(ctx, tx, id, version, from, to)
@@ -207,7 +187,7 @@ func (v versioned[T]) get(ctx context.Context, tx store.Tx, id string, version i
 	if err := tenantOK(ctx, tx); err != nil {
 		return Stored[T]{}, err
 	}
-	if !IsGUID(id) {
+	if !objectdef.IsGUID(id) {
 		return Stored[T]{}, ErrNotFound
 	}
 	return v.scan(id, v.b.get(ctx, tx, id, version))
@@ -217,7 +197,7 @@ func (v versioned[T]) latest(ctx context.Context, tx store.Tx, id string) (Store
 	if err := tenantOK(ctx, tx); err != nil {
 		return Stored[T]{}, err
 	}
-	if !IsGUID(id) {
+	if !objectdef.IsGUID(id) {
 		return Stored[T]{}, ErrNotFound
 	}
 	return v.scan(id, v.b.latest(ctx, tx, id))

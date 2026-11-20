@@ -4,10 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/skenzeriq/activediq/internal/directory/client"
 	"strings"
 	"time"
 
-	"github.com/skenzeriq/activediq/internal/directory/client"
 	"github.com/skenzeriq/activediq/internal/directory/connection"
 	"github.com/skenzeriq/activediq/internal/directory/inventory"
 	"github.com/skenzeriq/activediq/internal/platform/jobs"
@@ -31,6 +31,9 @@ type readJob struct {
 
 	// observed is the as-of of the read: the start of the main pass.
 	observed time.Time
+	// deferFinish leaves the domain's pass and cursor alone, even on the last batch: the caller finishes the
+	// read in a transaction of its own after it has reconciled (IncrementalCycle).
+	deferFinish bool
 }
 
 // prescan is what the first pass learns about a domain: the parent link of every object and the groups' SIDs.
@@ -67,7 +70,7 @@ func (r *readJob) run(ctx context.Context) error {
 	err = func() error {
 		_, err := r.stream(ctx, searchSpec{attrs: mp.Attributes(), pageSize: r.pageSize, pin: pre.pin}, func(en *connectorv1.DirectoryEntry) error {
 			r.rep.Entries++
-			o, ok, err := r.mapEntry(mp, pre, en, dsa)
+			o, ok, err := r.mapEntry(ctx, mp, pre, en, dsa)
 			if err != nil {
 				return err
 			}
@@ -92,10 +95,10 @@ func (r *readJob) run(ctx context.Context) error {
 	if err != nil {
 		return r.wrap(err, "read")
 	}
-	if err := r.flush(ctx, buf, true); err != nil {
+	if err := r.flush(ctx, buf, !r.deferFinish); err != nil {
 		return err
 	}
-	r.rep.Completed = true
+	r.rep.Completed = !r.deferFinish
 	return nil
 }
 
@@ -159,7 +162,7 @@ func groupSID(en *connectorv1.DirectoryEntry) []byte {
 
 // mapEntry maps one entry of the main pass. ok is false for an entry that was refused as malformed (counted,
 // and skipped without aborting the batch). Any other error aborts the read.
-func (r *readJob) mapEntry(mp *Mapper, pre *prescan, en *connectorv1.DirectoryEntry, dsa string) (inventory.Observation, bool, error) {
+func (r *readJob) mapEntry(ctx context.Context, mp *Mapper, pre *prescan, en *connectorv1.DirectoryEntry, dsa string) (inventory.Observation, bool, error) {
 	m, err := mp.Map(en)
 	if err != nil {
 		var me *Error
@@ -167,7 +170,14 @@ func (r *readJob) mapEntry(mp *Mapper, pre *prescan, en *connectorv1.DirectoryEn
 			return inventory.Observation{}, false, err
 		}
 		r.rep.Refused++
-		r.rep.RefusedBy[RefusalKey{Attr: me.Attr, Code: me.Code}]++
+		k := RefusalKey{Attr: me.Attr, Code: me.Code}
+		r.rep.RefusedBy[k]++
+		if len(r.rep.RefusedEntries) < MaxRefusedEntries {
+			id, _ := entryGUID(en.GetObjectGuid(), "objectGUID") // "" when the GUID itself is the fault
+			r.rep.RefusedEntries = append(r.rep.RefusedEntries, RefusedEntry{Object: id, RefusalKey: k})
+		} else {
+			r.rep.RefusedOmitted++
+		}
 		return inventory.Observation{}, false, nil
 	}
 	o := m.Observation
@@ -178,6 +188,11 @@ func (r *readJob) mapEntry(mp *Mapper, pre *prescan, en *connectorv1.DirectoryEn
 			o.Ancestry = chain
 		} else {
 			r.rep.AncestryUnresolved++
+		}
+	}
+	if (o.Kind == inventory.KindUser || o.Kind == inventory.KindInetOrgPerson) && o.State == inventory.ObjLive {
+		if err := r.readPasswordChange(ctx, &o, pre.pin); err != nil {
+			return inventory.Observation{}, false, err
 		}
 	}
 	if o.Kind == inventory.KindGroup && o.State == inventory.ObjLive {

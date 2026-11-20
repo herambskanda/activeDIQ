@@ -13,7 +13,7 @@ import { blockedNote, planRenumber, preMergeSettings, runPreMergeGate } from '..
 import { advanceTicket, claimTicket, createTicket, setTicketLinks } from '../lib/tickets.mjs';
 import { ensureWorktree } from '../lib/worktree.mjs';
 import { listEntities, readRecentEvents } from '../lib/store.mjs';
-import { commitAll, git, initRepo, makeFactory, ticketInput } from './helpers.mjs';
+import { commitAll, initRepo, makeFactory, ticketInput } from './helpers.mjs';
 
 const NUMBERING = `import fs from 'node:fs';
 const names = fs.readdirSync('migrations').filter((n) => n.endsWith('.sql')).sort();
@@ -74,7 +74,7 @@ test('numbering setting is validated', () => {
   assert.throws(() => preMergeSettings({ dispatcher: { pre_merge: { numbering: { dir: 'migrations' } } } }), /numbering needs/);
 });
 
-test('two branches add the same number: the second is refused before main moves, naming the free number; a branch that follows main passes fast', async () => {
+test('two branches add the same number: the second is auto-renumbered and merged without reopening (T-1067); a branch that follows main passes fast', async () => {
   const f = setup();
   try {
     const first = await finishedWith(f, 'first adds 0004', ['0004_first.sql']);
@@ -86,32 +86,142 @@ test('two branches add the same number: the second is refused before main moves,
     // each branch is fine alone: the gate passes the first and merges it
     await d.mergePass(); await d.gateIdle();
     assert.ok(ids()[first.id].links.merged, 'the first merged');
-    const mainAfterFirst = git(f.root, 'rev-parse', 'main');
 
-    // the second now collides on the merged tree
+    // the second now collides on the merged tree, but the gate fixes it itself and merges straight
+    // through: no reopen, no human renumber step, and main ends up contiguous.
     await d.mergePass(); await d.gateIdle();
     const cur = ids()[second.id];
-    assert.deepEqual([cur.status, cur.links.merged], ['in_progress', undefined]);
-    assert.equal(git(f.root, 'rev-parse', 'main'), mainAfterFirst, 'main did not move');
-    assert.match(cur.notes.at(-1).text, /pre-merge gate refused the merge/);
-    assert.match(cur.notes.at(-1).text, /Renumber to 0005: git mv migrations\/0004_second\.sql migrations\/0005_second\.sql/);
-    assert.match(readRecentEvents(f.ctx, 50).map((e) => e.text).join('\n'), new RegExp(`${second.id} merge refused by the pre-merge gate`));
-    assert.ok(!fs.existsSync(path.join(f.root, 'full-ran.txt')) || fs.readFileSync(path.join(f.root, 'full-ran.txt'), 'utf8').split('\n').filter(Boolean).length === 1,
-      'the full command ran for the first ticket only, not for the refused one');
+    assert.ok(cur.links.merged, 'the second merged too, with no human in the loop');
+    assert.equal(cur.status, 'done');
+    assert.deepEqual(
+      fs.readdirSync(path.join(f.root, 'migrations')).filter((n) => n.startsWith('0004') || n.startsWith('0005')).sort(),
+      ['0004_first.sql', '0005_second.sql'],
+      'the second branch\'s migration landed on main renumbered to the free slot',
+    );
+    assert.match(readRecentEvents(f.ctx, 50).map((e) => e.text).join('\n'), new RegExp(`re-applied the pre-merge gate's auto-renumber.*0004_second\\.sql -> 0005_second\\.sql`));
+    assert.ok(!fs.existsSync(path.join(f.root, 'full-ran.txt')) || fs.readFileSync(path.join(f.root, 'full-ran.txt'), 'utf8').split('\n').filter(Boolean).length === 2,
+      'the full command ran for both tickets: the second passed on the renumbered tree, not a refusal');
 
-    // the owner renumbers (as the note says) and advances again
-    const wt = cur.links.worktree;
-    git(wt, 'merge', '--no-edit', 'main');
-    git(wt, 'mv', 'migrations/0004_second.sql', 'migrations/0005_second.sql');
-    commitAll(wt, 'renumber to 0005');
-    for (let i = 0; i < 2; i++) { try { advanceTicket(f.ctx, second.id, 'w', 'renumbered'); } catch { /* stage bookkeeping */ } }
-    setTicketLinks(f.ctx, second.id, { branch: `factory/${second.id}`, worktree: wt });
-    const verdict = await runPreMergeGate(f.ctx, ids()[second.id]);
+    // a branch that already follows main (no collision at all) still passes fast with no renumber
+    const third = await finishedWith(f, 'third adds 0006', ['0006_third.sql']);
+    const verdict = await runPreMergeGate(f.ctx, ids()[third.id]);
     assert.equal(verdict.status, 'pass');
+    assert.equal(verdict.renumber, undefined, 'nothing to renumber when the branch already follows main');
     const seconds = /migration numbering checked in ([\d.]+) s/.exec(verdict.summary);
     assert.ok(seconds, `timing is in the verdict: ${verdict.summary}`);
     console.log(`# migration-numbering check on a branch that follows main: ${seconds[1]} s`);
     assert.ok(Number(seconds[1]) < 5, 'adds under 5 s');
+  } finally { f.cleanup(); }
+});
+
+test('a branch that references its own migration by name is auto-renumbered consistently (file and reference move together)', async () => {
+  const f = setup();
+  try {
+    const first = await finishedWith(f, 'first adds 0004', ['0004_first.sql']);
+    const d = new Dispatcher(f.ctx);
+    d.shared = false;
+    await d.mergePass(); await d.gateIdle();
+
+    const second = await finishedWith(f, 'second adds 0004 and mentions it in a test', ['0004_second.sql']);
+    const secondWt = Object.fromEntries(listEntities(f.ctx, 'tickets').map((t) => [t.id, t]))[second.id].links.worktree;
+    fs.writeFileSync(path.join(secondWt, 'about-0004_second.txt'), 'see migrations/0004_second.sql\n');
+    commitAll(secondWt, 'reference the migration by name');
+    await d.mergePass(); await d.gateIdle();
+    const cur = Object.fromEntries(listEntities(f.ctx, 'tickets').map((t) => [t.id, t]))[second.id];
+    assert.ok(cur.links.merged, 'merged despite the collision, via auto-renumber');
+    assert.equal(
+      fs.readFileSync(path.join(f.root, 'about-0004_second.txt'), 'utf8').trim(),
+      'see migrations/0005_second.sql',
+      'the reference to the old file name was rewritten to the new one',
+    );
+  } finally { f.cleanup(); }
+});
+
+test('when the auto-renumber cannot make the check pass again, the gate falls back to refusing as before', async () => {
+  const f = setup();
+  try {
+    const first = await finishedWith(f, 'first adds 0004', ['0004_first.sql']);
+    const d = new Dispatcher(f.ctx);
+    d.shared = false;
+    await d.mergePass(); await d.gateIdle();
+
+    // a numbering check that stays red even after a clean renumber still refuses; red only because of
+    // the branch's own file, so main alone passes and the branch is at fault
+    f.ctx.config.dispatcher.pre_merge.numbering.argv = ['node', '-e', "process.exit(require('fs').readdirSync('migrations').some((n) => n.includes('_second')) ? 1 : 0)"];
+    const second = await finishedWith(f, 'second adds 0004', ['0004_second.sql']);
+    await d.mergePass(); await d.gateIdle();
+    const cur = Object.fromEntries(listEntities(f.ctx, 'tickets').map((t) => [t.id, t]))[second.id];
+    assert.deepEqual([cur.status, cur.links.merged], ['in_progress', undefined]);
+    assert.match(cur.notes.at(-1).text, /pre-merge gate refused the merge/);
+  } finally { f.cleanup(); }
+});
+
+const byId = (f) => Object.fromEntries(listEntities(f.ctx, 'tickets').map((x) => [x.id, x]));
+const heldEvents = (f, id) => readRecentEvents(f.ctx, 200).filter((e) => e.text.startsWith(`${id} held at the pre-merge gate`)).length;
+/** Break main the way a gate-skipping merge does: a second migration with an existing number. */
+function breakMain(f) {
+  fs.writeFileSync(path.join(f.root, 'migrations', '0003_dup.sql'), '-- landed without the gate\n');
+  commitAll(f.root, 'hand merge: duplicate 0003');
+}
+
+test('main itself breaks the numbering: an innocent ticket is held, not reopened, no strike, one notice', async () => {
+  const f = setup();
+  try {
+    breakMain(f);
+    const t = await finishedWith(f, 'innocent', []);
+    const d = new Dispatcher(f.ctx);
+    d.shared = false;
+    await d.mergePass(); await d.gateIdle();
+    let cur = byId(f)[t.id];
+    assert.deepEqual([cur.status, cur.gate_failures ?? 0, cur.links.merged], ['done', 0, undefined]);
+    assert.match(readRecentEvents(f.ctx, 50).map((e) => e.text).join('\n'), /main itself fails the migration-numbering check/);
+    const notices = listEntities(f.ctx, 'decisions');
+    assert.deepEqual(notices.map((n) => [n.kind, n.status]), [['notice', 'pending']]);
+
+    await d.mergePass(); await d.gateIdle(); // main has not moved: not gated again, no second notice
+    cur = byId(f)[t.id];
+    assert.equal(cur.status, 'done');
+    assert.equal(heldEvents(f, t.id), 1);
+    assert.equal(listEntities(f.ctx, 'decisions').length, 1);
+  } finally { f.cleanup(); }
+});
+
+test('once main is fixed, the held ticket is gated again and merges', async () => {
+  const f = setup();
+  try {
+    breakMain(f);
+    const t = await finishedWith(f, 'innocent', []);
+    const d = new Dispatcher(f.ctx);
+    d.shared = false;
+    await d.mergePass(); await d.gateIdle();
+    assert.equal(byId(f)[t.id].status, 'done');
+
+    fs.renameSync(path.join(f.root, 'migrations', '0003_dup.sql'), path.join(f.root, 'migrations', '0004_dup.sql'));
+    commitAll(f.root, 'fix main: renumber the duplicate');
+    await d.mergePass(); await d.gateIdle();
+    const cur = byId(f)[t.id];
+    assert.ok(cur.links.merged, 'merged after main was fixed');
+    assert.equal(cur.gate_failures ?? 0, 0);
+  } finally { f.cleanup(); }
+});
+
+test('main passes alone but the branch breaks the numbering itself (a deleted migration): reopened with a strike', async () => {
+  const f = setup();
+  try {
+    const t = createTicket(f.ctx, ticketInput({ title: 'deletes a migration', status: 'ready' }), 'x');
+    const wt = await ensureWorktree(f.ctx, t.id);
+    fs.rmSync(path.join(wt.path, 'migrations', '0002_users.sql'));
+    commitAll(wt.path, `work ${t.id}`);
+    claimTicket(f.ctx, t.id);
+    for (let i = 0; i < 3; i++) advanceTicket(f.ctx, t.id, 'w', 'ok');
+    setTicketLinks(f.ctx, t.id, { branch: wt.branch, worktree: wt.path });
+    const d = new Dispatcher(f.ctx);
+    d.shared = false;
+    await d.mergePass(); await d.gateIdle();
+    const cur = byId(f)[t.id];
+    assert.deepEqual([cur.status, cur.gate_failures], ['in_progress', 1]);
+    assert.match(cur.notes.at(-1).text, /passes on main alone .* the branch breaks the numbering/);
+    assert.equal(listEntities(f.ctx, 'decisions').length, 0);
   } finally { f.cleanup(); }
 });
 

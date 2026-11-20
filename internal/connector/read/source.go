@@ -3,12 +3,14 @@ package read
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/skenzeriq/activediq/internal/connector/ad"
 	"github.com/skenzeriq/activediq/internal/connector/write"
 	"github.com/skenzeriq/activediq/internal/directory/attr/guid"
 	"github.com/skenzeriq/activediq/internal/directory/dn"
 	"github.com/skenzeriq/activediq/internal/directory/ldapfilter"
+	"github.com/skenzeriq/activediq/internal/directory/sd"
 	connectorv1 "github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1"
 )
 
@@ -87,6 +89,24 @@ func (a *ADSource) Classify(ctx context.Context, id guid.GUID) (write.Verdict, e
 	return a.prov.Classify(ctx, id, nil)
 }
 
+// PasswordChanger is the optional Cannot Change Password half of a Source. A Source without it
+// answers include_password_change with NOT_CONFIRMED (CAPABILITY_UNSUPPORTED as the code).
+type PasswordChanger interface {
+	// ReadPasswordChange reads the object's DACL (DACL-only SD flags, never the SACL) and classifies
+	// it. It returns the objectGUID the state belongs to; the state is NotConfirmed exactly when err
+	// is non-nil. No descriptor byte leaves the connector.
+	ReadPasswordChange(ctx context.Context, id guid.GUID) (guid.GUID, sd.PasswordChange, error)
+}
+
+var _ PasswordChanger = (*ADSource)(nil)
+
+func (a *ADSource) ReadPasswordChange(ctx context.Context, id guid.GUID) (guid.GUID, sd.PasswordChange, error) {
+	if !a.ok() {
+		return guid.GUID{}, sd.PasswordChangeNotConfirmed, write.ErrNoBoundDC
+	}
+	return a.sess.ReadPasswordChange(ctx, dn.GUIDRef(id))
+}
+
 // Searcher is the optional search half of a Source. A Source without it answers ScopedSearch with
 // CAPABILITY_UNSUPPORTED.
 type Searcher interface {
@@ -114,6 +134,66 @@ func (a *ADSource) ScopedSearch(ctx context.Context, req ad.ScopedRequest, fn fu
 	return a.sess.ScopedSearch(ctx, req, fn)
 }
 
+// Feeder is the change-feed half of a Source (connector-contract §6). A Source without it answers
+// ChangeFeed with CAPABILITY_UNSUPPORTED.
+type Feeder interface {
+	// ManagesNC reports whether the connection manages the naming context with this objectGUID: the
+	// domain NC the bound DC serves, and nothing else (not Configuration, Schema or an application
+	// partition, which DirSync would otherwise follow).
+	ManagesNC(ctx context.Context, nc guid.GUID) (bool, error)
+	// CheckFeedAttributes refuses wildcards, read-only constructed attributes and SecretAttrs members
+	// before any request reaches the DC.
+	CheckFeedAttributes(names []string) error
+	// HighestCommittedUSN is the bound DC's highestCommittedUSN, read now.
+	HighestCommittedUSN(ctx context.Context) (int64, error)
+	// DeletionLifetime is the smaller of tombstoneLifetime and msDS-DeletedObjectLifetime.
+	DeletionLifetime(ctx context.Context) (time.Duration, error)
+	// DirSyncCycle runs DirSync responses from the request's cookie to the end of the cycle
+	// (ad.Session.DirSyncCycle semantics).
+	DirSyncCycle(ctx context.Context, req ad.DirSyncRequest, fn func(ad.DirSyncPage) error) (ad.DirSyncPage, error)
+}
+
+var _ Feeder = (*ADSource)(nil)
+
+func (a *ADSource) ManagesNC(ctx context.Context, nc guid.GUID) (bool, error) {
+	if !a.ok() {
+		return false, write.ErrNoBoundDC
+	}
+	dom, err := a.sess.DomainNCGUID(ctx)
+	if err != nil {
+		return false, err
+	}
+	return dom == nc, nil
+}
+
+func (a *ADSource) CheckFeedAttributes(names []string) error {
+	if !a.ok() {
+		return write.ErrNoBoundDC
+	}
+	return a.sess.CheckDirSyncAttributes(names)
+}
+
+func (a *ADSource) HighestCommittedUSN(ctx context.Context) (int64, error) {
+	if !a.ok() {
+		return 0, write.ErrNoBoundDC
+	}
+	return a.sess.HighestCommittedUSN(ctx)
+}
+
+func (a *ADSource) DeletionLifetime(ctx context.Context) (time.Duration, error) {
+	if !a.ok() {
+		return 0, write.ErrNoBoundDC
+	}
+	return a.sess.DeletionLifetime(ctx)
+}
+
+func (a *ADSource) DirSyncCycle(ctx context.Context, req ad.DirSyncRequest, fn func(ad.DirSyncPage) error) (ad.DirSyncPage, error) {
+	if !a.ok() {
+		return ad.DirSyncPage{}, write.ErrNoBoundDC
+	}
+	return a.sess.DirSyncCycle(ctx, req, fn)
+}
+
 // Describer is the optional topology half of a Source. A Source without it answers Describe with
 // CAPABILITY_UNSUPPORTED.
 type Describer interface {
@@ -128,4 +208,11 @@ func (a *ADSource) Topology(ctx context.Context) (*ad.Topology, error) {
 		return nil, write.ErrNoBoundDC
 	}
 	return a.sess.Topology(ctx)
+}
+
+// ChildCounter is the optional child-count half of a Source (§5.3a). A Source without it answers a
+// request with include_child_count with CAPABILITY_UNSUPPORTED.
+type ChildCounter interface {
+	// CountChildren counts the immediate children of the object, at most limit (ad.Session.CountChildren).
+	CountChildren(ctx context.Context, id guid.GUID, limit uint32) (n uint32, capped bool, err error)
 }

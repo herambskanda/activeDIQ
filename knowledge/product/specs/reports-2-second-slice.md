@@ -1,7 +1,7 @@
 ---
 title: "Spec: AD report library, second slice (reports-2a §6.3 'Not at 2a', including ADM-092)"
 date: 2026-10-31
-updated: 2026-11-07
+updated: 2026-11-15
 status: draft
 owner: heramb
 author: product-manager
@@ -45,6 +45,16 @@ AC-S07 and AC-S14 are rewritten and AC-S28 to AC-S33 added (33 in all).
 complete and split by attribute (§12); AC-S14 seeds user D only where the directory accepts the
 write; AC-S31 asserts the children are listed exactly when their descriptor metadata changed, so it
 passes whatever F1 finds; AC-S28 to AC-S33 now follow AC-S27.
+
+**Revision 6 (2026-11-13, T-1883, amendments flagged by T-1124).** Four gaps decided: the SPN
+duplicate report ships without the colliding value (§6.4, P7, follow-up filed); half-hour-offset zones
+are refused with a stated reason and UTC is offered (§5.1, P8); hidden-group header counts are objects
+and say so (§4.1.2, §4.1.2a, AC-S02 reworded); policy rows for a runner who cannot read the domain head
+are replaced by a scope notice (§7.1 rule 6, P9). AC-S35 to AC-S38 added (38 in all).
+
+**Revision 7 (2026-11-15, T-1904, from security review T-1884 PR-3 and PR-4).** §7.1 rule 6 gains the
+hidden-PSO notice (fixed text, no count, carried in every export), and precedence is shown as a rank
+among visible rows with the stored value never exported (P10). AC-S39 added (39 in all); AC-S38 stands.
 
 **Revision 5 (2026-11-07, T-1722, from the T-1511 review).** §7.3 rule 5 now says DC error text is
 attacker-influenced (a compromised DC controls it, TM-X3) and is escaped by the same encoder; §7.3
@@ -181,7 +191,8 @@ lifecycle state is deleted or purged (DM-16).
    says which ("DC time, originating" or "observed"). Observed time is always also shown (DM-18.I2:
    two changes between two observations show as one, and the report says so in its header).
 2. **Noise is hidden by default; two change kinds are opt-in; each has a count and a switch.**
-   The header reads "3,412 automatic updates hidden · Show".
+   The header reads "3,412 objects with only automatic updates hidden · Show" (the unit is
+   **objects**, see §4.1.2a).
    - **The noise set** (hidden, switchable as one): logon and bad-password state
      (`lastLogonTimestamp`, `lastLogon`, `logonCount`, `badPwdCount`, `badPasswordTime`); lockout and
      housekeeping (`lockoutTime`, `adminCount`, `dSCorePropagationData`); computer-driven updates
@@ -306,6 +317,24 @@ from ME's by design.** The comparison belongs to the ADMP check (follow-up F1, T
 **Enhancement E-S1 (v1).** The report tells the truth where ME reads a flag AD ignores, and says
 "Not confirmed" instead of a quiet false. Proof: AC-S04, AC-S05.
 
+#### 4.1.2a Header counts: the unit is always named (T-1883)
+
+The report has one row per object (reports architecture §3.3a d), so a hidden group can only count
+objects, not the changes inside them. Rules:
+1. Every hidden-group header names its unit: "n objects with only automatic updates hidden · Show",
+   "n objects with only credential events hidden", "n objects with only permission changes hidden".
+   The header never says "n automatic updates". A change count (members added or removed, edits in
+   the period) appears only as a column of a listed row and says "changes" there.
+2. The hidden count is taken after scope trimming and after the preset's own filter, so it equals the
+   number of objects the Show switch will add. "Objects checked" = listed + the sum of the hidden counts.
+   Listed + hidden reconciles to the objects the preset matches before hiding; QA checks the sum.
+3. **Correlated counts do not depend on hiding.** Duplicate count (§5.5, §6.4) and direct-report count
+   (§6.1) count every in-scope object, whether or not a row is hidden in some other report or
+   group. Hiding is a display choice, not a scope decision; a hidden in-scope object is still one the
+   runner may read, so counting it discloses nothing. An out-of-scope object is never counted.
+   These reports carry no hidden group; if one is added later, its header must state the unit and
+   this rule applies.
+
 ## 5. User reports over new attributes (batch 6)
 
 All use `inventory.users` extended by the sync-set list in §10 (D11). Every new column is
@@ -319,7 +348,29 @@ account rules do not apply (these are not expiry reports).
 | Dial-in Allow Access | `msNPAllowDialin` is TRUE | Name, Logon name, Domain, OU path, Dial-in access, Status |
 | Dial-in Deny Access | `msNPAllowDialin` is FALSE. **Absent** is a third state, "Controlled by network policy (NPS)", and is **not** listed as Deny; the header reads "n users controlled by NPS not listed · Show" ([attribute](https://learn.microsoft.com/en-us/windows/win32/adschema/a-msnpallowdialin)). ME's treatment of absent is `[UNVERIFIED]` | same |
 | Smart Card Enabled Users | `userAccountControl` flag `SMARTCARD_REQUIRED` (0x40000). The column says "Smart card required": the flag means required, not "has a certificate" `[UNVERIFIED]` that ME means the same by "enabled with smart card login permissions" | Name, Logon name, Domain, OU path, Smart card required, Password state, Status |
-| Logon Hour Based Report | Users with a `logonHours` restriction; parameters: mode (permitted or restricted), days, start and end hour, **time zone** (default the viewer's). `logonHours` is 21 bytes, one bit per hour from Sunday 00:00 **UTC**; absent means unrestricted ([attribute](https://learn.microsoft.com/en-us/windows/win32/adschema/a-logonhours)). The chosen zone is converted before comparing and shown on the report | Name, Logon name, Domain, OU path, Permitted hours (summary, with zone), Status. Default preset (no parameters): users with any restriction |
+| Logon Hour Based Report | Users with a `logonHours` restriction; parameters: mode (permitted or restricted), days, start and end hour, **time zone** (default the viewer's). `logonHours` is 21 bytes, one bit per hour from Sunday 00:00 **UTC**; absent means unrestricted ([attribute](https://learn.microsoft.com/en-us/windows/win32/adschema/a-logonhours)). The chosen zone is converted before comparing and shown on the report. **Zones whose offset is not a whole hour at the run's week** (for example India, Nepal, Lord Howe) are handled by §5.1a | Name, Logon name, Domain, OU path, Permitted hours (summary, with zone), Status. Default preset (no parameters): users with any restriction |
+
+#### 5.1a Half-hour-offset time zones (T-1883)
+
+`logonHours` stores one bit per whole UTC hour, so a local hour in a UTC+05:30 zone covers half of two
+stored hours. Any rounding would report a user as permitted or denied for a window they are not, so
+v1 does not round (house rule: unknown is its own cell, never guessed). Behaviour:
+1. The zone picker lists every zone. A zone with a non-whole-hour offset at the run's week is shown
+   disabled with its reason: "Asia/Kolkata is UTC+05:30. Logon hours are stored per whole UTC hour,
+   so a local hour straddles two stored hours. Choose UTC or a whole-hour zone." One click on
+   "Use UTC" sets it. The picker is never silent and the report never runs on a rounded window.
+2. **The viewer's zone is the default (§5.1) only when it is whole-hour.** For a viewer in a half-hour
+   zone the default is UTC and the picker states why.
+3. The "Permitted hours" summary is rendered in the viewer's zone when whole-hour; otherwise in UTC,
+   labelled "UTC", with the same reason. A zone that is whole-hour in winter and not in summer
+   (Lord Howe) is judged by its offset in the run's week and the header states the offset used.
+4. A scheduled run (reports-2a §8.4) whose stored zone becomes non-aligned at run time fails that
+   run with the reason above, not a silent UTC fallback, and the owner is told.
+5. Through the API, a non-aligned zone returns the error `zone_not_hour_aligned` with the offset;
+   it is never accepted and adjusted.
+Revisit (not v1): a "window fully inside / touches" pair for half-hour zones, if the ADMP comparison
+(F1) shows customers in those zones running this report. Decision logged here; vetoable by the CEO,
+not directional.
 
 ### 5.2 USR-08 Profile settings
 
@@ -402,6 +453,20 @@ operating system is **not** offered (duplicates are meaningless). Same scope-onl
 §5.5. Default: DNS host name. Columns: Name, DNS name, Domain, OU path, the chosen value, Duplicate
 count, Status, Created.
 
+**SPN preset: shipped without the colliding value (T-1883, decision).** The closed AST cannot name
+which SPN collides (no `unnest`, T-1033). For the SPN choice the report therefore shows:
+- "Shares an SPN with n other computers" (n >= 1; this count excludes the row itself, unlike the DNS
+  count, and the column header says so), within the runner's scope;
+- the computer's own SPN list, unchanged, in place of "the chosen value", under the heading
+  "Service principal names (one or more is shared)";
+- a note on the report header: "Which SPN is shared is not shown yet. Compare the lists of the
+  computers listed." No cell implies a specific value is the duplicate.
+Why ship the gap: the report's job is finding Kerberos-faulty computers, and the count plus the
+list finds them; the value is a convenience that needs a new scoped table (a per-SPN edge dataset),
+which is out of proportion before any customer evidence. ME's exact SPN-duplicate output is
+`[UNVERIFIED]` (F1, T-1120). **Follow-up filed (backlog, P3, T-1900): per-SPN edge dataset**, to be built
+only if the ADMP comparison shows the value matters. Parity difference P7.
+
 ### 6.5 CMP-05 Managed and Unmanaged Computers
 
 ME names: Managed Computers · Unmanaged Computers. ME's tests ([ME research §K.1](../../business/market-research/manageengine-admanager-plus.md) row 3, [computer help](https://www.manageengine.com/products/ad-manager/help/reports/viewing-active-directory-computer-reports.html)): Managed `(&(objectcategory=computer)(managedBy=*))`, Unmanaged `(&(objectcategory=computer)(!managedBy=*))`, i.e. `managedBy` set / not set (the same meaning as ME's Managed
@@ -442,6 +507,49 @@ Rules:
    each PSO value shown with its difference from the domain value ("stricter" / "weaker"). ME's
    page lists the two policies per domain `[ME-HELP]`; whether it shows PSOs is `[UNVERIFIED]`.
 5. Policy read time is the freshness (`as_of` = the policy sync read).
+6. **Policy rows exist only for a runner who can read the domain head (T-1883; security-architect
+   confirms the right in T-1523).** Domain-wide settings are not owned by an OU, so an OU-scoped
+   administrator gets no policy rows. What they see is a **scope notice**, not an empty table:
+   "Account policies apply to the whole domain and are shown to administrators whose scope includes
+   the domain root. Your scope does not include it." No value, count, PSO name or precedence is
+   shown. This is a different case from rule 3: rule 3 says the *connection* could not read the
+   container (a stored fact, row `pso_unreadable`, shown to runners who can read the head);
+   rule 6 says the *runner's scope* does not reach it. The two banners use different words and
+   neither reads "no policies". Per naming context: a runner who can read one domain's head and not
+   another's sees the rows of the first and the notice for the rest, with no count or name of the
+   domains left out. For a runner who can read the head, "Applies to" lists and counts in-scope
+   targets only and is labelled "in your scope". The notice is carried in every export. Columns
+   "stricter / weaker" are not computed for a runner without the head.
+
+   **Hidden fine-grained policies (T-1904, from security review PR-2 to PR-4 of
+   [policy-rows-and-replication-status-authz-review.md](../../development/architecture/policy-rows-and-replication-status-authz-review.md) §1.4).**
+   A runner can hold the domain head and still have an OU exclude in scope. A PSO is a row only if
+   its object is in scope and it has at least one in-scope direct target or no direct targets at
+   all; a PSO whose direct targets are all out of scope is not a row.
+   a. **Notice.** When one or more PSOs are hidden this way, the report shows, for that domain, the
+      fixed text: "Fine-grained policies that apply only to objects outside your scope are not
+      shown." It has no count, no name, no precedence and no domain name other than the one whose
+      rows are shown. It is shown whenever at least one PSO is hidden, and not when none is. It is
+      never worded "no policies" and never replaces rule 3's `pso_unreadable` banner (both can show;
+      different words). It is a third text, distinct from the head scope notice above, and an
+      OU-scoped runner (no head) sees only the head scope notice, not this one.
+   b. **Exports.** The notice is carried in every export (CSV, XLSX, PDF, HTML) and in scheduled
+      deliveries, as the head notice is: in CSV as a leading comment row, in the others in the
+      header block. It is computed at each run from the runner's scope at that run.
+   c. **Deltas.** "Stricter / weaker" is computed only for rows shown, always against the domain row.
+   d. **Precedence is shown as a rank, not the stored value (decision, product-manager).** The
+      column "Precedence rank" numbers the visible PSOs 1, 2, 3… in ascending order of stored
+      `msDS-PasswordSettingsPrecedence` (1 wins); PSOs with the same stored value share a rank and
+      show "tie". The stored value appears nowhere in the screen, API response or any export, so a gap
+      in numbering cannot reveal that a hidden PSO exists or where it ranks. Help text on the column:
+      "Order among the policies shown to you; not the stored precedence value." Why rank for
+      everyone, not stored value for those with nothing hidden: a column whose meaning changes with
+      the runner's scope or between two runs of the same schedule would be a trap for anyone who
+      compares exports. Cost: an administrator who needs the stored number reads it in Active
+      Directory Administrative Center; recorded as parity difference P10, and a stored-value option
+      for runners with no hidden PSOs is left to a later slice if customers ask.
+   e. **Not special-cased:** a PSO applied to Domain Admins or other Tier-0 principals is shown to a
+      runner who can read the head (PR-5, residual TM-R-PR1); no extra rule here.
 
 ### 7.2 SYS-02 Published printers (batch 10)
 
@@ -513,6 +621,7 @@ ME's report "fetches the replication status of the selected domain controller(s)
    using Microsoft's documented error meanings. Wording is `ad-expert`'s; no remedy text ships
    without a source.
 8. **No "Trigger replication" button.** ME has one `[ME-HELP]`; that is a write, a 2b Action.
+9. **Contract (T-1720).** The columns, the per-DC coverage (a Did-not-answer entry **and** a `not_reported` row for each unanswered DC; the cap count for DCs left unread), the status counts, the thresholds read and edit, and the manager picker list are in `api/openapi/modules/reports.yaml` (additive only). The cap reads the first 100 DCs by DNS name and does not refuse the run; the status column sorts by severity (failing, warning, not reported, healthy); SYS-03 is gated by `reports.replication.read`, threshold edits by `reports.replication.configure`.
 
 ## 8. Kept out of this slice
 
@@ -535,6 +644,10 @@ ME's report "fetches the replication status of the selected domain controller(s)
 | P4 | Users in More than One Group excludes the primary group by default | Otherwise it lists everyone |
 | P5 | Empty/Duplicate Attributes: registered columns only | Custom attributes arrive with the builder |
 | P6 | No actor on Recently Deleted/Modified | DM-18.I3 |
+| P7 | Duplicate SPN report shows the count and the computer's SPN list, not the colliding value | Needs an unbannable per-SPN dataset; shipped as a stated gap (§6.4) |
+| P8 | Logon Hour Based Report refuses half-hour-offset zones and offers UTC | One local hour straddles two stored hours; no rounding (§5.1a) |
+| P9 | A runner without the domain head in scope sees a scope notice, not policy rows | Domain-wide settings are not owned by an OU (§7.1 rule 6) |
+| P10 | PSO precedence is shown as a rank among the visible rows; the stored value is not shown or exported; PSOs aimed only at out-of-scope objects are hidden behind a fixed notice | A gap in stored numbers or a visible name would disclose a PSO the runner's excludes withhold (§7.1 rule 6 a to d) |
 
 Amendments to reports-2a (to be folded into it by its owner, with the version note):
 - **A1 (§6.1 rule 6):** the Deleted presets of §4.1 list objects in lifecycle state deleted or
@@ -699,7 +812,8 @@ Given a lab with a user edited 2 days ago, a user deleted 3 days ago, one edited
   logon-time updates on 50 other users
 When Recently Modified Users runs with the default 7-day period
 Then only the user edited 2 days ago is listed, with the changed attribute names and Basis, the
-  header reads "50 automatic updates hidden", and the switch lists them
+  header reads "50 objects with only automatic updates hidden", and the switch lists those 50 objects
+  (each with its change count shown as "changes")
 Evidence: lab test versus the seeded list
 
 AC-S03 (FR-S02)
@@ -951,6 +1065,61 @@ Then the empty DC row reads "No inbound partners reported" only in the "granted"
 Evidence: UI recording; export files inspected; encoder unit test (FF-SP4); TM-F-RIGHTS cases (c)
   and (d) as ground truth for the label
 ```
+
+AC-S35 (FR-S06, §6.4)
+Given three in-scope computers where A and B share one SPN and C has a unique SPN, and a computer D
+  outside the runner's scope that shares an SPN with C
+When Computers with Duplicate Attributes runs on the SPN choice
+Then A and B are listed, each with "Shares an SPN with 1 other computers" and its own SPN list, C is
+  not listed, D is neither listed nor counted, and no cell names a specific colliding SPN
+Evidence: lab test; API response schema check
+
+AC-S36 (§5.1a)
+Given users with logon-hour restrictions and a viewer whose zone is Asia/Kolkata
+When the Logon Hour Based Report opens, and again when it is run through the API with zone Asia/Kolkata
+Then the picker defaults to UTC with the stated reason, Asia/Kolkata is disabled with the same reason,
+  the API returns `zone_not_hour_aligned` with the offset and no result, and a run in
+  Europe/Berlin returns the same users as the independent reference
+Evidence: UI recording; API test; RP13 reference
+
+AC-S37 (§4.1.2a)
+Given 50 in-scope users with only logon-time updates, 3 with an edit, and 10 out-of-scope users with
+  logon-time updates
+When Recently Modified Users runs, then Show is chosen
+Then the header reads "50 objects with only automatic updates hidden", objects checked = 3 + 50
+  (the 10 out-of-scope users appear nowhere), Show adds exactly 50 rows, and no header or hidden
+  group says "automatic updates" without "objects"
+Evidence: lab test; API `hiddenGroups[]` counts equal the rows added by Show
+
+AC-S38 (FR-S08, §7.1 rule 6)
+Given a domain with a domain policy and two PSOs, an administrator scoped to one OU, and a domain
+  administrator
+When SYS-01 runs for each, and again for the OU administrator after the connection loses read of the
+  Password Settings Container
+Then the OU administrator sees the scope notice and no policy row, value or PSO name, in the screen
+  and in every export; the domain administrator sees all rows; for the domain administrator with the
+  container unreadable the `pso_unreadable` banner shows and the OU administrator still sees only the
+  scope notice; neither view says "no policies"
+Evidence: UI recording; export files inspected; RP15 test
+
+AC-S39 (FR-S08, §7.1 rule 6 a to d)
+Given a domain with a domain policy and three PSOs: A (stored precedence 5, target in scope), B
+  (precedence 1, only target a group in an excluded OU) and C (precedence 10, no targets); and a
+  reporting administrator with the domain root in scope and that OU excluded
+When SYS-01 runs, and the result is exported to CSV, XLSX and PDF and delivered by a schedule
+Then the rows are the domain, A and C; the notice "Fine-grained policies that apply only to objects
+  outside your scope are not shown." appears once in the screen and in every export and delivery; the
+  Precedence rank column reads 1 for A and 2 for C and no stored value (5, 10) appears; B's name,
+  its precedence 1, its values and any count of hidden policies appear in no screen, API response,
+  export, header or audit detail; the stricter/weaker deltas are against the domain row
+When the exclude is removed and the run repeated
+Then B appears with rank 1, A rank 2, C rank 3, and the notice is absent
+When two visible PSOs share stored precedence
+Then they show the same rank and "tie"
+When the same runner's scope is an OU only, or the token is narrowed to an OU
+Then only the head scope notice shows and not this one
+Evidence: RP15 table test over API, export files and stored result; mutation test (predicate
+  "head in scope only") fails it; UI recording
 
 ## 16. Open questions
 

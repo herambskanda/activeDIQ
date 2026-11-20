@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/skenzeriq/activediq/internal/directory/client"
@@ -28,6 +29,7 @@ type dcPinner struct{ dcs DCLister }
 var (
 	_ operation.Pinner         = dcPinner{}
 	_ operation.FallbackPinner = dcPinner{}
+	_ operation.SitePinner     = dcPinner{}
 )
 
 func newDCPinner(dcs DCLister) (dcPinner, error) {
@@ -38,6 +40,13 @@ func newDCPinner(dcs DCLister) (dcPinner, error) {
 }
 
 func (p dcPinner) Pin(ctx context.Context, connectionID string, nc authority.NamingContextID, previous string) (operation.DCPin, error) {
+	return p.PinPreferring(ctx, connectionID, nc, previous, nil)
+}
+
+// PinPreferring is Pin with a site preference (ADM-133). The list holds only reachable writable DCs, so a
+// preferred site whose DCs are down contributes none and the next site, or any other DC, is pinned: the
+// preference is a hint and never makes the pin fail. previous still wins while it is listed (rule 5).
+func (p dcPinner) PinPreferring(ctx context.Context, connectionID string, nc authority.NamingContextID, previous string, sites []string) (operation.DCPin, error) {
 	list, err := p.dcs.WritableDCs(ctx, connectionID, nc)
 	if err != nil {
 		return operation.DCPin{}, fmt.Errorf("server: pin: %w", err)
@@ -58,7 +67,26 @@ func (p dcPinner) Pin(ctx context.Context, connectionID string, nc authority.Nam
 	if len(list) == 0 {
 		return operation.DCPin{}, ErrNoPinnableDC
 	}
-	return pick(list[0])
+	return pick(bySitePreference(list, sites)[0])
+}
+
+// bySitePreference returns the DCs ordered by the rank of their site in sites (case-insensitive); DCs of
+// an unlisted site, or of none, follow in their original order. The input is not changed.
+func bySitePreference(list []client.WritableDC, sites []string) []client.WritableDC {
+	out := slices.Clone(list)
+	if len(sites) == 0 {
+		return out
+	}
+	rank := func(dc client.WritableDC) int {
+		for i, s := range sites {
+			if dc.Site != "" && strings.EqualFold(dc.Site, s) {
+				return i
+			}
+		}
+		return len(sites)
+	}
+	slices.SortStableFunc(out, func(a, b client.WritableDC) int { return rank(a) - rank(b) })
+	return out
 }
 
 // PinOther returns a writable DC of the naming context that is not exclude, by host or by DSA GUID.
