@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
+	"debug/elf"
 	"encoding/hex"
 	"encoding/pem"
 	"fmt"
@@ -16,6 +17,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -70,7 +72,12 @@ func provisionKEK(ctx context.Context, tag string) (kekKit, func(), error) {
 	if _, err := docker(ctx, nil, "volume", "create", k.vol); err != nil {
 		return k, cleanup, err
 	}
-	id, err := docker(ctx, nil, "create", "-v", k.vol+":"+kekState, tag)
+	plat, err := docker(ctx, nil, "image", "inspect", "-f", "{{.Os}}/{{.Architecture}}", tag)
+	if err != nil {
+		return k, cleanup, err
+	}
+	plat = strings.TrimSpace(plat) // the image's own platform, so a foreign-architecture image is not refused
+	id, err := docker(ctx, nil, "create", "--platform", plat, "-v", k.vol+":"+kekState, tag)
 	if err != nil {
 		return k, cleanup, err
 	}
@@ -79,7 +86,7 @@ func provisionKEK(ctx context.Context, tag string) (kekKit, func(), error) {
 	if _, err := docker(ctx, &buf, "cp", "-", id+":"+kekState); err != nil {
 		return k, cleanup, err
 	}
-	args := []string{"run", "--rm", "--read-only", "--cap-drop", "ALL", "--security-opt", "no-new-privileges:true", "--user", fmt.Sprintf("%d:%d", serviceUID, serviceUID), "-v", k.vol + ":" + kekState}
+	args := []string{"run", "--rm", "--platform", plat, "--read-only", "--cap-drop", "ALL", "--security-opt", "no-new-privileges:true", "--user", fmt.Sprintf("%d:%d", serviceUID, serviceUID), "-v", k.vol + ":" + kekState}
 	for _, e := range k.env {
 		args = append(args, "-e", e)
 	}
@@ -111,18 +118,30 @@ func freePort() (int, error) {
 	return l.Addr().(*net.TCPAddr).Port, nil
 }
 
-// BuildImage builds cmd/server for linux (static, no cgo) and the scratch image from packaging/linux-oci.
+// BuildImage builds cmd/server for linux/amd64 (static, no cgo) and the scratch image from packaging/linux-oci.
 func BuildImage(ctx context.Context, repo, tag string) error {
+	return BuildImageFor(ctx, repo, tag, "amd64", nil)
+}
+
+// BuildImageFor builds cmd/server for linux/<arch> (static, no cgo, -trimpath) and the scratch image from
+// packaging/linux-oci for that platform. The Dockerfile has no RUN step, so an image for a foreign
+// architecture builds on any host without emulation. labels are added to the image. The binary's ELF
+// machine is checked against arch, so an image labelled arm64 cannot hold an amd64 binary.
+func BuildImageFor(ctx context.Context, repo, tag, arch string, labels map[string]string) error {
 	dir, err := os.MkdirTemp("", "host-image-")
 	if err != nil {
 		return err
 	}
 	defer os.RemoveAll(dir)
-	build := exec.CommandContext(ctx, "go", "build", "-trimpath", "-o", filepath.Join(dir, "server"), "./cmd/server")
+	bin := filepath.Join(dir, "server")
+	build := exec.CommandContext(ctx, "go", "build", "-trimpath", "-o", bin, "./cmd/server")
 	build.Dir = repo
-	build.Env = append(os.Environ(), "CGO_ENABLED=0", "GOOS=linux", "GOARCH=amd64")
+	build.Env = append(os.Environ(), "CGO_ENABLED=0", "GOOS=linux", "GOARCH="+arch)
 	if b, err := build.CombinedOutput(); err != nil {
-		return fmt.Errorf("go build ./cmd/server: %v: %s", err, b)
+		return fmt.Errorf("go build ./cmd/server (linux/%s): %v: %s", arch, err, b)
+	}
+	if err := checkELFArch(bin, arch); err != nil {
+		return err
 	}
 	df, err := os.ReadFile(filepath.Join(repo, imageDockerfile))
 	if err != nil {
@@ -134,8 +153,43 @@ func BuildImage(ctx context.Context, repo, tag string) error {
 	if err := os.Mkdir(filepath.Join(dir, "tls"), 0o700); err != nil {
 		return err
 	}
-	_, err = docker(ctx, nil, "build", "-q", "-t", tag, dir)
-	return err
+	args := []string{"build", "-q", "--platform", "linux/" + arch, "-t", tag}
+	keys := make([]string, 0, len(labels))
+	for k := range labels {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		args = append(args, "--label", k+"="+labels[k])
+	}
+	if _, err = docker(ctx, nil, append(args, dir)...); err != nil {
+		return err
+	}
+	got, err := docker(ctx, nil, "image", "inspect", "-f", "{{.Os}}/{{.Architecture}}", tag)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(got) != "linux/"+arch {
+		return fmt.Errorf("the image %s is %s, want linux/%s", tag, strings.TrimSpace(got), arch)
+	}
+	return nil
+}
+
+// checkELFArch opens the built binary and fails when its machine is not the one arch names.
+func checkELFArch(path, arch string) error {
+	f, err := elf.Open(path)
+	if err != nil {
+		return fmt.Errorf("the built server is not an ELF binary: %v", err)
+	}
+	defer f.Close()
+	want := map[string]elf.Machine{"amd64": elf.EM_X86_64, "arm64": elf.EM_AARCH64}[arch]
+	if want == 0 {
+		return fmt.Errorf("unsupported architecture %q (want amd64 or arm64)", arch)
+	}
+	if f.Machine != want {
+		return fmt.Errorf("the built server is %s, want %s", f.Machine, want)
+	}
+	return nil
 }
 
 type container struct{ id string }
@@ -191,8 +245,9 @@ func CollectOCI(ctx context.Context, repo string, pg *pgharness.Server, log func
 	defer func() { _, _ = docker(context.Background(), nil, "rmi", "-f", tag) }()
 
 	// --- remote DSN cases: each is a real boot of the real server, offered a DSN to a non-loopback host.
-	// 192.0.2.1 is TEST-NET-1 (RFC 5737): nothing answers, so "Contacted" is judged by how long the boot
-	// took to refuse, and by the refusal text, which the store emits before any dial.
+	// 192.0.2.1 is TEST-NET-1 (RFC 5737): nothing answers, so a dial would end in a network error in the
+	// logs, never in the store's refusal text, which it emits before any dial. "Contacted" is judged by
+	// that evidence, not by wall-clock time (container start under CI load takes seconds either way).
 	bad := []struct{ mode, extra string }{
 		{"disable", "sslmode=disable"},
 		{"allow", "sslmode=allow"},
@@ -223,7 +278,7 @@ func CollectOCI(ctx context.Context, repo string, pg *pgharness.Server, log func
 		took := time.Since(start)
 		c.rm()
 		refused := exited && code != 0 && strings.Contains(logs, "refusing the database connection")
-		o.DSN = append(o.DSN, DSNProbe{Mode: b.mode, Remote: true, Accepted: !refused, Contacted: !refused || took > 5*time.Second})
+		o.DSN = append(o.DSN, DSNProbe{Mode: b.mode, Remote: true, Accepted: !refused, Contacted: !refused || dialled(logs)})
 		log("dsn %-28s refused=%v exit=%d in %s", b.mode, refused, code, took.Round(time.Millisecond))
 	}
 
@@ -571,4 +626,14 @@ func dumpPosture(ctx context.Context, c *container, pid string) *Dumps {
 	}
 	// pprof: the default mux route must not answer.
 	return d
+}
+
+// dialled reports whether server logs show a network connection attempt to the remote host.
+func dialled(logs string) bool {
+	for _, m := range []string{"dial tcp", "i/o timeout", "connection refused", "no route to host", "network is unreachable", "192.0.2.1:5432"} {
+		if strings.Contains(logs, m) {
+			return true
+		}
+	}
+	return false
 }

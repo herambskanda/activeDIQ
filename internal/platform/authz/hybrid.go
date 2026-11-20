@@ -69,7 +69,10 @@ var neverCrossPrefixes = []string{"rbac.", "authz.", "delegation.", "scope.", "c
 	"siem.",
 	// notify. widens the allowed recipient domains and re-points the SMTP relay (TM-D30 SX-7): configuration
 	// of the platform itself, assigned only to the console account.
-	"notify."}
+	"notify.",
+	// agentfleet. changes the policy every DC agent of the tenant enforces and the key that signs it
+	// (ADR-0007): configuration of the platform itself, assigned only to the console account.
+	"agentfleet."}
 
 // NeverCrosses reports whether permission p is one that never carries across a correlation.
 func NeverCrosses(p Permission) bool {

@@ -189,9 +189,30 @@ func nullJSON(b []byte) any {
 
 // emit appends a pipeline event inside tx.
 func (r *Runner) emit(ctx context.Context, tx store.Tx, ev audit.Event) error {
+	if err := requireCredentialDetail(ev.Details); err != nil {
+		return err
+	}
 	ev.At = r.cfg.Now()
 	ev.Component = r.cfg.Component
 	return r.cfg.Audit.Append(ctx, tx, ev)
+}
+
+// requireCredentialDetail refuses an event that names a dc without a non-empty credential_id: the join
+// from a DC log line to the audit chain would be lost, so it is never appended (T-1629).
+func requireCredentialDetail(ds []audit.Detail) error {
+	var dc, cred bool
+	for _, d := range ds {
+		switch {
+		case d.Key == "dc":
+			dc = true
+		case d.Key == "credential_id" && d.Value != "":
+			cred = true
+		}
+	}
+	if dc && !cred {
+		return errors.New("operation: directory-write step event without a credential_id")
+	}
+	return nil
 }
 
 func detail(kv ...any) []audit.Detail {
@@ -253,4 +274,16 @@ WHERE tenant_id = $1::uuid AND operation_id = $2::uuid AND item_no = $3 AND step
 		return false, fmt.Errorf("operation: renewing claim: %w", err)
 	}
 	return tag.RowsAffected() == 1, nil
+}
+
+// setStepsUndone is the verified -> undone edge for every step of an operation an undo reverted.
+func setStepsUndone(ctx context.Context, tx store.Tx, t tenant.ID, op string) error {
+	if err := Transition(KindStep, string(StepVerified), string(StepUndone)); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `UPDATE public.operation_steps SET state = 'undone', updated_at = now()
+WHERE tenant_id = $1::uuid AND operation_id = $2::uuid AND state = 'verified'`, t.String(), op); err != nil {
+		return fmt.Errorf("operation: undone steps: %w", err)
+	}
+	return nil
 }

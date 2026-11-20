@@ -136,6 +136,9 @@ Case 'A2-qprivs' (($q -match 'SeChangeNotifyPrivilege') -and ($q -notmatch 'SeIm
 $tok = TokenOfServiceProcess
 Case 'A2-token' (($tok -match 'priv=SeChangeNotifyPrivilege') -and (($tok -split 'priv=').Count -eq 2) -and ($tok -match 'restrictingSids=[1-9]') -and ($tok -match "user=$([regex]::Escape((SvcSidString)))")) $tok
 Case 'A2-startname' ((sc.exe qc $Svc | Out-String) -match [regex]::Escape($SvcAcct)) 'runs as the virtual account, not LocalSystem or a domain account'
+# T-0724: recovery comes from `agentsetup configure-service` (ChangeServiceConfig2; no MSI table, no util DLL custom action): restart x3, 30 s, reset 1 day, no reboot, no command.
+$qf = (sc.exe qfailure $Svc | Out-String)
+Case 'A6-recovery' (([regex]::Matches($qf, 'RESTART -- Delay = 30000')).Count -eq 3 -and $qf -match 'RESET_PERIOD[^:]*:\s*86400' -and $qf -notmatch 'REBOOT --|RUN_PROCESS --|RUN PROCESS --') ($qf -replace '\s+', ' ')
 Case 'A3-ace' (HasAce) 'Security channel carries the service-SID ACE'
 $kept = $baseline -replace '^O:[A-Z]+G:[A-Z]+D:', ''
 $still = ((ChannelSddl) -like "*(A;;0x5;;;BA)*" -or (ChannelSddl) -like '*;;;BA)*') -and ((ChannelSddl) -like '*;;;SY)*')
@@ -195,7 +198,7 @@ $bad = $bad -replace '(<Custom Action="GrantChannel"[^>]*/>)', '$1<Custom Action
 Set-Content (Join-Path $Build 'Agent-fail.wxs') $bad -Encoding utf8
 $env:DOTNET_ROOT = 'C:\lab\tools\dotnet'; $env:PATH = "C:\lab\tools\dotnet;$env:PATH"
 $v2 = '0.0.2'
-& C:\lab\tools\wix\wix.exe build (Join-Path $Build 'Agent-fail.wxs') -ext WixToolset.Util.wixext -d Version=$v2 -d AgentExe=$Build\activediq-agent.exe -d SetupExe=$Build\agentsetup.exe -arch x64 -wx -sw1149 -o (Join-Path $Build "activediq-agent-fail-$v2.msi") 2>&1 | Out-Null
+& C:\lab\tools\wix\wix.exe build (Join-Path $Build 'Agent-fail.wxs') -d Version=$v2 -d AgentExe=$Build\activediq-agent.exe -d SetupExe=$Build\agentsetup.exe -arch x64 -wx -sw1149 -o (Join-Path $Build "activediq-agent-fail-$v2.msi") 2>&1 | Out-Null
 $rc = MsiRun "/i `"$Build\activediq-agent-fail-$v2.msi`"" 'upgrade-fail.log'
 Case 'U2-upgrade-fails' ($rc -eq 1603) "forced failure exit $rc"
 $aceAfter = HasAce

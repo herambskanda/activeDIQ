@@ -19,6 +19,7 @@ type Event struct {
 	// Reason, PropertyOp and PropertyKeys are the audit-ready record of a property-write refusal
 	// (contract §8.9): the reason, the declared operation and the attribute key names. Never values.
 	Reason       string
+	PropertyKind string // USER, DEVICE or GROUP: the declared kind of the check
 	PropertyOp   string
 	PropertyKeys []string
 
@@ -62,7 +63,7 @@ func (r SlogRecorder) Record(e Event) {
 		attrs = append(attrs, "refused_object", e.Object, "bases", e.Bases)
 	}
 	if e.Reason != "" {
-		attrs = append(attrs, "reason", e.Reason, "property_op", e.PropertyOp, "property_keys", e.PropertyKeys)
+		attrs = append(attrs, "reason", e.Reason, "property_kind", e.PropertyKind, "property_op", e.PropertyOp, "property_keys", e.PropertyKeys)
 	}
 	if e.OverrideID != "" {
 		attrs = append(attrs, "override_id", e.OverrideID, "override_acknowledged", e.OverrideAcked, "override_listed", e.OverrideListed)

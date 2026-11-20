@@ -115,6 +115,21 @@
       "operation": "getCsrfToken",
       "reason": "Gives the caller's own session its CSRF value; touches no other principal.",
       "ref": "TM-F-SESSION"
+    },
+    {
+      "operation": "getSession",
+      "reason": "Names the permissions the caller's own session holds, for display only; touches no other principal and every operation still authorises itself.",
+      "ref": "TM-F-SESSION"
+    },
+    {
+      "operation": "reverifyStepUp",
+      "reason": "Refreshes the caller's own session MFA time from a TOTP code of the caller's own account; touches no other principal. One refusal shape (403 step-up-refused), class secret per principal, no freshness input.",
+      "ref": "TM-D16"
+    },
+    {
+      "operation": "getConnectionSummary",
+      "reason": "Tenant-wide connection count (a number, no identity) so Home first-run renders for an administrator whose grant covers no connection; it reads no other principal and returns no connection detail.",
+      "ref": "TM-F-SESSION"
     }
   ],
   "largeBodies": [],
@@ -178,6 +193,16 @@
     {
       "permission": "siem.destination.manage",
       "reason": "Creating or changing a SIEM destination can redirect or blind the tenant's audit stream, so it needs a fresh MFA (TM §7.4, AG-8). Reads do not.",
+      "ref": "TM-D16"
+    },
+    {
+      "permission": "objects.user.reset_password",
+      "reason": "Resetting a password takes over an account, so it needs a fresh MFA (TM §7.4, TM-D16); an API token or automation is held for an approval that carries step-up (TM-D30 SX-4). Its preview twin does not.",
+      "ref": "TM-D16"
+    },
+    {
+      "permission": "objects.computer.reset_account",
+      "reason": "Resetting a computer account's secure-channel password can strand or take over a machine, so it needs a fresh MFA (TM §7.4, TM-D16).",
       "ref": "TM-D16"
     }
   ]

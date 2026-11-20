@@ -50,7 +50,7 @@ func NewStoredSource(r Run, cols []report.Column, pager RowPager) (*StoredSource
 	ids := make([]string, len(cols))
 	hdr := make([]export.Column, len(cols))
 	for i, c := range cols {
-		ids[i], hdr[i] = string(c.ID), export.Column{Label: c.Label}
+		ids[i], hdr[i] = string(c.ID), export.Column{Label: r.ColumnLabel(c)}
 		if ids[i] != r.Columns[i] {
 			return nil, errors.New("run: the columns are not the run's columns")
 		}

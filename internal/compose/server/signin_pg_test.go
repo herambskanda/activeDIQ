@@ -11,51 +11,15 @@ import (
 	"time"
 
 	"github.com/skenzeriq/activediq/internal/compose/config"
-	"github.com/skenzeriq/activediq/internal/directory/client"
-	"github.com/skenzeriq/activediq/internal/directory/connection"
-	"github.com/skenzeriq/activediq/internal/modules/directory"
 	"github.com/skenzeriq/activediq/internal/platform/authn"
-	"github.com/skenzeriq/activediq/internal/platform/authority"
-	"github.com/skenzeriq/activediq/internal/platform/authz"
-	"github.com/skenzeriq/activediq/internal/platform/authz/authztest"
 	"github.com/skenzeriq/activediq/internal/platform/keys"
 	"github.com/skenzeriq/activediq/internal/platform/keys/keystest"
 	"github.com/skenzeriq/activediq/internal/platform/rbac"
 	"github.com/skenzeriq/activediq/internal/platform/secret"
 	"github.com/skenzeriq/activediq/internal/platform/store"
 	"github.com/skenzeriq/activediq/internal/platform/store/storetest"
-	"github.com/skenzeriq/activediq/internal/platform/tenant"
 	"github.com/skenzeriq/activediq/internal/platform/tenant/tenanttest"
 )
-
-// The directory read behind the session is T-0680's real handler (modules/directory.Handlers); only its two
-// backends are fakes here: a registry with one verified active AD connection and a searcher that answers
-// one user. The connector tunnel is not under test; the session, its grant and the handler are.
-type activeConns struct{}
-
-func (activeConns) List(context.Context, tenant.ID, bool) ([]connection.Connection, error) {
-	return []connection.Connection{{ID: "c1", Kind: connection.KindADForest, State: connection.StateActive}}, nil
-}
-
-func (activeConns) Health(context.Context, tenant.ID, connection.ID, bool, time.Time) (connection.Health, error) {
-	now := time.Now()
-	return connection.Health{Verdict: connection.VerdictPass, RightsCheckedAt: &now}, nil
-}
-
-type oneUser struct{ tid tenant.ID }
-
-// consoleScopes is the producer behind the fake search: it never narrows (one naming-context grant),
-// so these tests keep exercising the sign-in plane, not the trimming (that is modules/directory's).
-type consoleScopes struct{}
-
-func (consoleScopes) ReadScope(context.Context, tenant.ID, authority.Chain, authz.Permission) (authz.ReadScope, error) {
-	return authztest.ReadScope(authz.ScopeGrant{Include: []authz.ScopeTerm{{Kind: authz.TermNamingContext, Connection: authz.ObjectID{15: 1}, Root: authz.ObjectID{15: 2}}}}), nil
-}
-
-func (o *oneUser) Users(_ context.Context, tid tenant.ID, _ connection.ID, _ string, _ int, _ authz.ReadScope) (client.UserSearchResult, error) {
-	o.tid = tid
-	return client.UserSearchResult{Users: []client.FoundUser{{ObjectGUID: "aaaaaaaa-0000-4000-8000-00000000000a", DisplayName: "Ada Bianchi", SAMAccountName: "ada.bianchi", Enabled: true}}}, nil
-}
 
 var traceID = regexp.MustCompile(`"traceId":"[0-9a-f]+",?`)
 
@@ -124,9 +88,9 @@ func TestLocalAccountSignInThroughTheMountedRoutes(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		found := &oneUser{}
+		found := &usersRoute{}
 		cfg := config.Config{APIBodyBudget: config.DefaultAPIBodyBudget, PublicURL: chainOrigin}
-		h, err := buildAPIPorts(cfg, permissionCatalogue(), console.ports(testLimiter(t), az, permissionCatalogue()), console.Tags(), directory.Handlers{Connections: activeConns{}, Search: found, Scopes: consoleScopes{}}.Bind())
+		h, err := buildAPIPorts(cfg, bootedCatalogue(), console.ports(testLimiter(t), az, bootedCatalogue()), console.Tags(), found.Bind())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -213,7 +177,7 @@ func TestLocalAccountSignInThroughTheMountedRoutes(t *testing.T) {
 				t.Fatalf("directory read with the session: %d %s", rec.Code, rec.Body)
 			}
 			if !strings.Contains(rec.Body.String(), "ada.bianchi") {
-				t.Errorf("the real handler's answer is missing the found user: %s", rec.Body)
+				t.Errorf("the route's answer is missing the found user: %s", rec.Body)
 			}
 			if found.tid != ten {
 				t.Errorf("the search ran for tenant %v, want the session's tenant %v", found.tid, ten)

@@ -91,8 +91,8 @@ func Test_hostile_entry_leaves_no_trace(t *testing.T) {
 				t.Errorf("the observation mentions %q", bad)
 			}
 		}
-		if len(got.Observation.Attributes) != 0 {
-			t.Errorf("Attributes = %v", got.Observation.Attributes)
+		if rest := withoutReadMarker(got.Observation.Attributes); len(rest) != 0 {
+			t.Errorf("Attributes = %v", rest)
 		}
 	}
 }
@@ -106,9 +106,11 @@ func Test_malformed_unrequested_attribute_is_not_examined(t *testing.T) {
 	}
 }
 
+// thumbnailPhoto is in the sync set since T-1111, but only as a presence flag: the mapper drops the bytes.
+// Test_map_user_attributes proves that; requesting it is therefore no longer an error.
 func Test_request_validation(t *testing.T) {
 	nc := inventory.GUID(gtext(domainNC))
-	for _, bad := range []string{"unicodePwd", "UNICODEPWD", "ms-Mcs-AdmPwd", "nTSecurityDescriptor", "supplementalCredentials", "*", "+", "thumbnailPhoto", "objectGUID"} {
+	for _, bad := range []string{"unicodePwd", "UNICODEPWD", "ms-Mcs-AdmPwd", "nTSecurityDescriptor", "supplementalCredentials", "*", "+", "objectGUID"} {
 		_, err := dirsync.NewMapper(dirsync.Config{NC: nc, Requested: []string{"objectClass", bad}})
 		if !errors.Is(err, dirsync.ErrNotAllowed) {
 			t.Errorf("Requested %q: err = %v, want ErrNotAllowed", bad, err)
@@ -135,7 +137,23 @@ func Test_schema_secrets_leave_the_request(t *testing.T) {
 		t.Errorf("request has %d attributes, want %d", len(got), len(dirsync.Attributes())-2)
 	}
 	e := entry(62, "CN=U,OU=Staff,DC=lab,DC=test", gid(ouGUID), attrs(nil).classes("top", "user").with("mail", txt("a@b.test")).with("description", txt("x")))
-	if o := mustMap(t, m, e).Observation; len(o.Attributes) != 0 {
-		t.Errorf("Attributes = %v", o.Attributes)
+	o := mustMap(t, m, e).Observation
+	if rest := withoutReadMarker(o.Attributes); len(rest) != 0 {
+		t.Errorf("Attributes = %v", rest)
 	}
+	// the flagged attributes were not requested, so the marker does not mention them either
+	if mk, _ := o.Attributes[inventory.ReadMarkerKey].(map[string]any); mk["mail"] != nil || mk["description"] != nil {
+		t.Errorf("read marker names an attribute this schema flags: %v", mk)
+	}
+}
+
+// withoutReadMarker is the bag minus the per-attribute read marker (T-2216), which carries states and no values.
+func withoutReadMarker(bag map[string]any) map[string]any {
+	rest := map[string]any{}
+	for k, v := range bag {
+		if k != inventory.ReadMarkerKey {
+			rest[k] = v
+		}
+	}
+	return rest
 }
