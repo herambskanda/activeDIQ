@@ -447,7 +447,7 @@ func TestTunnelServedRPCsAreTheGoldenList(t *testing.T) {
 			t.Errorf("%s: served=%v (err %v), golden=%v", name, served, err, golden[name])
 		}
 	}
-	if len(golden) != 7 {
+	if len(golden) != 8 {
 		t.Fatal("golden list changed without this test")
 	}
 }
