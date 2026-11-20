@@ -57,15 +57,17 @@ type Authorizer interface {
 
 // Config wires a Runner. Every field except Facts, Gate, Now, NewID and Component is required.
 type Config struct {
-	DB        TxRunner
-	Audit     audit.Sink
-	Authz     Authorizer
-	Registry  *Registry
-	Facts     LiveFacts // nil: authorisation reads no directory facts (Store Actions)
-	Gate      Gate      // nil: the kernel default, PermissionOnly
-	Now       func() time.Time
-	NewID     func() string
-	Component string
+	DB       TxRunner
+	Audit    audit.Sink
+	Authz    Authorizer
+	Registry *Registry
+	Facts    LiveFacts // nil: authorisation reads no directory facts (Store Actions)
+	// TemplateAuthz backs PlanContext.Templates (ADR-0015 D1). nil: every Template check is refused.
+	TemplateAuthz TemplateAuthz
+	Gate          Gate // nil: the kernel default, PermissionOnly
+	Now           func() time.Time
+	NewID         func() string
+	Component     string
 	// SecretAttr says whether a directory attribute name (a plain descr) is a known secret attribute
 	// (AG-9). Required: a runner with no list would let a password into the plan and the audit trail, so
 	// NewRunner refuses a nil. The kernel cannot import the attribute catalogue; the composition root
@@ -375,7 +377,7 @@ func (u *run) planSteps(ctx context.Context) ([]StepPlan, error) {
 			return fmt.Errorf("plan transaction: %w", err)
 		}
 		var perr error
-		steps, perr = u.act.Plan(ctx, PlanContext{Tx: tx, Facts: u.pinnedFacts(), Pins: maps.Clone(u.req.Pins)}, u.req.Input)
+		steps, perr = u.act.Plan(ctx, PlanContext{Tx: tx, Facts: u.pinnedFacts(), Pins: maps.Clone(u.req.Pins), Templates: u.r.templateGate(u.req.Actor, u.req.Tenant)}, u.req.Input)
 		return perr
 	})
 	if err != nil {

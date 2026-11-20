@@ -1,4 +1,4 @@
-package inventory_test
+package library_test
 
 // Library batch 6: user-attribute reports USR-07, USR-08, USR-09 and USR-11 (T-1112, reports-2-second-slice
 // §5). The seed is one user per attribute state; the expected sets are written from the seed (which user was

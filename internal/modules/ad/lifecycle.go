@@ -11,8 +11,8 @@ import (
 
 	"github.com/skenzeriq/activediq/internal/directory/accountkind"
 	"github.com/skenzeriq/activediq/internal/directory/client"
+	"github.com/skenzeriq/activediq/internal/directory/objectdef"
 	"github.com/skenzeriq/activediq/internal/directory/writechange"
-	"github.com/skenzeriq/activediq/internal/modules/objects"
 	"github.com/skenzeriq/activediq/internal/platform/audit"
 	"github.com/skenzeriq/activediq/internal/platform/authority"
 	"github.com/skenzeriq/activediq/internal/platform/authz"
@@ -149,32 +149,34 @@ type lifePayload struct {
 type LifecyclePorts struct {
 	Reader client.ObjectReader
 	Writer client.AccountWriter
-	// Definitions reads Templates and NamingFormats (OBJ4); nil reads the objects store.
+	// Definitions reads Templates and NamingFormats (OBJ4); nil refuses.
 	Definitions Definitions
 }
 
-// Definitions is the read half of the objects store a create consumes at Plan.
+// Definitions is the read half of the definition store a create consumes at Plan.
 type Definitions interface {
-	Template(ctx context.Context, tx store.Tx, ref TemplateRef) (objects.Stored[objects.Template], error)
-	NamingFormat(ctx context.Context, tx store.Tx, pin objects.Pin) (objects.Stored[objects.NamingFormat], error)
+	Template(ctx context.Context, tx store.Tx, ref TemplateRef) (objectdef.Stored[objectdef.Template], error)
+	NamingFormat(ctx context.Context, tx store.Tx, pin objectdef.Pin) (objectdef.Stored[objectdef.NamingFormat], error)
 }
 
-type storeDefs struct{}
+// errNoDefinitions is what a Plan that consumes a Template returns while no Definitions port is bound.
+var errNoDefinitions = errors.New("ad: no Template/NamingFormat definitions port is bound")
 
-func (storeDefs) Template(ctx context.Context, tx store.Tx, ref TemplateRef) (objects.Stored[objects.Template], error) {
-	if ref.Version == 0 {
-		return objects.Templates{}.Latest(ctx, tx, ref.ID)
-	}
-	return objects.Templates{}.Get(ctx, tx, ref.ID, ref.Version)
+// noDefs refuses every read. The production source is the objects module's store; modules cooperate
+// through kernel registries, not imports (blueprint §2.4), so it arrives through the port.
+type noDefs struct{}
+
+func (noDefs) Template(context.Context, store.Tx, TemplateRef) (objectdef.Stored[objectdef.Template], error) {
+	return objectdef.Stored[objectdef.Template]{}, errNoDefinitions
 }
 
-func (storeDefs) NamingFormat(ctx context.Context, tx store.Tx, pin objects.Pin) (objects.Stored[objects.NamingFormat], error) {
-	return objects.NamingFormats{}.Get(ctx, tx, pin.ID, pin.Version)
+func (noDefs) NamingFormat(context.Context, store.Tx, objectdef.Pin) (objectdef.Stored[objectdef.NamingFormat], error) {
+	return objectdef.Stored[objectdef.NamingFormat]{}, errNoDefinitions
 }
 
 func (p LifecyclePorts) defs() Definitions {
 	if p.Definitions == nil {
-		return storeDefs{}
+		return noDefs{}
 	}
 	return p.Definitions
 }
@@ -528,7 +530,7 @@ func planCreate(ctx context.Context, p LifecyclePorts, pc operation.PlanContext,
 	if err := t.validate(); err != nil {
 		return nil, err
 	}
-	attrs := objects.Input{}
+	attrs := objectdef.Input{}
 	for k, v := range in.Attributes {
 		c, ok := userClass.canon(k, true)
 		if !ok {
@@ -543,7 +545,7 @@ func planCreate(ctx context.Context, p LifecyclePorts, pc operation.PlanContext,
 		}
 		attrs[c] = v
 	}
-	var tpl *objects.Stored[objects.Template]
+	var tpl *objectdef.Stored[objectdef.Template]
 	if in.Template != nil {
 		var err error
 		if tpl, err = loadTemplate(ctx, p.defs(), pc, *in.Template, in.ParentGuid); err != nil {
@@ -557,7 +559,7 @@ func planCreate(ctx context.Context, p LifecyclePorts, pc operation.PlanContext,
 			return nil, err
 		}
 		// Template defaults and derived names get the same allowlist as technician input.
-		clean := objects.Input{}
+		clean := objectdef.Input{}
 		for k, v := range attrs {
 			c, ok := userClass.canon(k, true)
 			if !ok && strings.EqualFold(k, "cn") {
@@ -614,22 +616,22 @@ func planCreate(ctx context.Context, p LifecyclePorts, pc operation.PlanContext,
 	}, nil
 }
 
-func loadTemplate(ctx context.Context, defs Definitions, pc operation.PlanContext, ref TemplateRef, parent string) (*objects.Stored[objects.Template], error) {
+func loadTemplate(ctx context.Context, defs Definitions, pc operation.PlanContext, ref TemplateRef, parent string) (*objectdef.Stored[objectdef.Template], error) {
 	if pc.Tx == nil {
 		return nil, fmt.Errorf("%w: %s", operation.ErrInvalid, ReasonTemplate)
 	}
 	tpl, err := defs.Template(ctx, pc.Tx, ref)
 	if err != nil {
-		if errors.Is(err, objects.ErrNotFound) {
+		if errors.Is(err, objectdef.ErrNotFound) {
 			return nil, fmt.Errorf("%w: %s: not found", operation.ErrInvalid, ReasonTemplate)
 		}
 		return nil, fmt.Errorf("%w: reading the template failed", operation.ErrTransient)
 	}
 	d := tpl.Def
 	switch {
-	case tpl.State != objects.StatePublished:
+	case tpl.State != objectdef.StatePublished:
 		return nil, fmt.Errorf("%w: %s: the version is not published", operation.ErrInvalid, ReasonTemplate)
-	case d.Kind != objects.KindUser || d.Purpose != objects.PurposeCreate || d.Provider == objects.ProviderEntra:
+	case d.Kind != objectdef.KindUser || d.Purpose != objectdef.PurposeCreate || d.Provider == objectdef.ProviderEntra:
 		return nil, fmt.Errorf("%w: %s: not a user create template for AD", operation.ErrInvalid, ReasonTemplate)
 	case !d.ContainerAllowed(parent):
 		return nil, fmt.Errorf("%w: %s: the container is not allowed by the template", operation.ErrInvalid, ReasonTemplate)
@@ -637,14 +639,14 @@ func loadTemplate(ctx context.Context, defs Definitions, pc operation.PlanContex
 	return &tpl, nil
 }
 
-func templateViolation(v *objects.ViolationError) error {
+func templateViolation(v *objectdef.ViolationError) error {
 	return fmt.Errorf("%w: %s: %s", operation.ErrInvalid, ReasonTemplate, v.Error())
 }
 
 // deriveNames renders the Template's pinned naming formats into attrs. A format that cannot render
 // blocks the plan and names the field.
-func deriveNames(ctx context.Context, defs Definitions, pc operation.PlanContext, d objects.Template, attrs objects.Input, upnSuffix string) error {
-	for _, purpose := range objects.Purposes() {
+func deriveNames(ctx context.Context, defs Definitions, pc operation.PlanContext, d objectdef.Template, attrs objectdef.Input, upnSuffix string) error {
+	for _, purpose := range objectdef.Purposes() {
 		pin, ok := d.NamingFormats[purpose]
 		if !ok {
 			continue
@@ -653,22 +655,22 @@ func deriveNames(ctx context.Context, defs Definitions, pc operation.PlanContext
 		if err != nil {
 			return fmt.Errorf("%w: %s: naming format %s not readable", operation.ErrInvalid, ReasonTemplate, purpose)
 		}
-		name, err := f.Def.Render(attrs, objects.DefaultLimits)
+		name, err := f.Def.Render(attrs, objectdef.DefaultLimits)
 		if err != nil {
-			var v *objects.ViolationError
+			var v *objectdef.ViolationError
 			if errors.As(err, &v) {
 				return templateViolation(v)
 			}
 			return fmt.Errorf("%w: %s: %s", operation.ErrInvalid, ReasonTemplate, purpose)
 		}
 		switch purpose {
-		case objects.PurposeSAMAccountName:
+		case objectdef.PurposeSAMAccountName:
 			attrs["sAMAccountName"] = name
-		case objects.PurposeCN:
+		case objectdef.PurposeCN:
 			attrs["cn"] = name
-		case objects.PurposeDisplayName:
+		case objectdef.PurposeDisplayName:
 			attrs["displayName"] = name
-		case objects.PurposeUPNPrefix:
+		case objectdef.PurposeUPNPrefix:
 			if upnSuffix == "" || strings.ContainsAny(upnSuffix, "@ \\") {
 				return fmt.Errorf("%w: %s: upnSuffix is required by the template's UPN format", operation.ErrInvalid, ReasonTemplate)
 			}

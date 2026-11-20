@@ -958,7 +958,7 @@ replicated-logon thresholds (spec §6.4) is `Min: 30` on USR-03's `days` paramet
   - Test: `definitions_pg_test.go` (whole HTTP stack, response conformance on, both PostgreSQL versions).
 - **Wired in production (T-1104):** `compose/server.bootReport` adds `inventory.Datasets()` to the host under owner key
   `inventory` (checked by `report.CheckTables` against `store/owners`); the reports module (`wiring.go`, ready hook after the host is sealed) compiles the host's datasets with
-  `reportsql.NewRegistry` over the live schema catalogue (`reportSchema`, a registered platform path: it runs before the
+  `reportsql.NewRegistry` over the live schema catalogue (`schema` in the reports module; the directory module's `catalogSchema` is the other, a registered platform path: it runs before the
   install tenant exists) and passes `library.Load(library.Shipped(), …)` as `run.Catalog`. The placeholder catalogue that knew no definition is deleted.
 - **Tests.** `library/library_test.go` (`Test_reports_library_matches_spec`, `Test_reports_search_by_me_name`,
   immutability, broken definitions, crosswalk agreement); `directory/inventory/reports_library_test.go` (every

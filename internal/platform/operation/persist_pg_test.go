@@ -33,6 +33,7 @@ func TestMain(m *testing.M) { os.Exit(storetest.Main(m)) }
 // ---- fakes: a directory, a pinner, settings, provenance, alerts, keys, a gate ----
 
 type dirFake struct {
+	tpl        string                    // when set, Plan asks pc.Templates about this Template first
 	stepUpWhen func(Input) (bool, error) // optional TM-D30 predicate for the action it builds
 	mu         sync.Mutex
 	val        map[string]string
@@ -81,7 +82,12 @@ func (d *dirFake) action(t *testing.T, id ActionID, stepUp, secretIn bool, class
 	a, err := Define(Typed[dirIn, dirPayload, dirOut]{
 		Descriptor: Descriptor{ID: id, Version: 1, Permission: "ad.user.set", Input: "#/components/schemas/Dir", Target: TargetAD,
 			Reversibility: class, AuditKind: "directory.user.changed", StepUp: stepUp, StepUpWhen: d.stepUpWhen, SecretInput: secretIn},
-		Plan: func(_ context.Context, _ PlanContext, in dirIn) ([]TypedStep[dirPayload], error) {
+		Plan: func(ctx context.Context, pc PlanContext, in dirIn) ([]TypedStep[dirPayload], error) {
+			if d.tpl != "" {
+				if err := pc.Templates.CheckTemplate(ctx, "ad.user.set", d.tpl); err != nil {
+					return nil, err
+				}
+			}
 			nc := authority.NamingContextID("dc=example")
 			if d.noNC {
 				nc = ""
@@ -1769,6 +1775,42 @@ func TestSitePreferenceReadFailureFailsPlan(t *testing.T) {
 		}
 		if st := p.opState(sub.Operation); st != "plan_failed" {
 			t.Fatalf("state = %s, want plan_failed", st)
+		}
+	})
+}
+
+// AC1/AC3 on the Submit path: the Plan's gate carries the stored operation's chain and tenant, and a
+// refusal fails the plan as a denied attempt with the gate's code. Removing the Templates binding in
+// planAndRoute turns the first case into a nil-gate panic/denial and fails this test.
+func TestSubmitBindsTemplateGateAndAuditsRefusal(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		p := newPRig(t, s, rigOpt{})
+		p.dir.tpl = "tpl-1"
+		ta := &tmplAuthz{}
+		p.r.cfg.TemplateAuthz = ta
+		sub, err := p.r.SubmitDirectory(context.Background(), p.req(itemIn{GUID: "g1", Want: "new"}))
+		if err != nil || sub.State != OpQueued {
+			t.Fatalf("sub=%+v err=%v", sub, err)
+		}
+		if ta.calls != 1 || ta.chain.Requester.ID != alice.Requester.ID || ta.tenant != p.tn.String() || ta.template != "tpl-1" {
+			t.Fatalf("calls=%d chain=%+v tenant=%q template=%q", ta.calls, ta.chain, ta.tenant, ta.template)
+		}
+
+		ta.err = errors.New("not permitted")
+		sub, err = p.r.SubmitDirectory(context.Background(), p.req(itemIn{GUID: "g2", Want: "x"}))
+		if err == nil || sub.State != OpPlanFailed {
+			t.Fatalf("refused: sub=%+v err=%v", sub, err)
+		}
+		env := p.completedEnvelope(sub.Operation)
+		if env.Outcome != "denied" || env.Reason != "template_not_permitted" || env.Requester.ID == "" {
+			t.Fatalf("audit = %s/%s", env.Outcome, env.Reason)
+		}
+
+		// No TemplateAuthz at all: fail closed, same refusal.
+		p.r.cfg.TemplateAuthz = nil
+		sub, err = p.r.SubmitDirectory(context.Background(), p.req(itemIn{GUID: "g3", Want: "x"}))
+		if err == nil || sub.State != OpPlanFailed || p.completedEnvelope(sub.Operation).Reason != "template_not_permitted" {
+			t.Fatalf("nil authz: sub=%+v err=%v", sub, err)
 		}
 	})
 }
