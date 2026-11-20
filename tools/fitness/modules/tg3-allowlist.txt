@@ -1,0 +1,8 @@
+# TG3 allowlist (ADR-0015): modules that import internal/platform/rbac because they implement or wire rbac
+# itself, and do not consume Templates. Adding a module here needs an ADR amendment. ad and objects can
+# never be listed.
+delegation   # grants, roles, tier-0 override scopes
+connections  # tier-0 override and reconfirmation
+directory    # read scopes
+reports      # report scoping
+search       # search scoping

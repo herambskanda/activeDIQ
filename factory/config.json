@@ -10,6 +10,7 @@
   "dispatcher": {
     "tick_seconds": 20,
     "max_parallel": 8,
+    "hold_ready": true,
     "min_free_disk_gb": 10,
     "daily_run_cap": 800,
     "run_timeout_minutes": 90,
@@ -19,20 +20,32 @@
     "main_branch": "main",
     "pre_merge": {
       "enabled": true,
-      "argv": ["make", "-k", "ci-fast"],
-      "timeout_minutes": 60,
-      "train_size": 4,
+      "argv": ["make", "-k", "-j2", "-O", "ci"],
+      "timeout_minutes": 180,
+      "reserved_slots": 2,
+      "keep_unread_moves": true,
+      "culprit_split": true,
+      "prescreen_ahead": true,
+      "train_size_max": 2,
+      "train_size": 1,
+      "max_gate_failures": 2,
+      "concurrency": 1,
       "numbering": {
         "dir": "migrations",
         "argv": ["go", "test", "-count=1", "./migrations/", "-run", "^TestMigrationNumbersAreUniqueAndContiguous$"],
         "timeout_seconds": 120
       }
     },
+    "shadow_gate": {
+      "enabled": false,
+      "step_timeout_minutes": 60
+    },
     "post_merge_verify": {
       "enabled": true,
       "argv": ["make", "-k", "ci-full"],
       "timeout_minutes": 150,
-      "cooldown_minutes": 15
+      "cooldown_minutes": 15,
+      "raise_ticket": true
     },
     "permission_mode": "auto",
     "rate_limit_backoff_minutes": 15,

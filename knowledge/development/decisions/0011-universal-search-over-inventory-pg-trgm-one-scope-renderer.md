@@ -56,7 +56,7 @@ weakens.
   copied into a column, no second renderer.
 - **SE1 now reads:** `reportsql.CompileSearch` **and** `reportsql.CompileTree` are called only from
   `internal/directory/inventory`. `modules/explorer` reaches the tree statement through the
-  `inventory.Explorer` port, exactly as `modules/search` reaches `CompileSearch` through
+  `inventory.Explorer` port, exactly as `directory/search` reaches `CompileSearch` through
   `inventory.Search`, and the port takes the scope and returns trimmed rows, never ancestry to trim
   with. The Go-level list is closed: a future statement entry (a third caller) needs its own
   amendment and is not admitted by this one.
@@ -110,7 +110,7 @@ weakens.
      finding; a fixture that passes fails the proof.
 - **`Connections()` allow-list, decided.** Spec §9 computes `asOf` as `inventory.Freshness` over
   `ReadScope.Connections()`, so `internal/directory/inventory` is **added** to the allow-list, which
-  becomes `authz`, `reportsql`, `reports`, `reports/run`, `modules/search` and
+  becomes `authz`, `reportsql`, `reports`, `reports/run`, `directory/search` and
   `internal/directory/inventory`. `modules/explorer` is not added: it receives `asOf` from the port.
   (The alternative, `CompileTree` returning the connection set in its `reportsql.Query`, was rejected:
   it widens the statement's result for one label, when inventory already owns `Freshness`.)
@@ -541,7 +541,7 @@ RLS and a non-owner role; warm cache; t = 0.5; SQL in `factory/demos/evidence/T-
 
 7. A leaf package `internal/platform/searchkey` holds the normalisation. It imports only the
    standard library and `golang.org/x/text`, which is already in the register. It is the **only**
-   code that normalises search text. The writer uses it to build keys and `modules/search` uses it
+   code that normalises search text. The writer uses it to build keys and `directory/search` uses it
    to classify and normalise the query, so the two can never drift apart.
    - **Refusals** (P5 rule 7), in this order. The order matters: a check that runs before NFKC can
      be passed with full-width or compatibility forms.
@@ -625,9 +625,18 @@ RLS and a non-owner role; warm cache; t = 0.5; SQL in `factory/demos/evidence/T-
    5. then the normalised display name;
    6. then `object_guid`, so the order is total and stable.
 
-   The IA's "the user's recent objects" step is **not** in the 2a server ranking. It needs a
-   per-account recents store, which T-1130 (P3) adds. Until then the palette shows no recents
-   rather than invented ones (CLAUDE.md rule 6).
+   **Recents (T-1130).** The IA's "the user's recent objects" step is built. `inventory_recent_objects`
+   (migration 0087; tenant table, forced RLS) keeps the newest 20 objects an account opened, keyed by
+   `(connection_id, object_guid)`, written by `inventory.Searcher.RecordOpened` when an object page is
+   opened (human accounts only; a token has none). The template reads it in a CTE bound to the account and
+   adds two leading rank terms, so the order of a group is `band` (0 exact, 1 recent, 2 other), then the
+   recency position (latest first) within band 1, then the class and rules 1-6 above. A recent object never
+   outranks an exact match, and a recent fuzzy hit outranks a plain prefix hit. A recent row grants
+   nothing: it only joins hits that the caller's `ReadScope` already admitted in the same statement. The
+   empty palette is `inventory.Searcher.Recents` / `search.Service.Recent`: the same statement with the
+   recents as the only candidates (`SearchQuery.RecentsOnly`), so the same scope trim and the same
+   ordering apply, and an object moved out of scope is not listed. An account with no recents gets empty
+   groups, never invented ones. The rank tuple of a "show all" cursor gained `Band` and `Recent`.
 
 9. **Identifier shapes the inventory serves at 2a.** The source is the 2a sync set, reports-2a D1–D3
    ([reports-2a §7](../../product/specs/reports-2a.md)), plus the columns of `directory_objects`.
@@ -690,7 +699,7 @@ RLS and a non-owner role; warm cache; t = 0.5; SQL in `factory/demos/evidence/T-
       existing `planScope` and `scopeSQL` over the `directory_objects` anchor, the same functions
       RP6 proves. So `ancestry_complete`, the fail-closed rules, the 512-term cap
       (`ErrScopeTooLarge`) and `ScopeReasons` all carry over unchanged.
-    - Only `internal/directory/inventory` calls `CompileSearch` (SE1). `modules/search` reaches it
+    - Only `internal/directory/inventory` calls `CompileSearch` (SE1). `directory/search` reaches it
       through the port `inventory.Search(ctx, tx, tenant, scopes, q)`, composed in
       `compose/server`. The port **takes the scope and returns trimmed hits**. It never returns
       ancestry for the caller to trim with: this amends T-1095 AC3.
@@ -1027,7 +1036,7 @@ in the nightly job. Each static check has a failing self-test fixture (T-1126).
     in `internal/platform/store/reportsql`. Method values, method expressions and embedding count,
     as RP2 already checks.
   - **Who may use `Connections()`.** Outside `authz` and `reportsql`, `ReadScope.Connections()` is
-    allowed only in `internal/modules/reports/run`, `internal/modules/search` and
+    allowed only in `internal/modules/reports/run`, `internal/directory/search` and
     `internal/directory/inventory` (E3), where it labels freshness.
   - **`Admits` and `SearchRoots`** are called nowhere outside `authz`. Until T-1127 deletes them,
     `internal/directory/client/usersearch.go` is the one listed exception, reported as `pending`.
@@ -1068,7 +1077,7 @@ in the nightly job. Each static check has a failing self-test fixture (T-1126).
   - **When T-1127 lands,** RP2's allow-list in `fitness-reports` is narrowed to match.
 - **SE2, no string-built search SQL and no stray trigram use (static, repo-wide).**
   - **Patterns.** The search template in `reportsql`, and every SQL constant or sqlc query file under
-    `internal/directory/inventory` and `internal/modules/search`, contain no `LIKE`, `ILIKE`,
+    `internal/directory/inventory` and `internal/directory/search`, contain no `LIKE`, `ILIKE`,
     `SIMILAR TO`, `~`, `~*`, `!~` or `!~*`.
   - **Trigram operators and functions.** These appear in SQL text **only in the `reportsql` search
     template**, anywhere in the repository, migrations included:
@@ -1085,7 +1094,7 @@ in the nightly job. Each static check has a failing self-test fixture (T-1126).
     - `set_config(` appears only with a literal `true` as its third argument (transaction-local),
       repo-wide.
     - `set_config('pg_trgm.…', $n, true)` appears only in the search transaction, with a bound value.
-  - **No hand-built SQL.** `modules/search` and the inventory search code build no SQL text at all.
+  - **No hand-built SQL.** `directory/search` and the inventory search code build no SQL text at all.
     `sqlconst` (FF-SP2/RP1) already forbids non-constant SQL there, and SE2 asserts that the
     analyser covers those packages.
   - **Bound `LIKE` patterns.** Repo-wide, a `LIKE`/`ILIKE` with a bound pattern must take a

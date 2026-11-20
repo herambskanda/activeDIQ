@@ -16,6 +16,7 @@ import (
 
 	"github.com/skenzeriq/activediq/internal/directory/inventory"
 	"github.com/skenzeriq/activediq/internal/platform/apihost"
+	"github.com/skenzeriq/activediq/internal/platform/apihost/apitest"
 	"github.com/skenzeriq/activediq/internal/platform/capability"
 	"github.com/skenzeriq/activediq/internal/platform/jobs"
 	"github.com/skenzeriq/activediq/internal/platform/rbac"
@@ -73,7 +74,7 @@ func TestReportsRunOverComposedReadScopes(t *testing.T) {
 			e.ten.String(), scpRunner, string(rbac.NamingContext), e.ad, scpDomA)
 
 		// The composition under test: the booted contributions, the authorizer, buildReadScopes, buildReports.
-		contrib, host, err := bootReport(ctx, capability.NewSet(capability.DirectoryAD, capability.DirectoryEntra, capability.TenantProvisioning), directoryServices(e.db), owners.Lookup)
+		contrib, _, err := bootReport(ctx, capability.NewSet(capability.DirectoryAD, capability.DirectoryEntra, capability.TenantProvisioning), directoryServices(e.db), owners.Lookup)
 		if err != nil {
 			t.Fatalf("bootReport: %v", err)
 		}
@@ -85,13 +86,13 @@ func TestReportsRunOverComposedReadScopes(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, _, err := buildReports(ctx, e.db, host, jobs.NewRegistry(), rptSink{}, inventory.NewReader(e.db, nil), nil, nil, ""); err == nil {
-			t.Fatal("buildReports accepted a nil read-scope producer")
+		if _, err := bootReportsForTest(ctx, e.db, jobs.NewRegistry(), rptSink{}, nil); err == nil {
+			t.Fatal("the reports module accepted an unbound read-scope producer")
 		}
 		jreg := jobs.NewRegistry()
-		svc, tag, err := buildReports(ctx, e.db, host, jreg, rptSink{}, inventory.NewReader(e.db, nil), rs, nil, "")
+		tag, err := bootReportsForTest(ctx, e.db, jreg, rptSink{}, rs)
 		if err != nil {
-			t.Fatalf("buildReports: %v", err)
+			t.Fatalf("boot reports: %v", err)
 		}
 		doc, err := apihost.LoadDocument()
 		if err != nil {
@@ -101,8 +102,7 @@ func TestReportsRunOverComposedReadScopes(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		perms := apihost.Permissions{"reports.run", "reports.export", "reports.schedule", "reports.schedule.manage_all",
-			"reports.deliver.external", "directory.read", "connections.read", "connections.manage", "connections.verify", "connections.takeover.attest", "siem.destination.manage", "siem.destination.read"}
+		perms := apitest.Catalogue(doc)
 		door := rptDoor{}
 		srv, err := apihost.Build(doc, []apihost.TagHandlers{tag}, pol, perms, apihost.Ports{Authn: door, Authz: door, Limits: door, StepUp: door})
 		if err != nil {
@@ -139,7 +139,7 @@ func TestReportsRunOverComposedReadScopes(t *testing.T) {
 			t.Fatal(err)
 		}
 		for _, c := range cl {
-			if c.Kind != svc.Kind().Name {
+			if c.Kind != reportRunKind {
 				continue
 			}
 			if _, err := jobs.NewRunner(e.db, jreg).Execute(ctx, c); err != nil {
@@ -164,6 +164,28 @@ func TestReportsRunOverComposedReadScopes(t *testing.T) {
 			if strings.Contains(string(raw), sam) {
 				t.Errorf("domain B user %q leaked into %s", sam, raw)
 			}
+		}
+
+		// The widget host's call: the runner's own latest run, header only, with no digest, parameters or scope text.
+		code, latest := do(scpRunner, "GET", "/api/v1/reports/runs/latest?definitionId=usr-01", "")
+		if code != http.StatusOK || latest["state"] != "current" || latest["runId"] != id || latest["rowCount"] != float64(3) || latest["asOf"] == nil {
+			t.Fatalf("latest: %d %v; want current, run %s, 3 rows", code, latest, id)
+		}
+		for _, k := range []string{"digest", "parameters", "scopeApplied", "table"} {
+			if _, has := latest[k]; has {
+				t.Errorf("latest carries %q", k)
+			}
+		}
+		// usr-01 has no widget profile, so it offers the count view only; rows are a 400, never a guess.
+		if code, body := do(scpRunner, "GET", "/api/v1/reports/runs/latest?definitionId=usr-01&rows=10", ""); code != http.StatusBadRequest {
+			t.Errorf("rows=10 without a table view: %d %v; want 400", code, body)
+		}
+		if code, _ := do(scpRunner, "GET", "/api/v1/reports/runs/latest?definitionId=usr-01&rows=7", ""); code != http.StatusBadRequest {
+			t.Errorf("rows=7: %d; want 400", code)
+		}
+		// Another account never sees the runner's run through it.
+		if code, other := do(scpNobody, "GET", "/api/v1/reports/runs/latest?definitionId=usr-01", ""); code == http.StatusOK && other["runId"] != nil {
+			t.Errorf("an unassigned account was handed run %v", other["runId"])
 		}
 
 		// Another account cannot read the run either.

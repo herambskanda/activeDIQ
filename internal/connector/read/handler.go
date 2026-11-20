@@ -16,6 +16,7 @@ import (
 	"github.com/skenzeriq/activediq/internal/connector/write"
 	"github.com/skenzeriq/activediq/internal/directory/attr/guid"
 	"github.com/skenzeriq/activediq/internal/directory/ldapfilter"
+	"github.com/skenzeriq/activediq/internal/directory/sd"
 	connectorv1 "github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1"
 )
 
@@ -181,6 +182,10 @@ func (h *Handler) Read(ctx context.Context, req *connectorv1.ReadRequest, out Se
 			verdict.Basis = nil
 		}
 	}
+	var pcv *connectorv1.PasswordChangeVerdict
+	if req.GetIncludePasswordChange() {
+		pcv = h.passwordChange(ctx, id)
+	}
 	// The DC after the read and the classification must be the DC before them (and the pin).
 	after, err := h.bound(ctx, pin)
 	if err != nil {
@@ -196,7 +201,7 @@ func (h *Handler) Read(ctx context.Context, req *connectorv1.ReadRequest, out Se
 	}
 	obs := &connectorv1.Observation{Dc: after, ReceivedAt: timestamppb.New(h.now())}
 	if err := out.Send(&connectorv1.ReadResponse{Event: &connectorv1.ReadResponse_Header{
-		Header: &connectorv1.ReadHeader{Entry: entry, Observed: obs, Tier0: verdict, ChildCount: count}}}); err != nil {
+		Header: &connectorv1.ReadHeader{Entry: entry, Observed: obs, Tier0: verdict, ChildCount: count, PasswordChange: pcv}}}); err != nil {
 		return err
 	}
 	for _, c := range tails {
@@ -309,4 +314,38 @@ func (h *Handler) build(e *ad.Entry, id guid.GUID, parent *connectorv1.Guid, ask
 func (h *Handler) value(name string, raw []byte) (*connectorv1.AttributeValue, error) {
 	syn, _ := h.src.Syntax(name)
 	return wirevalue.Of(name, syn, raw)
+}
+
+// passwordChange is the Cannot Change Password verdict of one object. A failed, withheld, malformed
+// or mismatched read is NOT_CONFIRMED with a fixed error code, never an error of the call: one bad
+// descriptor must not fail the object's read (T-1551). Neither the descriptor nor the directory's
+// message is kept or logged.
+func (h *Handler) passwordChange(ctx context.Context, id guid.GUID) *connectorv1.PasswordChangeVerdict {
+	notConfirmed := func(code connectorv1.ErrorCode) *connectorv1.PasswordChangeVerdict {
+		return &connectorv1.PasswordChangeVerdict{State: connectorv1.PasswordChangeState_PASSWORD_CHANGE_STATE_NOT_CONFIRMED, ErrorCode: code}
+	}
+	pc, ok := h.src.(PasswordChanger)
+	if !ok {
+		return notConfirmed(connectorv1.ErrorCode_ERROR_CODE_CAPABILITY_UNSUPPORTED)
+	}
+	got, state, err := pc.ReadPasswordChange(ctx, id)
+	if err != nil {
+		code, _, _ := classifyAD(err)
+		return notConfirmed(code)
+	}
+	if got != id {
+		return notConfirmed(connectorv1.ErrorCode_ERROR_CODE_PROVIDER_FAILURE)
+	}
+	var st connectorv1.PasswordChangeState
+	switch state {
+	case sd.PasswordChangeBlocked:
+		st = connectorv1.PasswordChangeState_PASSWORD_CHANGE_STATE_BLOCKED
+	case sd.PasswordChangeBlockedOneACE:
+		st = connectorv1.PasswordChangeState_PASSWORD_CHANGE_STATE_BLOCKED_ONE_ACE
+	case sd.PasswordChangeNoDenyACE:
+		st = connectorv1.PasswordChangeState_PASSWORD_CHANGE_STATE_NO_DENY_ACE
+	default:
+		return notConfirmed(connectorv1.ErrorCode_ERROR_CODE_PROVIDER_FAILURE)
+	}
+	return &connectorv1.PasswordChangeVerdict{State: st, ObjectGuid: write.GUIDToWire(got)}
 }
