@@ -76,7 +76,7 @@ lab-test-connector: ## internal/connector/ad against the running lab (T-0092)
 	go test -count=1 -tags lab ./internal/connector/ad/
 
 lab-test-groups: ## T-1070: inventory group datasets vs LDAP ground truth and tokenGroups (needs the standard-tier lab; ~minutes)
-	go test -count=1 -timeout 30m -tags lab -run TestLabGroupDatasetsMatchLDAPAndTokenGroupsSamba -v ./internal/directory/inventory/
+	go test -count=1 -timeout 30m -tags lab -run TestLabGroupDatasetsMatchLDAPAndTokenGroupsSamba -v ./internal/compose/server/
 
 lab-test-sync: ## sync mapper bounds vs the lab schema's rangeUpper (T-1250)
 	go test -count=1 -tags lab -run Test_lab_mapper_bounds ./internal/directory/sync/

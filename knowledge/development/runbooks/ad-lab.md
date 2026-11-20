@@ -124,7 +124,7 @@ tier (50k users) and a second DC (`2dc`) are not built yet — see §8.
 ## 4. Using the lab in tests
 
 - **Group datasets vs the directory (T-1070):** `make lab-test-groups` (standard-tier lab; tag `lab`).
-  `internal/directory/inventory/lab_groups_test.go` reads every principal and every ranged `member` list over
+  `internal/compose/server/lab_groups_test.go` reads every principal and every ranged `member` list over
   LDAPS with the production connector, loads them into PostgreSQL 16 and 18 through `Populate`, then compares
   `inventory.group_members`, `inventory.groups` and `inventory.users` with (1) `tokenGroups` of every account
   (security groups; distribution groups are never in a token, so they use (2)), (2) an independent walk over

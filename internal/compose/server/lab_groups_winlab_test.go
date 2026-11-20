@@ -1,6 +1,6 @@
 //go:build lab && windowslab
 
-package inventory_test
+package server_test
 
 // T-1070, Windows target: the same oracle as lab_groups_test.go against the real Windows DC
 // (`make windows-lab-up`), for what Samba cannot hold: a foreign security principal member and Windows'
@@ -29,15 +29,15 @@ const (
 	winBind = "svc-activediq@win.activediq.test"
 )
 
-func winFile(envVar, def string) string {
-	if p := os.Getenv(envVar); p != "" {
-		return p
+func winFile(override, def string) string {
+	if override != "" {
+		return override
 	}
 	return filepath.Join("..", "..", "..", "lab", "windows", def)
 }
 
 func TestLabGroupDatasetsMatchLDAPAndTokenGroupsWindows(t *testing.T) {
-	f, err := os.Open(winFile("WIN_LAB_ENV", ".win-lab.env"))
+	f, err := os.Open(winFile(os.Getenv("WIN_LAB_ENV"), ".win-lab.env"))
 	if err != nil {
 		t.Fatalf("windows lab not up (make windows-lab-up): %v", err)
 	}
@@ -58,7 +58,7 @@ func TestLabGroupDatasetsMatchLDAPAndTokenGroupsWindows(t *testing.T) {
 	if tlsName == "" {
 		tlsName = "dc1.win.activediq.test"
 	}
-	caPath := winFile("WIN_LAB_CA", ".win-lab-ca.pem")
+	caPath := winFile(os.Getenv("WIN_LAB_CA"), ".win-lab-ca.pem")
 	pem, err := os.ReadFile(caPath)
 	if err != nil {
 		t.Fatal(err)
@@ -79,8 +79,7 @@ func TestLabGroupDatasetsMatchLDAPAndTokenGroupsWindows(t *testing.T) {
 		ldapsearch: func(t *testing.T, args ...string) string {
 			t.Helper()
 			// the reference client is the host's ldapsearch; the DC name (WIN_LAB_TLS_NAME) must resolve on the host, the certificate names it
-			cmd := exec.Command("ldapsearch", append([]string{"-H", "ldaps://" + tlsName + ":636", "-x", "-D", winBind, "-y", "/dev/stdin", "-LLL", "-o", "ldif-wrap=no"}, args...)...)
-			cmd.Env = append(os.Environ(), "LDAPTLS_CACERT="+caPath, "LDAPTLS_REQCERT=demand")
+			cmd := exec.Command("env", append([]string{"LDAPTLS_CACERT=" + caPath, "LDAPTLS_REQCERT=demand", "ldapsearch", "-H", "ldaps://" + tlsName + ":636", "-x", "-D", winBind, "-y", "/dev/stdin", "-LLL", "-o", "ldif-wrap=no"}, args...)...)
 			cmd.Stdin = strings.NewReader(pw)
 			var stderr bytes.Buffer
 			cmd.Stderr = &stderr

@@ -1,6 +1,6 @@
 //go:build lab
 
-package inventory_test
+package server_test
 
 // T-1070: the group datasets (inventory.groups, inventory.group_members, inventory.users) against a REAL
 // directory. T-0961 proved AC-19/20/21 on PostgreSQL with a hand-built model; here the model is the lab
@@ -10,7 +10,7 @@ package inventory_test
 //   - tokenGroups: the DC's own transitive, primary-group-aware expansion, one read per account.
 // The seed is lab/seed/generate.py (OU=GroupOracle, T-1070) + post-start.sh (primary groups).
 //
-// Run: make lab-up && make lab-test-groups   (Samba)       make windows-lab-test-groups   (Windows, windowslab tag)
+// Run: make lab-up && make lab-test-groups   (Samba)       make windows-lab-test-groups (T-1533)   (Windows, windowslab tag)
 // A missing lab is a test FAILURE, never a skip.
 //
 // Observation shape: the connector-side producer of Observation does not exist yet ("Not built" in
@@ -21,7 +21,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"os"
 	"os/exec"
 	"slices"
 	"strings"
@@ -32,11 +31,14 @@ import (
 	adsid "github.com/skenzeriq/activediq/internal/directory/attr/sid"
 	"github.com/skenzeriq/activediq/internal/directory/dn"
 	"github.com/skenzeriq/activediq/internal/directory/inventory"
+	"github.com/skenzeriq/activediq/internal/directory/inventory/invtest"
 	"github.com/skenzeriq/activediq/internal/directory/ldapfilter"
 	"github.com/skenzeriq/activediq/internal/platform/authz"
 	"github.com/skenzeriq/activediq/internal/platform/authz/authztest"
 	"github.com/skenzeriq/activediq/internal/platform/report"
 	"github.com/skenzeriq/activediq/internal/platform/secret"
+	"github.com/skenzeriq/activediq/internal/platform/store"
+	"github.com/skenzeriq/activediq/internal/platform/store/reportsql"
 	"github.com/skenzeriq/activediq/internal/platform/store/storetest"
 	"github.com/skenzeriq/activediq/internal/testlab"
 )
@@ -245,7 +247,7 @@ func rangedCount(t *testing.T, tg *labTarget, groupDN string) int {
 }
 
 func scopeHead(c inventory.ConnectionID, head string) authz.ReadScope {
-	return authztest.ReadScope(authz.ScopeGrant{Include: []authz.ScopeTerm{{Kind: authz.TermNamingContext, Connection: rpID(string(c)), Root: rpID(head)}}})
+	return authztest.ReadScope(authz.ScopeGrant{Include: []authz.ScopeTerm{{Kind: authz.TermNamingContext, Connection: labObjectID(string(c)), Root: labObjectID(head)}}})
 }
 
 // runGroupOracle is the whole check, shared by the Samba and Windows targets.
@@ -277,9 +279,9 @@ func runGroupOracle(t *testing.T, tg *labTarget) {
 	prim, only, empty := grp("GG-Oracle-Primary"), grp("GG-Oracle-PrimaryOnly"), grp("GG-Empty")
 
 	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
-		e := setup(t, s)
-		reg := e.registry(t)
-		c := e.adA
+		e := invtest.Setup(t, s)
+		reg := e.Registry(t)
+		c := e.AdA
 		now := time.Now()
 		observed := now.Add(-time.Hour)
 		accounts, groups, unresolved := labObservations(head, objs)
@@ -290,7 +292,7 @@ func runGroupOracle(t *testing.T, tg *labTarget) {
 		flush := func(at time.Time) {
 			for len(pending) > 0 {
 				n := min(len(pending), 1000)
-				if _, err := e.populate(t, c, at, pending[:n]...); err != nil {
+				if _, err := e.Populate(t, c, at, pending[:n]...); err != nil {
 					t.Fatal(err)
 				}
 				pending = pending[n:]
@@ -298,23 +300,23 @@ func runGroupOracle(t *testing.T, tg *labTarget) {
 		}
 		pending = append(pending, accounts...)
 		flush(observed)
-		if err := e.d.ExecOwner(context.Background(), "ANALYZE"); err != nil { // see Test_group_member_counts_at_scale
+		if err := e.D.ExecOwner(context.Background(), "ANALYZE"); err != nil { // see Test_group_member_counts_at_scale
 			t.Fatal(err)
 		}
 		pending = groups
 		flush(observed.Add(time.Minute))
-		if err := e.d.ExecOwner(context.Background(), "ANALYZE"); err != nil {
+		if err := e.D.ExecOwner(context.Background(), "ANALYZE"); err != nil {
 			t.Fatal(err)
 		}
 		t.Logf("[%s] TIMING populate of %d objects (edges + closure refresh): %v", tg.name, len(accounts)+len(groups), time.Since(start).Round(time.Millisecond))
 
 		scope := scopeHead(c, head)
 		start = time.Now()
-		gres := e.run(t, reg, hQuery{dataset: inventory.DatasetGroups, scope: scope, now: now,
+		gres := labRun(t, e, reg, hQuery{dataset: inventory.DatasetGroups, scope: scope, now: now,
 			cols: []report.ColumnID{"sam_account_name", "has_members", "direct_members", "effective_members", "primary_group_members"}})
 		t.Logf("[%s] TIMING inventory.groups (%d rows, both counts): %v", tg.name, len(gres.rows), time.Since(start).Round(time.Millisecond))
 		start = time.Now()
-		mres := e.run(t, reg, hQuery{dataset: inventory.DatasetGroupMembers, cols: gmCols, scope: scope, now: now})
+		mres := labRun(t, e, reg, hQuery{dataset: inventory.DatasetGroupMembers, cols: gmCols, scope: scope, now: now})
 		t.Logf("[%s] TIMING inventory.group_members (%d rows): %v", tg.name, len(mres.rows), time.Since(start).Round(time.Millisecond))
 
 		// ---- acceptance 1: effective members == tokenGroups, once each --------------------------------
@@ -468,7 +470,7 @@ func runGroupOracle(t *testing.T, tg *labTarget) {
 		}
 
 		// ---- acceptance 3: primary group ----------------------------------------------------------------
-		ures := e.run(t, reg, hQuery{dataset: inventory.DatasetUsers, cols: []report.ColumnID{"sam_account_name", "primary_group", "primary_group_id"}, scope: scope, now: now})
+		ures := labRun(t, e, reg, hQuery{dataset: inventory.DatasetUsers, cols: []report.ColumnID{"sam_account_name", "primary_group", "primary_group_id"}, scope: scope, now: now})
 		nonDefault := 0
 		for _, o := range objs {
 			if o.kind != inventory.KindUser || o.primaryRID == 513 {
@@ -578,9 +580,10 @@ func sambaTarget(t *testing.T) *labTarget {
 		ldapsearch: func(t *testing.T, args ...string) string {
 			t.Helper()
 			// the group DN is a positional argument, never interpolated into the shell text
-			sh := `exec ldapsearch -H ldaps://dc1.lab.activediq.test:636 -x -D svc-activediq@lab.activediq.test -w "$LAB_SVC_PASSWORD" -LLL -o ldif-wrap=no "$@"`
-			cmd := exec.Command("docker", append([]string{"exec", "-e", "LAB_SVC_PASSWORD", "-e", "LDAPTLS_CACERT=/var/lib/samba/lab-tls/ca.pem", env.Container, "sh", "-c", sh, "sh"}, args...)...)
-			cmd.Env = append(os.Environ(), "LAB_SVC_PASSWORD="+pw)
+			// the password arrives on stdin, never in the host's environment or argv
+			sh := `IFS= read -r PW; exec ldapsearch -H ldaps://dc1.lab.activediq.test:636 -x -D svc-activediq@lab.activediq.test -w "$PW" -LLL -o ldif-wrap=no "$@"`
+			cmd := exec.Command("docker", append([]string{"exec", "-i", "-e", "LDAPTLS_CACERT=/var/lib/samba/lab-tls/ca.pem", env.Container, "sh", "-c", sh, "sh"}, args...)...)
+			cmd.Stdin = strings.NewReader(pw + "\n")
 			var stderr bytes.Buffer
 			cmd.Stderr = &stderr
 			out, err := cmd.Output()
@@ -593,4 +596,84 @@ func sambaTarget(t *testing.T) *labTarget {
 
 func TestLabGroupDatasetsMatchLDAPAndTokenGroupsSamba(t *testing.T) {
 	runGroupOracle(t, sambaTarget(t))
+}
+
+func labObjectID(s string) authz.ObjectID {
+	id, err := authz.ParseObjectID(s)
+	if err != nil {
+		panic(err)
+	}
+	return id
+}
+
+type hQuery struct {
+	dataset report.DatasetID
+	cols    []report.ColumnID
+	scope   authz.ReadScope
+	now     time.Time
+}
+
+type hResult struct {
+	rows  map[string]map[report.ColumnID]report.Cell // by lower-case GUID
+	order []string
+}
+
+// labRun resolves, compiles and executes one report over a dataset as tenant A, collecting every row.
+func labRun(t *testing.T, e *invtest.Env, reg *reportsql.Registry, q hQuery) hResult {
+	t.Helper()
+	src := slices.IndexFunc(inventory.Datasets(), func(d report.Dataset) bool { return d.ID == q.dataset })
+	ds, ok := reg.Dataset(q.dataset)
+	if src < 0 || !ok {
+		t.Fatalf("dataset %s", q.dataset)
+	}
+	def := report.Definition{ID: "t1070-01", Version: 1, Category: report.CategoryUsers, Title: "T-1070", Dataset: q.dataset, Columns: q.cols,
+		Presets: []report.Preset{{ID: "all"}}}
+	rq, err := report.Resolve(def, "all", report.RunParams{}, inventory.Datasets()[src])
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	rowsQ, err := reportsql.Compile(rq, ds, q.scope, reportsql.Inputs{Now: q.now})
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	res := hResult{rows: map[string]map[report.ColumnID]report.Cell{}}
+	err = e.Tx(t, e.A, func(ctx context.Context, tx store.Tx) error {
+		_, err := reportsql.Exec(ctx, tx, rowsQ, 500, func(_ context.Context, rows []report.Row) error {
+			for _, row := range rows {
+				k := strings.ToLower(row.Key)
+				m := map[report.ColumnID]report.Cell{}
+				for i, c := range q.cols {
+					m[c] = row.Cells[i]
+				}
+				res.rows[k] = m
+				res.order = append(res.order, k)
+			}
+			return nil
+		})
+		return err
+	})
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	return res
+}
+
+// cellStr is the typed text of a cell without its tag.
+func cellStr(r map[report.ColumnID]report.Cell, c report.ColumnID) string {
+	s := invtest.CellKey(r[c])
+	if i := strings.Index(s, ":"); i >= 0 {
+		return s[i+1:]
+	}
+	return s
+}
+
+var gmCols = []report.ColumnID{"group_name", "member_name", "member_kind", "edge_kind", "depth", "via_path", "finding", "member_enabled", "member_unresolved", "member_sid"}
+
+func sortedKeys(m map[string]bool) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	slices.Sort(out)
+	return out
 }
