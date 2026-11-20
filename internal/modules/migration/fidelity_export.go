@@ -2,7 +2,7 @@ package migration
 
 import (
 	"context"
-	"encoding/json"
+	jsonv2 "encoding/json/v2"
 	"fmt"
 	"io"
 	"strings"
@@ -67,7 +67,7 @@ func rowCells(r FidelityRow) []export.Cell {
 	}
 	var diffs []string
 	for _, d := range r.Diff {
-		b, _ := json.Marshal(d.Field)
+		b, _ := jsonv2.Marshal(d.Field)
 		diffs = append(diffs, strings.TrimSpace(string(b))+": "+d.Source+" -> "+d.Ours)
 	}
 	return []export.Cell{export.Text(r.Ref), export.Text(r.Kind), export.Text(r.Name), export.Text(r.Class),

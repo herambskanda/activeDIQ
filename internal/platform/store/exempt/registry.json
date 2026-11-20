@@ -1063,6 +1063,26 @@
       "column": "public.helpdesk_request_keys.state",
       "value": "pending",
       "reason": "CHECK: helpdesk_rk_state/helpdesk_rk_done: pending carries no completed_at; the probe row is pending."
+    },
+    {
+      "column": "public.migration_fidelity.class",
+      "value": "exact",
+      "reason": "CHECK: class is a closed set and ties diff and reason to it; the probe row is an exact item."
+    },
+    {
+      "column": "public.migration_fidelity.reason",
+      "value": "",
+      "reason": "CHECK: reason is empty exactly for exact/changed items; the probe row is exact."
+    },
+    {
+      "column": "public.migration_fidelity.item_kind",
+      "value": "probe",
+      "reason": "CHECK: item_kind matches ^[a-z][a-z0-9_]{0,63}$."
+    },
+    {
+      "column": "public.migration_proposals.class",
+      "value": "exact",
+      "reason": "CHECK: a proposal exists only for exact or changed items."
     }
   ]
 }

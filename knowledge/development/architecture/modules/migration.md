@@ -34,7 +34,7 @@ tier: server
 - **Quotas:** at most 3 active (`quarantined`, `running`) jobs per tenant and 1 per actor. Plan refuses early; Apply re-counts under a per-tenant `pg_advisory_xact_lock`, so concurrent submissions cannot exceed them (`migration_quota_concurrent`). Plan does not know the actor, so the user quota is an Apply refusal (audited as a failed step).
 - **Quarantine:** every accepted job is `quarantined`. Nothing releases it yet: scan, release and the parsers are later tickets.
 
-## Fidelity report and proposal store (T-2062, migration 0084)
+## Fidelity report and proposal store (T-2062, migration 0091)
 
 - `migration_fidelity` (DM-92): one row per parsed item (`exact`, `changed` + diff, `manual`, `not_supported` + reason code). `migration_proposals` (DM-93): one inert proposal per `exact`/`changed` item. Both tenant tables, forced RLS, insert-only for the runtime role. The proposal's class is part of its foreign key to the fidelity row, so the database itself refuses a proposal for a `manual` or `not_supported` item.
 - **Action `migration.fidelity.record`** (audit `migration.fidelity.recorded`, permission `migration.import`): takes every item of a *running* job once (`ErrJobNotRunning`, `ErrAlreadyRecorded`, `ErrNoSuchJob`). The importer *describes* items (`Item`); `Classify` decides server-side, in Plan. Precedence: never-imported (§6.4: tenant-owner, `authz.NeverCrosses`/platform-only permissions, tier0 or unresolvable scope, credential, raw SQL, open request → `not_supported`) > script body (`manual`, HTML-escaped bounded text, never audited) > the importer's declared class. An importer cannot declare `manual`.

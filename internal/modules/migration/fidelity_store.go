@@ -2,11 +2,9 @@ package migration
 
 import (
 	"context"
-	"encoding/json"
+	jsonv2 "encoding/json/v2"
 	"errors"
 	"fmt"
-
-	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/skenzeriq/activediq/internal/platform/operation/step"
 	"github.com/skenzeriq/activediq/internal/platform/store"
@@ -42,13 +40,13 @@ func insertFidelity(ctx context.Context, s step.Step, tenantID, jobID string, ro
 		if d == nil || c.Class != ClassChanged {
 			d = []DiffEntry{}
 		}
-		b, err := json.Marshal(d)
+		b, err := jsonv2.Marshal(d)
 		if err != nil {
 			return fmt.Errorf("migration: encode diff: %w", err)
 		}
 		diff[i] = string(b)
 		if c.Proposal != nil {
-			g, err := json.Marshal(c.Proposal.Grants)
+			g, err := jsonv2.Marshal(c.Proposal.Grants)
 			if err != nil {
 				return fmt.Errorf("migration: encode grants: %w", err)
 			}
@@ -79,8 +77,7 @@ func insertFidelity(ctx context.Context, s step.Step, tenantID, jobID string, ro
 }
 
 func recordErr(what string, err error) error {
-	var pg *pgconn.PgError
-	if errors.As(err, &pg) && pg.Code == "23505" {
+	if store.SQLState(err) == "23505" {
 		return ErrAlreadyRecorded
 	}
 	return fmt.Errorf("migration: insert %s: %w", what, err)
@@ -135,7 +132,7 @@ func listFidelity(ctx context.Context, tx store.Tx, jobID string, fn func(Fideli
 		if err := rows.Scan(&r.Seq, &r.Ref, &r.Kind, &r.Name, &r.Class, &r.Reason, &diff, &r.Detail, &r.HasProposal); err != nil {
 			return err
 		}
-		if err := json.Unmarshal([]byte(diff), &r.Diff); err != nil {
+		if err := jsonv2.Unmarshal([]byte(diff), &r.Diff); err != nil {
 			return fmt.Errorf("migration: stored diff unreadable: %w", err)
 		}
 		if err := fn(r); err != nil {

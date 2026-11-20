@@ -2,7 +2,8 @@ package migration
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	jsonv2 "encoding/json/v2"
 	"fmt"
 	"html"
 	"regexp"
@@ -75,7 +76,7 @@ type Item struct {
 	// Credential, RawSQL and OpenRequest flag content that is never imported (§6.4).
 	Credential, RawSQL, OpenRequest bool
 	// Config is the intended configuration as a JSON object; Grants the privileges it carries.
-	Config json.RawMessage
+	Config jsontext.Value
 	Grants []Grant
 }
 
@@ -97,8 +98,8 @@ type Classified struct {
 
 // ProposalBody is the inert stored form of a proposal.
 type ProposalBody struct {
-	Config json.RawMessage `json:"config"`
-	Grants []Grant         `json:"grants"`
+	Config jsontext.Value `json:"config"`
+	Grants []Grant        `json:"grants"`
 }
 
 var (
@@ -190,9 +191,9 @@ func neverImported(ctx context.Context, tx store.Tx, r Tier0Resolver, it Item) (
 	return "", nil
 }
 
-func isObject(b json.RawMessage) bool {
-	var m map[string]json.RawMessage
-	return json.Unmarshal(b, &m) == nil && m != nil
+func isObject(b jsontext.Value) bool {
+	var m map[string]jsontext.Value
+	return jsonv2.Unmarshal(b, &m) == nil && m != nil
 }
 
 // escapeText makes imported text inert for any renderer: valid UTF-8, HTML-escaped, bounded. It is stored
