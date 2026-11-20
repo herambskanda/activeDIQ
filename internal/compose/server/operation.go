@@ -46,6 +46,9 @@ func buildOperation(holdsMinter func() bool, db *store.DB, facts operation.LiveF
 	if sh, ok := authzr.(operation.SiteHints); ok { // the rbac authorizer reads the assignments' site preferences (ADM-133)
 		cfg.Sites = sh
 	}
+	if ta, ok := authzr.(operation.TemplateAuthz); ok { // *rbac.Authorizer: the ADM-132 Template gate (ADR-0015 D1)
+		cfg.TemplateAuthz = ta
+	}
 	r, err := operation.NewRunner(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("server: operation runner: %w", err)
@@ -122,3 +125,6 @@ func (c connectionCredentials) CredentialOf(ctx context.Context, t tenant.ID, id
 }
 
 var _ operation.SiteHints = (*rbac.Authorizer)(nil)
+
+// The rbac authorizer is the Runner's TemplateAuthz; buildOperation binds it by this assertion.
+var _ operation.TemplateAuthz = (*rbac.Authorizer)(nil)

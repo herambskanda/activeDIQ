@@ -158,6 +158,7 @@ func Run(ctx context.Context, cfg config.Config, getenv func(string) string) err
 		StepUp: console.StepUp, Attestation: attest,
 		Runner: ok.Runner, OwnerStatus: accountOwnerStatus{}, Deliveries: deliveries, Accounts: accountMail{}}
 	dirSvc := directoryServices(db)
+	dirSvc.Source, dirSvc.Reads = csrc, reads // the connector transport the directory module's user search reads over
 	perDCTr, err := client.NewGRPCPerDCTransport(csrc)
 	if err != nil {
 		return fmt.Errorf("server: per-DC transport: %w", err)
@@ -210,11 +211,6 @@ func Run(ctx context.Context, cfg config.Config, getenv func(string) string) err
 	if err != nil {
 		return err
 	}
-	dirTag, err := buildDirectory(ctx, db, conns, csrc, reads, txReadScopes{db: db, rs: readScopes})
-	if err != nil {
-		return err
-	}
-	tags = append(tags, dirTag)
 	if err := lateScopes.Bind(readScopes); err != nil {
 		return err
 	}

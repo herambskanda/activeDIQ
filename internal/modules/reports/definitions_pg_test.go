@@ -81,8 +81,7 @@ func defSetupExports(t *testing.T, s *storetest.Server, withLibrary, withExports
 		t.Fatal(err)
 	}
 	var rec apitest.Recorder
-	perms := apihost.Permissions{"reports.deliver.external", "reports.export", "reports.run", "reports.schedule", "reports.schedule.manage_all", "reports.replication.read", "reports.replication.configure",
-		"directory.read", "connections.read", "connections.takeover.attest", "siem.destination.manage", "siem.destination.read", "helpdesk.caller.verify"}
+	perms := apitest.Catalogue(doc)
 	srv, err := apihost.Build(doc, apitest.Conform(&rec, h.Bind()), pol, perms, apihost.Ports{Authn: &door{allow: true}, Authz: &door{allow: true}, Limits: &door{}, StepUp: &door{}})
 	if err != nil {
 		t.Fatal(err)
@@ -139,10 +138,9 @@ func TestListReportDefinitionsEveryShippedDefinitionOnceInStableOrder(t *testing
 		if code != 200 {
 			t.Fatalf("list: %d %v", code, all)
 		}
-		// The order is the category order, then the title: users (Account expiry, Locked-out users, Logon
-		// activity, Users), passwords (Password changes, Password expiry), groups (Group members, Groups,
+		// The order is the category order, then the title: users (sorted by title, incl. the batch 6 user-attribute reports), passwords (Password changes, Password expiry), groups (Group members, Groups,
 		// Groups for users, Not in any group), computers (Computer inactivity, Computers), contacts, OUs.
-		want := []string{"usr-02", "usr-05", "usr-03", "usr-04", "usr-06", "usr-01", "pwd-02", "pwd-04", "pwd-01", "pwd-03", "grp-05", "grp-02", "grp-01", "grp-03", "grp-04", "cmp-02", "cmp-03", "cmp-01", "ctc-02", "ctc-01", "ou-01", "ou-02"}
+		want := []string{"usr-02", "usr-11", "usr-05", "usr-03", "usr-08", "usr-04", "usr-07", "usr-09", "usr-06", "usr-01", "pwd-02", "pwd-04", "pwd-01", "pwd-03", "grp-05", "grp-02", "grp-01", "grp-03", "grp-04", "cmp-02", "cmp-03", "cmp-01", "ctc-02", "ctc-01", "ou-01", "ou-02"}
 		if got := ids(all); !slices.Equal(got, want) {
 			t.Fatalf("ids = %v, want %v", got, want)
 		}
@@ -256,7 +254,7 @@ func TestListReportDefinitionsSearchByMEName(t *testing.T) {
 		}
 
 		code, users := e.get("/api/v1/reports/definitions?category=users")
-		if code != 200 || !slices.Equal(ids(users), []string{"usr-02", "usr-05", "usr-03", "usr-04", "usr-06", "usr-01"}) {
+		if code != 200 || !slices.Equal(ids(users), []string{"usr-02", "usr-11", "usr-05", "usr-03", "usr-08", "usr-04", "usr-07", "usr-09", "usr-06", "usr-01"}) {
 			t.Errorf("category users: %d %v", code, ids(users))
 		}
 		if code, other := e.get("/api/v1/reports/definitions?category=groups"); code != 200 || !slices.Equal(ids(other), []string{"grp-05", "grp-02", "grp-01", "grp-03", "grp-04"}) {

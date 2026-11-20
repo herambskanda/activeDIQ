@@ -64,9 +64,9 @@
       "mintsTenantID": true
     },
     {
-      "package": "internal/compose/server",
-      "function": "reportSchema",
-      "reason": "Start-up compiles the report datasets against the public schema catalogue (pg_class, pg_attribute) before the install tenant exists, so the read runs outside a tenant context under WithPlatform. The catalogue is identical for every tenant and holds names and types only, never a tenant row; the result is the immutable schema the SQL registry checks identifiers against (T-1104).",
+      "package": "internal/modules/directory",
+      "function": "catalogSchema",
+      "reason": "Start-up compiles the report datasets against the public schema catalogue (pg_class, pg_attribute) before the install tenant exists, so the read runs outside a tenant context under WithPlatform. The catalogue is identical for every tenant and holds names and types only, never a tenant row; the result is the immutable schema the search index compiles its SQL identifiers against (T-1104, T-1865, ADR-0013).",
       "withPlatform": true,
       "mintsTenantID": false
     },
@@ -1103,6 +1103,26 @@
       "column": "public.report_schedule_fires.state",
       "value": "queued",
       "reason": "CHECK: state is one of a closed set (report_schedule_fires_state_check)."
+    },
+    {
+      "column": "public.migration_fidelity.class",
+      "value": "exact",
+      "reason": "CHECK: class is a closed set and ties diff and reason to it; the probe row is an exact item."
+    },
+    {
+      "column": "public.migration_fidelity.reason",
+      "value": "",
+      "reason": "CHECK: reason is empty exactly for exact/changed items; the probe row is exact."
+    },
+    {
+      "column": "public.migration_fidelity.item_kind",
+      "value": "probe",
+      "reason": "CHECK: item_kind matches ^[a-z][a-z0-9_]{0,63}$."
+    },
+    {
+      "column": "public.migration_proposals.class",
+      "value": "exact",
+      "reason": "CHECK: a proposal exists only for exact or changed items."
     }
   ]
 }

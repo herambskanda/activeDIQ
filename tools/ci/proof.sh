@@ -93,6 +93,20 @@ must_fail_with "fitness-modules M7 on a platform package whose only row is in §
 bpdoc "$(bprow '`other` (+`kernel`)')" "$(bprow '`directory`')" >"$bp/blueprint.md"
 must_fail_with "fitness-modules M7 does not count a (+sub) mention" 'internal/platform/kernel has no row in blueprint §5.1' go run ./tools/fitness/modules -root "$fit"
 bpdoc "$(bprow '`kernel`')" "$(bprow '`directory`')" >"$bp/blueprint.md"
+# M3a (ADR-0015 D3): module lists and module pages, end to end through the CLI.
+mkdir -p "$fit/internal/modules/foo" "$fit/internal/compose/server" "$bp/modules" "$fit/migrations" "$fit/internal/platform/store/owners"
+printf 'package foo\n\nconst ModuleID = "foo"\n' >"$fit/internal/modules/foo/id.go"
+must_fail_with "fitness-modules M3a on a module with no generated list" "the module list is missing" go run ./tools/fitness/modules -root "$fit"
+go run ./tools/gen/modules -root "$fit" >/dev/null 2>&1 || true
+must_fail_with "fitness-modules M3a on a module with no architecture page" "has no architecture page" go run ./tools/fitness/modules -root "$fit"
+printf '# foo\n' >"$bp/modules/foo.md"
+must_pass "fitness-modules M3a on a module with a list and a page" go run ./tools/fitness/modules -root "$fit"
+printf '// edited\n' >>"$fit/internal/compose/server/modules.gen.go"
+must_fail_with "fitness-modules M3a on a hand-edited module list" "stale or hand-edited" go run ./tools/fitness/modules -root "$fit"
+go run ./tools/gen/modules -root "$fit" >/dev/null 2>&1 || true
+printf '# ghost\n' >"$bp/modules/ghost.md"
+must_fail_with "fitness-modules M3a on a page with no module" "has no module" go run ./tools/fitness/modules -root "$fit"
+rm -f "$bp/modules/ghost.md"
 
 # --- fitness-api (ADR-0004 A1, A3, A5, A7 static, A8, A10, A11, A12, A13, self-test, inactive reporting), the real CLI
 # The per-rule proofs are the tool's own tests (go test ./tools/fitness/api); this is the command line.
@@ -901,12 +915,12 @@ import "sr.test/internal/platform/authz"
 func Mine(s authz.ReadScope) bool { return s.Admits(7) }
 GO
 must_fail_with "fitness-search SE1 on ReadScope.Admits outside authz (the second renderer)" 'internal/modules/users/u.go:5 SE1 \[scope-members\]' "$srbin" -root "$sr" -static-only
-fresh_sr; sr_put internal/modules/search/s.go <<'GO'
+fresh_sr; sr_put internal/directory/search/s.go <<'GO'
 package search
 
 const q = "SELECT guid FROM inventory_objects WHERE sam ILIKE $1"
 GO
-must_fail_with "fitness-search SE2 on an ILIKE pattern in search SQL" 'internal/modules/search/s.go:3 SE2 \[pattern' "$srbin" -root "$sr" -static-only
+must_fail_with "fitness-search SE2 on an ILIKE pattern in search SQL" 'internal/directory/search/s.go:3 SE2 \[pattern' "$srbin" -root "$sr" -static-only
 fresh_sr; sr_put migrations/0002_trgm.sql <<'SQL'
 CREATE VIEW public.near AS SELECT a.key FROM public.inventory_search_keys a WHERE a.key % 'abc';
 SQL
@@ -1371,6 +1385,20 @@ cp "$root/.github/workflows/release.yml" "$wf/"; sed -i -E 's/(uses: actions\/ch
 must_fail_with "workflows-check on an unpinned action" 'not pinned' tools/ci/workflows-check.sh "$wf"
 cp "$root/.github/workflows/release.yml" "$wf/"; sed -i 's/sign verify/sign noop/' "$wf/release.yml"
 must_fail_with "workflows-check on a release that does not verify" 'without verifying' tools/ci/workflows-check.sh "$wf"
+cp "$root/.github/workflows/release.yml" "$wf/"; sed -i 's|builtmsi -require|builtmsi|' "$wf/release.yml"
+must_fail_with "workflows-check on a release whose built-MSI gate dropped -require (T-0724)" 'built-MSI gate would be inactive' tools/ci/workflows-check.sh "$wf"
+cp "$root/.github/workflows/release.yml" "$wf/"; sed -i 's|name: agent-msi|name: agent-msi-x|' "$wf/release.yml"
+must_fail_with "workflows-check on a built-MSI gate with no agent-msi download before it (T-0724)" 'agent-msi artefact is not downloaded' tools/ci/workflows-check.sh "$wf"
+cp "$root/.github/workflows/release.yml" "$wf/"; sed -i 's|download-artifact@|upload-artifact@|' "$wf/release.yml"
+must_fail_with "workflows-check on a release that only uploads agent-msi, never downloads it (T-0724)" 'agent-msi artefact is not downloaded' tools/ci/workflows-check.sh "$wf"
+cp "$root/.github/workflows/release.yml" "$wf/"
+sed -i '0,/contents: read/s//contents: write/' "$wf/release.yml"
+must_fail_with "workflows-check on a release with write permissions at the top level (T-0724)" 'top-level permissions grant contents: write' tools/ci/workflows-check.sh "$wf"
+cp "$root/.github/workflows/release.yml" "$wf/"; sed -i '/runs-on: windows-2022/{n;n;s/contents: read/contents: write/}' "$wf/release.yml"
+must_fail_with "workflows-check on a build job that can write contents (T-0724)" 'job build-msi requests contents: write' tools/ci/workflows-check.sh "$wf"
+cp "$root/.github/workflows/release.yml" "$wf/"; sed -i '0,/persist-credentials: false/{/persist-credentials: false/d}' "$wf/release.yml"
+must_fail_with "workflows-check on a checkout that keeps the token (T-0724)" 'has no persist-credentials: false' tools/ci/workflows-check.sh "$wf"
+cp "$root/.github/workflows/release.yml" "$wf/"
 
 # --- fitness-agent-host (T-0554) ----------------------------------------------------------------
 # The Go-test half (P1-P8, F1) is judged from `go test -json`; judgeTests' cases fail on a failed,
@@ -1763,7 +1791,7 @@ mk_msi() {
   mkdir -p "$d/obj"
   ( cd "$d" && printf '<?xml version="1.0"?>\n<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi"><Product Id="*" Name="x" Language="1033" Version="1.0.0" Manufacturer="m" UpgradeCode="11111111-2222-3333-4444-555555555555"><Package Compressed="yes" InstallerVersion="500"/><Media Id="1" Cabinet="a.cab" EmbedCab="yes"/><Directory Id="TARGETDIR" Name="SourceDir"><Directory Id="AgentDir" Name="agent"><Component Id="C1" Guid="11111111-2222-3333-4444-555555555556"><File Id="F1" Source="obj/gen.wxs" KeyPath="yes"/><ServiceInstall Id="Svc" Name="activeDIQAgent" Type="ownProcess" Start="auto" ErrorControl="normal" Account="%s"/></Component></Directory></Directory><Feature Id="F" Level="1"><ComponentRef Id="C1"/></Feature></Product></Wix>\n' "$acct" >obj/gen.wxs \
     && wixl -o "$n.msi" obj/gen.wxs \
-    && printf 'MsiServiceConfig\tName\tEvent\tConfigType\tArgument\tComponent_\r\ns72\ts255\ti2\ti2\tL255\ts72\r\nMsiServiceConfig\tMsiServiceConfig\r\nc1\tactiveDIQAgent\t1\t3\t%s\tC1\r\nc2\tactiveDIQAgent\t1\t4\t%s\tC1\r\n' "$sid" "$privs" >MsiServiceConfig.idt \
+    && printf 'MsiServiceConfig\tName\tEvent\tConfigType\tArgument\tComponent_\r\ns72\ts255\ti2\ti2\tL255\ts72\r\nMsiServiceConfig\tMsiServiceConfig\r\nc1\tactiveDIQAgent\t1\t5\t%s\tC1\r\nc2\tactiveDIQAgent\t1\t6\t%s\tC1\r\n' "$sid" "$privs" >MsiServiceConfig.idt \
     && msibuild "$n.msi" -i MsiServiceConfig.idt ) >"$d/build.log" 2>&1 || { echo "PROOF FAILED: building $n.msi"; cat "$d/build.log"; fails=$((fails + 1)); }
   if [ -n "$ca" ]; then
     ( cd "$d" && printf 'Action\tType\tSource\tTarget\r\ns72\ti2\tS64\tS255\r\nCustomAction\tAction\r\n%s\r\n' "$ca" >CustomAction.idt && msibuild "$n.msi" -i CustomAction.idt ) >>"$d/build.log" 2>&1 || { echo "PROOF FAILED: adding a CustomAction to $n.msi"; fails=$((fails + 1)); }
@@ -1785,7 +1813,7 @@ mk_msi action 'NT SERVICE\activeDIQAgent' 3 SeChangeNotifyPrivilege "$(printf 'S
 mk_msi dacl 'NT SERVICE\activeDIQAgent' 3 SeChangeNotifyPrivilege
 add_idt dacl MsiLockPermissionsEx 'MsiLockPermissionsEx\tLockObject\tTable\tSDDLText\r\ns72\ts72\ts32\tL0\r\nMsiLockPermissionsEx\tMsiLockPermissionsEx\r\nL1\tSvc\tServiceInstall\tD:(A;;GA;;;WD)\r\n'
 mk_msi neverapplies 'NT SERVICE\activeDIQAgent' 3 SeChangeNotifyPrivilege
-add_idt neverapplies MsiServiceConfig 'MsiServiceConfig\tName\tEvent\tConfigType\tArgument\tComponent_\r\ns72\ts255\ti2\ti2\tL255\ts72\r\nMsiServiceConfig\tMsiServiceConfig\r\nc1\tactiveDIQAgent\t2\t3\t3\tC1\r\nc2\tactiveDIQAgent\t2\t4\tSeChangeNotifyPrivilege\tC1\r\n'
+add_idt neverapplies MsiServiceConfig 'MsiServiceConfig\tName\tEvent\tConfigType\tArgument\tComponent_\r\ns72\ts255\ti2\ti2\tL255\ts72\r\nMsiServiceConfig\tMsiServiceConfig\r\nc1\tactiveDIQAgent\t2\t5\t3\tC1\r\nc2\tactiveDIQAgent\t2\t6\tSeChangeNotifyPrivilege\tC1\r\n'
 mk_msi selfreg 'NT SERVICE\activeDIQAgent' 3 SeChangeNotifyPrivilege
 add_idt selfreg SelfReg 'File_\tCost\r\ns72\tI2\r\nSelfReg\tFile_\r\nF1\t0\r\n'
 mk_msi critical 'NT SERVICE\activeDIQAgent' 3 SeChangeNotifyPrivilege
@@ -1799,7 +1827,7 @@ must_fail_with "fitness-built-msi on a DACL row keyed to the service (service-co
 must_fail_with "fitness-built-msi on settings that only apply on uninstall" 'does not apply on install' builtmsi -glob "$bm/neverapplies/neverapplies.msi"
 must_fail_with "fitness-built-msi on a SelfReg row (code run at install)" 'SelfReg row "F1"' builtmsi -glob "$bm/selfreg/selfreg.msi"
 must_fail_with "fitness-built-msi on a critical ErrorControl" 'ErrorControl' builtmsi -glob "$bm/critical/critical.msi"
-must_fail_with "fitness-built-msi when no MSI exists and one is required (release job)" 'no built MSI found' builtmsi -require -glob "$bm/none/*.msi"
+must_fail_with "fitness-built-msi when no MSI exists and one is required (release job)" 'no built MSI found \(-require\)' builtmsi -require -glob "$bm/none/*.msi"
 must_pass "fitness-built-msi prints inactive, not a pass, when no MSI exists" bash -c "go run ./tools/fitness/builtmsi -glob '$bm/none/*.msi' | grep -q '^fitness-built-msi: inactive'"
 
 # --- fitness-sso (T-0211, console-sso.md §13 FIT-SSO-1/2), the real CLI on throw-away trees ---------

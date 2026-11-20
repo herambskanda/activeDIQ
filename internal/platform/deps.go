@@ -4,6 +4,7 @@
 package platform
 
 import (
+	"github.com/skenzeriq/activediq/internal/platform/agentpolicy/signer"
 	"github.com/skenzeriq/activediq/internal/platform/audit"
 	"github.com/skenzeriq/activediq/internal/platform/authn"
 	"github.com/skenzeriq/activediq/internal/platform/jobs"
@@ -29,6 +30,9 @@ type Deps struct {
 	// with the datasets directory packages export and the ones modules register, then seals it.
 	// Nil until wired; Host methods on a nil host find no dataset.
 	Report *report.Host
+	// AgentPolicy signs the policy and keysets of the host agents (ADR-0007). Nil until the composition
+	// root wires the tenant DEK source (T-0598); agentfleet's Actions then refuse every run.
+	AgentPolicy *signer.Signer
 	// DB is the store. Nil until wired; a module that needs it then registers nothing that would use it.
 	DB *store.DB
 	// Jobs is the job registry the worker runs (EP-5). Modules never register on it directly: they

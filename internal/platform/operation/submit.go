@@ -237,7 +237,7 @@ func (r *Runner) planAndRoute(ctx context.Context, t tenant.ID, opID string, inp
 			return fmt.Errorf("plan transaction: %w", err)
 		}
 		var err error
-		steps, err = act.Plan(ctx, PlanContext{Tx: tx, Facts: pinnedReader{port: r.cfg.Facts, ad: d.Target == TargetAD, store: d.Target == TargetStore, pins: maps.Clone(op.Pins), dsas: maps.Clone(op.DSAs), tenant: t}, Pins: op.Pins, Tenant: t, Actor: op.Chain}, input)
+		steps, err = act.Plan(ctx, PlanContext{Tx: tx, Facts: pinnedReader{port: r.cfg.Facts, ad: d.Target == TargetAD, store: d.Target == TargetStore, pins: maps.Clone(op.Pins), dsas: maps.Clone(op.DSAs), tenant: t}, Pins: op.Pins, Tenant: t, Actor: op.Chain, Templates: r.templateGate(op.Chain, t)}, input)
 		return err
 	})
 	if perr == nil {
@@ -344,8 +344,13 @@ func (r *Runner) failPlan(ctx context.Context, t tenant.ID, op opRecord, cause e
 		if err := deleteOperationSecrets(ctx, tx, t, op.ID); err != nil {
 			return err
 		}
+		outcome, reason, tgt := audit.Failure, "plan_failed", authority.TargetRef{}
+		var pr *PlanRefusal
+		if errors.As(cause, &pr) && pr.valid() { // a typed refusal is a denied attempt carrying the Action's code
+			outcome, reason, tgt = audit.Denied, pr.Code, pr.Target
+		}
 		return r.emit(ctx, tx, audit.Event{ID: "op-" + op.ID + "-plan-failed", Kind: KindOperationCompleted, Actor: op.Chain,
-			Key: step.Key{Operation: step.OperationID(op.ID)}, Outcome: audit.Failure, Reason: "plan_failed", Details: detail("result", "plan_failed")})
+			Key: step.Key{Operation: step.OperationID(op.ID)}, Target: tgt, Outcome: outcome, Reason: reason, Details: detail("result", reason)})
 	})
 	if err != nil {
 		return Submission{}, err
