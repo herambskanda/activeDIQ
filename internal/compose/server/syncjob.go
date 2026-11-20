@@ -118,9 +118,9 @@ func (s *syncSupervisor) run(ctx context.Context, tid tenant.ID) {
 		n, err := s.enqueueActive(ctx, tid)
 		switch {
 		case err != nil && ctx.Err() == nil:
-			slog.Warn("server: queueing the directory sync failed; will retry", "err", err)
+			slog.Warn("server: queueing the directory sync failed; will retry", "tenant_id", tid.String(), "err", err)
 		case err == nil && n > 0:
-			slog.Info("server: directory sync queued", "connections", n)
+			slog.Info("server: directory sync queued", "tenant_id", tid.String(), "connections", n)
 		}
 	}
 	pass()

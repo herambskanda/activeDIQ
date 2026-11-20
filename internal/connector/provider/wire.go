@@ -4,6 +4,7 @@ import (
 	"encoding/hex"
 	"errors"
 
+	"github.com/skenzeriq/activediq/internal/connector/wirevalue"
 	"github.com/skenzeriq/activediq/internal/directory/attr/guid"
 	connectorv1 "github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1"
 )
@@ -26,12 +27,5 @@ func GUIDFromWire(g *connectorv1.Guid) (guid.GUID, error) {
 	return out, nil
 }
 
-// GUIDToWire is the inverse of GUIDFromWire.
-func GUIDToWire(g guid.GUID) *connectorv1.Guid {
-	s := g.String()
-	b, err := hex.DecodeString(s[:8] + s[9:13] + s[14:18] + s[19:23] + s[24:])
-	if err != nil { // String is canonical by construction
-		return &connectorv1.Guid{}
-	}
-	return &connectorv1.Guid{Value: b}
-}
+// GUIDToWire is the inverse of GUIDFromWire (the one definition lives in wirevalue).
+func GUIDToWire(g guid.GUID) *connectorv1.Guid { return wirevalue.GUIDToWire(g) }

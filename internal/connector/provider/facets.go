@@ -2,12 +2,14 @@ package provider
 
 import (
 	"context"
+	"time"
 
 	"github.com/skenzeriq/activediq/internal/connector/ad"
 	"github.com/skenzeriq/activediq/internal/connector/tier0"
 	adguid "github.com/skenzeriq/activediq/internal/directory/attr/guid"
 	"github.com/skenzeriq/activediq/internal/directory/dn"
 	"github.com/skenzeriq/activediq/internal/directory/ldapfilter"
+	"github.com/skenzeriq/activediq/internal/directory/sd"
 	connectorv1 "github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1"
 )
 
@@ -45,6 +47,41 @@ type Searcher interface {
 	ParseFilter(f *connectorv1.Filter) (ldapfilter.Filter, error)
 	// ScopedSearch streams the matches under each root (ad.Session.ScopedSearch semantics).
 	ScopedSearch(ctx context.Context, req ad.ScopedRequest, fn func(*ad.Entry) error) (ad.ScopedResult, error)
+}
+
+// PasswordChanger is the optional Cannot Change Password half of the object-reading facets. A
+// provider without it answers include_password_change with NOT_CONFIRMED (CAPABILITY_UNSUPPORTED as
+// the code).
+type PasswordChanger interface {
+	// ReadPasswordChange reads the object's DACL (DACL-only SD flags, never the SACL) and classifies
+	// it. It returns the objectGUID the state belongs to; the state is NotConfirmed exactly when err
+	// is non-nil. No descriptor byte leaves the connector.
+	ReadPasswordChange(ctx context.Context, id adguid.GUID) (adguid.GUID, sd.PasswordChange, error)
+}
+
+// ChildCounter is the optional child-count half of the object-reading facets (§5.3a). A provider
+// without it answers a request with include_child_count with CAPABILITY_UNSUPPORTED.
+type ChildCounter interface {
+	// CountChildren counts the immediate children of the object, at most limit (ad.Session.CountChildren).
+	CountChildren(ctx context.Context, id adguid.GUID, limit uint32) (n uint32, capped bool, err error)
+}
+
+// Feeder is the change-feed half of the object-reading facets (connector-contract §6). A provider
+// without it answers ChangeFeed with CAPABILITY_UNSUPPORTED.
+type Feeder interface {
+	// ManagesNC reports whether the connection manages the naming context with this objectGUID: the
+	// domain NC the bound DC serves, and nothing else.
+	ManagesNC(ctx context.Context, nc adguid.GUID) (bool, error)
+	// CheckFeedAttributes refuses wildcards, read-only constructed attributes and SecretAttrs members
+	// before any request reaches the DC.
+	CheckFeedAttributes(names []string) error
+	// HighestCommittedUSN is the bound DC's highestCommittedUSN, read now.
+	HighestCommittedUSN(ctx context.Context) (int64, error)
+	// DeletionLifetime is the smaller of tombstoneLifetime and msDS-DeletedObjectLifetime.
+	DeletionLifetime(ctx context.Context) (time.Duration, error)
+	// DirSyncCycle runs DirSync responses from the request's cookie to the end of the cycle
+	// (ad.Session.DirSyncCycle semantics).
+	DirSyncCycle(ctx context.Context, req ad.DirSyncRequest, fn func(ad.DirSyncPage) error) (ad.DirSyncPage, error)
 }
 
 // Describer is the optional topology half of the object-reading facets. A provider without it

@@ -28,6 +28,14 @@ func pinRefusal() error {
 
 // mapAD maps a session error to the contract code; dc names the DC that produced it.
 func mapAD(err error, dc *connectorv1.DcIdentity) error {
+	code, retry, msg := classifyAD(err)
+	r := refusal.New(code, retry, "", msg)
+	r.Err.Dc = proto.Clone(dc).(*connectorv1.DcIdentity)
+	return r
+}
+
+// classifyAD is the code, retry advice and fixed text of a session error.
+func classifyAD(err error) (connectorv1.ErrorCode, connectorv1.RetryAdvice, string) {
 	code, retry, msg := connectorv1.ErrorCode_ERROR_CODE_PROVIDER_FAILURE, connectorv1.RetryAdvice_RETRY_ADVICE_NEVER, "directory read failed"
 	switch ad.CodeOf(err) {
 	case ad.CodeObjectNotFound:
@@ -47,7 +55,12 @@ func mapAD(err error, dc *connectorv1.DcIdentity) error {
 	case ad.CodeUnexpectedReferral:
 		code, msg = connectorv1.ErrorCode_ERROR_CODE_UNEXPECTED_REFERRAL, "unexpected referral"
 	}
-	r := refusal.New(code, retry, "", msg)
-	r.Err.Dc = proto.Clone(dc).(*connectorv1.DcIdentity)
+	return code, retry, msg
+}
+
+// classNotAllowed: include_child_count on an object that is not an organizationalUnit or container.
+func classNotAllowed() error {
+	r := refusal.New(connectorv1.ErrorCode_ERROR_CODE_INVALID_ARGUMENT, connectorv1.RetryAdvice_RETRY_ADVICE_NEVER, "", "invalid request")
+	r.Err.Details = &connectorv1.ConnectorError_RejectedInput{RejectedInput: &connectorv1.RejectedInputDetails{RuleId: "ClassNotAllowed", Field: "include_child_count"}}
 	return r
 }

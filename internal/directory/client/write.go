@@ -97,6 +97,9 @@ var kindTable = map[string]kindRow{
 	DigestObjectMove:            {Kind: connectorv1.WriteKind_WRITE_KIND_OBJECT_MOVE, Class: ClassMove},
 	DigestObjectRename:          {Kind: connectorv1.WriteKind_WRITE_KIND_OBJECT_RENAME, Class: ClassMove},
 	DigestObjectRestore:         {Kind: connectorv1.WriteKind_WRITE_KIND_OBJECT_RESTORE, Class: ClassMove},
+	// Kinds 11 and 12 (T-1913): outside every TM-D28 attribute class; guarded by TM-D18 on the group.
+	writechange.KeyGroupMemberAdd:    {Kind: connectorv1.WriteKind_WRITE_KIND_GROUP_MEMBER_ADD, Class: "none"},
+	writechange.KeyGroupMemberRemove: {Kind: connectorv1.WriteKind_WRITE_KIND_GROUP_MEMBER_REMOVE, Class: "none"},
 }
 
 // kindClass is the TM-D28 class of each registered kind ("none" for a tightening, contract §8.10.1).
@@ -106,6 +109,8 @@ var kindClass = map[string]string{
 	accountkind.KeyUnlock:        "unlock",
 	accountkind.KeyEnable:        "enable",
 	accountkind.KeyDisable:       "none",
+	// Kind 13 (T-1913): TM-D28 class reset_computer, the guarded key unicodePwd[computer].
+	accountkind.KeyComputerReset: "reset_computer",
 }
 
 func init() {
@@ -330,6 +335,11 @@ func (c *Client) Write(ctx context.Context, s step.Step, op WriteOp) (Result, er
 	return Result{Apply: resp}, nil
 }
 
+// groupMemberKind is true for kinds 11 and 12, whose target is the group (ADR-0017).
+func groupMemberKind(k connectorv1.WriteKind) bool {
+	return k == connectorv1.WriteKind_WRITE_KIND_GROUP_MEMBER_ADD || k == connectorv1.WriteKind_WRITE_KIND_GROUP_MEMBER_REMOVE
+}
+
 func (op WriteOp) derive() (wire, error) {
 	if op.DigestKind == "" || op.Target.Connection == "" {
 		return wire{}, ErrInvalidOp
@@ -374,7 +384,15 @@ func (op WriteOp) derive() (wire, error) {
 				return wire{}, fmt.Errorf("%w: identifier is not canonical", ErrInvalidOp)
 			}
 		}
-		if kind != connectorv1.WriteKind_WRITE_KIND_OBJECT_CREATE && op.Target.Class != "" {
+		switch {
+		case kind == connectorv1.WriteKind_WRITE_KIND_OBJECT_CREATE:
+		case groupMemberKind(kind):
+			// ADR-0017: the authz class of the group target. It is an assertion only: never hashed and
+			// never on the wire; the connector reads the group's class live and refuses a non-group.
+			if op.Target.Class != "" && op.Target.Class != "group" {
+				return wire{}, fmt.Errorf("%w: group-member target class", ErrInvalidOp)
+			}
+		case op.Target.Class != "":
 			return wire{}, fmt.Errorf("%w: class is read live", ErrInvalidOp)
 		}
 		if cc := change.GetObjectCreate(); cc != nil {

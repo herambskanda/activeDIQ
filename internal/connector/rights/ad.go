@@ -126,6 +126,9 @@ type ADResult struct {
 	// C13Groups are the C13 group GUIDs this snapshot found. The caller pins them at first discovery
 	// (TM-D26 rule 10), so a rename between onboarding and the first write cannot lose them.
 	C13Groups []adguid.GUID
+	// Tokens is the access-token SID set this check evaluated (T-1741). StreamAD records it in the
+	// EpochState only when the verdict is PASS.
+	Tokens TokenSet
 }
 
 // Blocking reports whether any finding has block severity.
@@ -157,6 +160,8 @@ type adCheck struct {
 	// the universal ones every authenticated principal holds, so a right is blamed on the identity's
 	// own delegation and not on a baseline ACE that grants everyone.
 	tokens, own map[string]bool
+	// tokenSet is the exported form of tokens (T-1741), set once the identity is read.
+	tokenSet TokenSet
 
 	set     map[string]*member
 	out     []Finding
@@ -189,7 +194,7 @@ func VerifyAD(ctx context.Context, d provider.RightsDirectory, in ADInput) (*ADR
 	for _, f := range in.EnabledFamilies {
 		c.famSet[f] = true
 	}
-	id, err := d.Read(ctx, in.Identity, []string{"objectSid", "tokenGroups", "userAccountControl", attrAllowedToDelegateTo, "primaryGroupID", "memberOf"}, ad.ReadOptions{})
+	id, err := d.Read(ctx, in.Identity, []string{"objectSid", "tokenGroups", "userAccountControl", attrAllowedToDelegateTo, "primaryGroupID", "memberOf", "sIDHistory"}, ad.ReadOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", errNoIdentity, err)
 	}
@@ -217,8 +222,18 @@ func VerifyAD(ctx context.Context, d provider.RightsDirectory, in ADInput) (*ADR
 	for _, s := range implicitNetworkLogonSIDs {
 		c.tokens[s] = true
 	}
+	// The access token also holds the identity's sIDHistory (it is read in the same identity read).
+	// A value that does not decode leaves the exported TokenSet incomplete rather than failing the run.
+	hist, herr := id.SIDs("sIDHistory")
+	for _, h := range hist {
+		c.tokens[h.String()] = true
+		if !universalSID(h) {
+			c.own[h.String()] = true
+		}
+	}
+	c.tokenSet = c.exportTokens(groups, hist, herr == nil)
 
-	res := &ADResult{Identity: &v1.AdObservedIdentity{ObjectGuid: pbGuid(c.idGUID), ObjectSid: &v1.Sid{Value: c.idSID.Bytes()}}}
+	res := &ADResult{Tokens: c.tokenSet.Clone(), Identity: &v1.AdObservedIdentity{ObjectGuid: pbGuid(c.idGUID), ObjectSid: &v1.Sid{Value: c.idSID.Bytes()}}}
 
 	snap := in.Snapshot
 	if snap == nil {
@@ -287,6 +302,19 @@ func objKey(f *v1.RightsFinding) string {
 		return ""
 	}
 	return string(f.Object.Value)
+}
+
+// exportTokens builds the exported TokenSet from what the identity read returned. Complete needs a
+// domain SID, a non-empty tokenGroups and a sIDHistory that decoded.
+func (c *adCheck) exportTokens(groups, hist []sid.SID, histOK bool) TokenSet {
+	all := append([]sid.SID{c.idSID}, groups...)
+	all = append(all, hist...)
+	for _, s := range implicitNetworkLogonSIDs {
+		if v, err := sid.Parse(s); err == nil {
+			all = append(all, v)
+		}
+	}
+	return newTokenSet(c.idGUID, c.domSID, all, c.hasDom && len(groups) > 0 && histOK)
 }
 
 func (c *adCheck) sortedSet() []*member {

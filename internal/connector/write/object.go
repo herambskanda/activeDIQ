@@ -14,7 +14,7 @@ import (
 	"github.com/skenzeriq/activediq/internal/directory/attr/guid"
 	"github.com/skenzeriq/activediq/internal/directory/dn"
 	"github.com/skenzeriq/activediq/internal/platform/authority"
-	"github.com/skenzeriq/activediq/internal/platform/operation/step"
+	"github.com/skenzeriq/activediq/internal/platform/operation/digest"
 	connectorv1 "github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1"
 )
 
@@ -234,7 +234,7 @@ func moveOp() WriteOp {
 			if err != nil {
 				return nil, err
 			}
-			return structureDigest(DigestObjectMove, req.GetConnection(), req.GetTarget(), []step.Attr{
+			return structureDigest(DigestObjectMove, req.GetConnection(), req.GetTarget(), []digest.Attr{
 				{Name: AttrNewParent, Values: []string{np.String()}}, {Name: AttrNewParentNC, Values: []string{nc.String()}}})
 		},
 		Plan:  planMove,
@@ -264,7 +264,7 @@ func renameOp() WriteOp {
 			if err != nil {
 				return nil, err
 			}
-			return structureDigest(DigestObjectRename, req.GetConnection(), req.GetTarget(), []step.Attr{{Name: AttrNewRDN, Values: []string{v}}})
+			return structureDigest(DigestObjectRename, req.GetConnection(), req.GetTarget(), []digest.Attr{{Name: AttrNewRDN, Values: []string{v}}})
 		},
 		Plan:  planRename,
 		Apply: applyRename,
@@ -302,7 +302,7 @@ func restoreOp() WriteOp {
 			if err != nil {
 				return nil, err
 			}
-			return structureDigest(DigestObjectRestore, req.GetConnection(), req.GetTarget(), []step.Attr{
+			return structureDigest(DigestObjectRestore, req.GetConnection(), req.GetTarget(), []digest.Attr{
 				{Name: AttrNewParent, Values: []string{np.String()}}, {Name: AttrNewParentNC, Values: []string{nc.String()}},
 				{Name: AttrRDN, Values: []string{v}}})
 		},
@@ -313,7 +313,7 @@ func restoreOp() WriteOp {
 
 // structureDigest is the digest the Action's step carries: the kinds put nothing in Class, Parent or
 // RDN of the target; everything the write adds is an attribute.
-func structureDigest(key string, conn *connectorv1.ConnectionRef, t *connectorv1.WriteTarget, attrs []step.Attr) ([]byte, error) {
+func structureDigest(key string, conn *connectorv1.ConnectionRef, t *connectorv1.WriteTarget, attrs []digest.Attr) ([]byte, error) {
 	obj, err := fromWire(t.GetObject())
 	if err != nil {
 		return nil, err
@@ -322,7 +322,7 @@ func structureDigest(key string, conn *connectorv1.ConnectionRef, t *connectorv1
 	if err != nil {
 		return nil, err
 	}
-	d := step.Compute(key, authority.TargetRef{Connection: conn.GetConnectionId(), GUID: obj.String(), NC: authority.NamingContextID(nc.String())}, attrs)
+	d := digest.Compute(key, authority.TargetRef{Connection: conn.GetConnectionId(), GUID: obj.String(), NC: authority.NamingContextID(nc.String())}, attrs)
 	return d[:], nil
 }
 

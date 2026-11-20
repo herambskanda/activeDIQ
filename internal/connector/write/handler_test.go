@@ -108,8 +108,11 @@ func TestNonTier0IsUnsupported(t *testing.T) {
 	for _, sp := range accountkind.Specs() {
 		want[sp.Kind] = true
 	}
-	if len(operations) != len(want) || len(want) != 10 {
-		t.Fatalf("operation table holds %d kinds, want 10 (kinds 1-6 and the four account kinds)", len(operations))
+	// Kinds 11 and 12 (group member add and remove; T-1913); kind 13 is an accountkind spec.
+	want[connectorv1.WriteKind_WRITE_KIND_GROUP_MEMBER_ADD] = true
+	want[connectorv1.WriteKind_WRITE_KIND_GROUP_MEMBER_REMOVE] = true
+	if len(operations) != len(want) || len(want) != 13 {
+		t.Fatalf("operation table holds %d kinds, want 13 (kinds 1-6, the five account kinds and kinds 11-12)", len(operations))
 	}
 	for k := range operations {
 		if !want[k.Kind] || k.Provider != connectorv1.ProviderKind_PROVIDER_KIND_AD {

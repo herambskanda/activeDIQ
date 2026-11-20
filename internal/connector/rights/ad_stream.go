@@ -136,7 +136,12 @@ func StreamAD(ctx context.Context, d provider.RightsDirectory, epoch *EpochState
 		for _, g := range in.Correlated {
 			inputs = append(inputs, ReportedEntry{GUID: g.String(), Basis: tier0.C16})
 		}
-		n, err := epoch.Complete(ctx, guidText(vid), inputs)
+		// Only a PASS run leaves a token set for the §5.9.4 readability proof.
+		var tokens *TokenSet
+		if res.Verdict == v1.VerificationVerdict_VERIFICATION_VERDICT_PASS {
+			tokens = &res.Tokens
+		}
+		n, err := epoch.CompleteWithTokens(ctx, guidText(vid), inputs, tokens)
 		if err != nil {
 			return err
 		}

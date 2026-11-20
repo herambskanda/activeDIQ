@@ -14,13 +14,14 @@ import (
 	"github.com/skenzeriq/activediq/internal/connector/ad"
 	"github.com/skenzeriq/activediq/internal/connector/provider"
 	"github.com/skenzeriq/activediq/internal/connector/tier0"
+	"github.com/skenzeriq/activediq/internal/connector/wirevalue"
 	"github.com/skenzeriq/activediq/internal/connector/write/ops"
 	"github.com/skenzeriq/activediq/internal/directory/attr/guid"
 	"github.com/skenzeriq/activediq/internal/directory/dn"
 	"github.com/skenzeriq/activediq/internal/directory/ldapfilter"
 	"github.com/skenzeriq/activediq/internal/directory/writechange"
 	"github.com/skenzeriq/activediq/internal/platform/authority"
-	"github.com/skenzeriq/activediq/internal/platform/operation/step"
+	"github.com/skenzeriq/activediq/internal/platform/operation/digest"
 	connectorv1 "github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1"
 )
 
@@ -144,7 +145,7 @@ func objectDigest(req *connectorv1.ApplyRequest) ([]byte, error) {
 	default:
 		tr.GUID = obj
 	}
-	d := step.Compute(key, tr, attrs)
+	d := digest.Compute(key, tr, attrs)
 	return d[:], nil
 }
 
@@ -493,31 +494,6 @@ func editNames(edits []edit) []string {
 	return out
 }
 
-func attrValue(syn ldapfilter.Syntax, raw []byte) *connectorv1.AttributeValue {
-	s := string(raw)
-	switch syn {
-	case ldapfilter.SynInt32:
-		if n, err := strconv.ParseInt(s, 10, 32); err == nil {
-			return &connectorv1.AttributeValue{Value: &connectorv1.AttributeValue_Int32Value{Int32Value: int32(n)}}
-		}
-	case ldapfilter.SynInt64:
-		if n, err := strconv.ParseInt(s, 10, 64); err == nil {
-			return &connectorv1.AttributeValue{Value: &connectorv1.AttributeValue_Int64Value{Int64Value: n}}
-		}
-	case ldapfilter.SynBool:
-		return &connectorv1.AttributeValue{Value: &connectorv1.AttributeValue_Boolean{Boolean: strings.EqualFold(s, "TRUE")}}
-	case ldapfilter.SynGenTime:
-		if t, err := ad.ParseGeneralizedTime(s); err == nil {
-			return &connectorv1.AttributeValue{Value: &connectorv1.AttributeValue_Time{Time: &connectorv1.TimeValue{Kind: &connectorv1.TimeValue_At{At: timestamppb.New(t)}}}}
-		}
-	case ldapfilter.SynDN:
-		return &connectorv1.AttributeValue{Value: &connectorv1.AttributeValue_Dn{Dn: &connectorv1.DnValue{DisplayDn: s}}}
-	case ldapfilter.SynOctet:
-		return &connectorv1.AttributeValue{Value: &connectorv1.AttributeValue_Octets{Octets: append([]byte(nil), raw...)}}
-	}
-	return &connectorv1.AttributeValue{Value: &connectorv1.AttributeValue_Text{Text: s}}
-}
-
 func entryOf(e *ad.Entry, g guid.GUID, edits []edit) *connectorv1.DirectoryEntry {
 	out := &connectorv1.DirectoryEntry{ObjectGuid: toWire(g), Dn: targetEntryDN(e, g)}
 	for _, ed := range edits {
@@ -526,7 +502,11 @@ func entryOf(e *ad.Entry, g guid.GUID, edits []edit) *connectorv1.DirectoryEntry
 		}
 		a := &connectorv1.Attribute{Name: ed.name, Complete: true}
 		for _, r := range e.Raw(ed.name) {
-			a.Values = append(a.Values, attrValue(ed.syn, r))
+			v, err := wirevalue.Of(ed.name, ed.syn, r)
+			if err != nil { // the image never drops what is on the object: keep it as octets
+				v = wirevalue.Octets(r)
+			}
+			a.Values = append(a.Values, v)
 		}
 		out.Attributes = append(out.Attributes, a)
 	}

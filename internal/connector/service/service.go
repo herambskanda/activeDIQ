@@ -118,6 +118,10 @@ func (s *server) ScopedSearch(req *connectorv1.ScopedSearchRequest, st grpc.Serv
 	return s.read.ScopedSearch(req, st)
 }
 
+func (s *server) ChangeFeed(req *connectorv1.ChangeFeedRequest, st grpc.ServerStreamingServer[connectorv1.ChangeFeedResponse]) error {
+	return s.read.ChangeFeed(req, st)
+}
+
 func (s *server) Describe(ctx context.Context, req *connectorv1.DescribeRequest) (*connectorv1.DescribeResponse, error) {
 	return s.read.Describe(ctx, req)
 }

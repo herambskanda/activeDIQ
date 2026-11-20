@@ -27,15 +27,15 @@ type binding struct {
 
 var defaultBindings = []binding{
 	{"FCS-1", "SignServerLeaf is the only user of the server CA key: unseal only inside the call, zeroised, audited", "./internal/platform/fleet/fleetsql",
-		[]string{"TestServerCAKeyUsedOnlyBySignServerLeaf"}, false},
+		[]string{"TestServerCAKeyUsedOnlyBySignServerLeaf"}, true},
 	{"FCS-2", "SignServerLeaf output table: ServerAuth only, not a CA, no URI SAN, no wildcard, lifetime <= 30 days and <= CA not_after; each of those, a caller key or CSR, a name outside the endpoint set, and an inactive or near-expiry CA is refused", "./internal/platform/fleet/fleetsql",
-		[]string{"TestSignServerLeafOutput", "TestSignServerLeafRefusals"}, false},
+		[]string{"TestSignServerLeafOutput", "TestSignServerLeafRefusals"}, true},
 	{"FCS-3", "integration: the server CA is absent from the gateway client pool and TenantCAs, and a ClientAuth leaf signed by it is refused", "./internal/platform/fleet/gateway",
 		[]string{"TestServerCAAbsentFromClientPool", "TestClientAuthLeafSignedByServerCARefused"}, false},
 	{"FCS-4", "integration, two tenants on one listener: a tenant CA is never a dial root (a leaf signed by a tenant CA presented as the server is refused) and both tenants' enrolment material carries the same pin", "./internal/platform/fleet/dial",
 		[]string{"TestTenantCANeverDialRoot", "TestTwoTenantsSamePin"}, false},
 	{"FCS-5", "keys AAD: fleet_ca rows do not open under the installation DEK, fleet_server_ca values do not open under a tenant DEK", "./internal/platform/keys",
-		[]string{"TestInstallationDEKCannotOpenFleetCA"}, false},
+		[]string{"TestInstallationDEKCannotOpenFleetCA"}, true},
 	{"FCS-6", "the presented Certificate[] has length 2 (leaf, server CA) in the composed listener", "./internal/compose/server",
 		[]string{"TestFleetListenerPresentsLeafAndServerCA"}, false},
 }

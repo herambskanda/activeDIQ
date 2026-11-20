@@ -12,7 +12,7 @@ import (
 // repinTimeout bounds the network lookups of one repin run.
 const repinTimeout = 60 * time.Second
 
-// agentEventSource is the Application-log source the MSI registers (Agent.wxs util:EventSource) and
+// agentEventSource is the Application-log source `agentsetup configure-service` registers and
 // the agent logs under. Audit events must use it so SIEM rules on the documented source see them.
 const agentEventSource = "activeDIQ Agent"
 

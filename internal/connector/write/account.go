@@ -3,6 +3,7 @@ package write
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
@@ -50,6 +51,7 @@ func init() {
 func accountDecl(sp accountkind.Spec, k tier0.WriteKind) tier0.PropertyWrite {
 	keys := map[string][]string{
 		accountkind.KeyResetPassword: {"unicodePwd", "pwdLastSet"},
+		accountkind.KeyComputerReset: {"unicodePwd"},
 		accountkind.KeyUnlock:        {"lockoutTime"},
 		accountkind.KeyEnable:        {"userAccountControl"},
 		accountkind.KeyDisable:       {"userAccountControl"},
@@ -210,7 +212,23 @@ func classCheck(sp accountkind.Spec, st ad.AccountState) error {
 	if !st.HasUAC && sp.Key != accountkind.KeyUnlock {
 		return invalid("5", "UnreadableAttribute", "target")
 	}
+	if sp.Key == accountkind.KeyComputerReset && isClusterObject(st) {
+		return invalid("5", "ClusterObject", "target")
+	}
 	return nil
+}
+
+// isClusterObject reports whether the account is a failover-cluster name object or virtual computer
+// object: resetting it takes the cluster offline. The test is the cluster SPN service class
+// (contract §8.10.3 kind 13); that AD sets these SPNs on a CNO and VCO is [UNVERIFIED Windows], CC-WK-59.
+func isClusterObject(st ad.AccountState) bool {
+	for _, spn := range st.SPNs {
+		class, _, _ := strings.Cut(spn, "/")
+		if strings.EqualFold(class, "MSServerClusterMgmtAPI") || strings.EqualFold(class, "MSClusterVirtualServer") {
+			return true
+		}
+	}
+	return false
 }
 
 var errAlready = errors.New("write: already in the requested state")
@@ -252,6 +270,12 @@ func stateDigest(sp accountkind.Spec, st ad.AccountState) []byte {
 		i(int64(st.UAC))
 		i(st.LockoutTime)
 		put(hex.EncodeToString(st.SID))
+	case accountkind.KeyComputerReset:
+		// {uSNChanged, pwdLastSet, userAccountControl, objectSid} (contract §8.10.3 kind 13).
+		put(strconv.FormatUint(st.USN, 10))
+		i(st.PwdLastSet)
+		i(int64(st.UAC))
+		put(hex.EncodeToString(st.SID))
 	case accountkind.KeyUnlock:
 		put(strconv.FormatUint(st.USN, 10))
 		i(st.LockoutTime)
@@ -267,6 +291,14 @@ func attrEntry(st ad.AccountState, sp accountkind.Spec) *connectorv1.DirectoryEn
 		e.Attributes = append(e.Attributes, &connectorv1.Attribute{Name: name, Values: []*connectorv1.AttributeValue{v}, Complete: true})
 	}
 	switch sp.Key {
+	case accountkind.KeyComputerReset:
+		// What the preview shows (contract §8.10.3 kind 13). No secret attribute is ever listed.
+		add("pwdLastSet", &connectorv1.AttributeValue{Value: &connectorv1.AttributeValue_Int64Value{Int64Value: st.PwdLastSet}})
+		add("lastLogonTimestamp", &connectorv1.AttributeValue{Value: &connectorv1.AttributeValue_Int64Value{Int64Value: st.LastLogonTS}})
+		add("userAccountControl", &connectorv1.AttributeValue{Value: &connectorv1.AttributeValue_Int32Value{Int32Value: st.UAC}})
+		if st.OperatingSystem != "" {
+			add("operatingSystem", &connectorv1.AttributeValue{Value: &connectorv1.AttributeValue_Text{Text: st.OperatingSystem}})
+		}
 	case accountkind.KeyResetPassword:
 		add("pwdLastSet", &connectorv1.AttributeValue{Value: &connectorv1.AttributeValue_Int64Value{Int64Value: st.PwdLastSet}})
 	case accountkind.KeyUnlock:
@@ -366,6 +398,9 @@ func applyAccount(ctx context.Context, sp accountkind.Spec, a Authorised, req *c
 			}
 			return ops.ReplaceUAC(seen.UAC, next)(m, d, sc)
 		}
+	case accountkind.KeyComputerReset:
+		secure = true // ModifyAccount acquires the verified-TLS proof before check or send run
+		send = resetComputer()
 	case accountkind.KeyResetPassword:
 		secure = true
 		pw := secret.FromBytes(req.GetSecretInput().GetMaterial()) // copies; the deferred clear wipes the request buffer
@@ -385,9 +420,55 @@ func applyAccount(ctx context.Context, sp accountkind.Spec, a Authorised, req *c
 		return nil, adRefusal(err)
 	}
 	usn := after.USN
-	if sp.Key != accountkind.KeyResetPassword && !satisfied(sp, after) {
+	if sp.Key != accountkind.KeyResetPassword && sp.Key != accountkind.KeyComputerReset && !satisfied(sp, after) {
 		return nil, newRefusal(connectorv1.ErrorCode_ERROR_CODE_PROVIDER_FAILURE, connectorv1.RetryAdvice_RETRY_ADVICE_NEVER, "8", "write not visible on the bound domain controller")
 	}
 	return &connectorv1.ApplyResponse{Outcome: connectorv1.ApplyOutcome_APPLY_OUTCOME_APPLIED,
 		Written: observation(id), UsnChangedAfter: &usn, ReadBack: attrEntry(after, sp)}, nil
+}
+
+// machinePasswordLen is the length of a generated machine password: at least 120 characters (contract
+// §8.10.3 kind 13). Printable ASCII only, so the UTF-16LE encoding is exactly twice the length.
+const machinePasswordLen = 128
+
+const machinePasswordAlphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~"
+
+// newMachinePassword draws a password from crypto/rand by rejection sampling (no modulo bias). It is
+// derived from no attribute and returned to no one: the caller wraps it in a secret that is destroyed
+// after the one Modify.
+func newMachinePassword() (secret.Secret, error) {
+	const limit = 256 - 256%len(machinePasswordAlphabet)
+	out := make([]byte, 0, machinePasswordLen)
+	buf := make([]byte, 64)
+	defer clear(buf)
+	for len(out) < machinePasswordLen {
+		if _, err := rand.Read(buf); err != nil {
+			clear(out)
+			return secret.Secret{}, err
+		}
+		for _, b := range buf {
+			if int(b) < limit && len(out) < machinePasswordLen {
+				out = append(out, machinePasswordAlphabet[int(b)%len(machinePasswordAlphabet)])
+			}
+		}
+	}
+	pw := secret.FromBytes(out) // copies
+	clear(out)
+	return pw, nil
+}
+
+// resetComputer is kind 13's sender. The channel proof is checked before the password is generated,
+// so a plain channel (TRANSPORT_SECURITY) never reaches crypto/rand.
+func resetComputer() ad.AccountSender {
+	return func(m ad.Modifier, d string, sc unicodepwd.SecureConn) error {
+		if err := sc.Verify(); err != nil {
+			return ad.NewError(ad.CodeInsecure)
+		}
+		pw, err := newMachinePassword()
+		if err != nil {
+			return ad.NewError(ad.CodeProtocol)
+		}
+		defer pw.Destroy()
+		return ops.ResetPassword(pw, false)(m, d, sc)
+	}
 }

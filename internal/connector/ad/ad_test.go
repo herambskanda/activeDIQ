@@ -154,6 +154,8 @@ func TestSplitRange(t *testing.T) {
 		{"member", "member", 0, 0, false, false},
 		{"member;range=x-9", "member;range=x-9", 0, 0, false, false},
 		{"member;range=9-3", "member;range=9-3", 0, 0, false, false},
+		{"\x86;rAnge=", "\x86;rAnge=", 0, 0, false, false}, // T-1264: no panic on invalid UTF-8
+		{"\xff\xff;range=1-1", "\xff\xff", 1, 1, false, true},
 	}
 	for _, c := range cases {
 		b, lo, hi, star, ok := splitRange(c.in)
@@ -302,4 +304,16 @@ func TestSchemaOIDsMatchMSADA3(t *testing.T) {
 	if got, err := s.CanonicalAttr("1.2.840.113556.1.4.151"); err == nil && got == "nTSecurityDescriptor" {
 		t.Errorf("1.4.151 resolves to the SD")
 	}
+}
+
+func FuzzSplitRange(f *testing.F) {
+	for _, s := range []string{"member;range=0-1499", "x;range=1-*", "\x86;rAnge=", "\xff\xff;range=1-1", ";range=", "A;RANGE=0-0"} {
+		f.Add(s)
+	}
+	f.Fuzz(func(t *testing.T, name string) {
+		base, lo, hi, star, ok := splitRange(name) // must not panic
+		if ok && (lo < 0 || (!star && hi < lo) || !strings.HasPrefix(name, base)) {
+			t.Fatalf("%q -> %q %d %d %v", name, base, lo, hi, star)
+		}
+	})
 }

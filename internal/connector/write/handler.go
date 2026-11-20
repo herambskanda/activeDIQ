@@ -848,6 +848,12 @@ func armKind(c *connectorv1.WriteChange) connectorv1.WriteKind {
 		return connectorv1.WriteKind_WRITE_KIND_ACCOUNT_ENABLE
 	case *connectorv1.WriteChange_AccountDisable:
 		return connectorv1.WriteKind_WRITE_KIND_ACCOUNT_DISABLE
+	case *connectorv1.WriteChange_GroupMemberAdd:
+		return connectorv1.WriteKind_WRITE_KIND_GROUP_MEMBER_ADD
+	case *connectorv1.WriteChange_GroupMemberRemove:
+		return connectorv1.WriteKind_WRITE_KIND_GROUP_MEMBER_REMOVE
+	case *connectorv1.WriteChange_ComputerAccountReset:
+		return connectorv1.WriteKind_WRITE_KIND_COMPUTER_ACCOUNT_RESET
 	}
 	return connectorv1.WriteKind_WRITE_KIND_UNSPECIFIED
 }

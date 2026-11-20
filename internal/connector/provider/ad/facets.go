@@ -2,21 +2,25 @@ package ad
 
 import (
 	"context"
+	"time"
 
 	adconn "github.com/skenzeriq/activediq/internal/connector/ad"
 	"github.com/skenzeriq/activediq/internal/connector/provider"
 	"github.com/skenzeriq/activediq/internal/directory/attr/guid"
 	"github.com/skenzeriq/activediq/internal/directory/dn"
 	"github.com/skenzeriq/activediq/internal/directory/ldapfilter"
+	"github.com/skenzeriq/activediq/internal/directory/sd"
 	connectorv1 "github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1"
 )
 
 var (
-	_ provider.DCBound      = (*ADProvider)(nil)
-	_ provider.ObjectReader = (*ADProvider)(nil)
-	_ provider.Searcher     = (*ADProvider)(nil)
-	_ provider.RightsSource = (*ADProvider)(nil)
-	_ provider.Describer    = (*ADProvider)(nil)
+	_ provider.DCBound         = (*ADProvider)(nil)
+	_ provider.ObjectReader    = (*ADProvider)(nil)
+	_ provider.Searcher        = (*ADProvider)(nil)
+	_ provider.RightsSource    = (*ADProvider)(nil)
+	_ provider.Describer       = (*ADProvider)(nil)
+	_ provider.PasswordChanger = (*ADProvider)(nil)
+	_ provider.Feeder          = (*ADProvider)(nil)
 )
 
 // sessionOK is true only when the provider's directory and bound-DC binder are still both over the
@@ -96,4 +100,56 @@ func (p *ADProvider) IsSamba(ctx context.Context) (bool, error) {
 		return false, err
 	}
 	return rd.IsSamba(), nil
+}
+
+// ReadPasswordChange implements provider.PasswordChanger.
+func (p *ADProvider) ReadPasswordChange(ctx context.Context, id guid.GUID) (guid.GUID, sd.PasswordChange, error) {
+	if !p.sessionOK() {
+		return guid.GUID{}, sd.PasswordChangeNotConfirmed, provider.ErrNoBoundDC
+	}
+	return p.sess.ReadPasswordChange(ctx, dn.GUIDRef(id))
+}
+
+// ManagesNC implements provider.Feeder.
+func (p *ADProvider) ManagesNC(ctx context.Context, nc guid.GUID) (bool, error) {
+	if !p.sessionOK() {
+		return false, provider.ErrNoBoundDC
+	}
+	dom, err := p.sess.DomainNCGUID(ctx)
+	if err != nil {
+		return false, err
+	}
+	return dom == nc, nil
+}
+
+// CheckFeedAttributes implements provider.Feeder.
+func (p *ADProvider) CheckFeedAttributes(names []string) error {
+	if !p.sessionOK() {
+		return provider.ErrNoBoundDC
+	}
+	return p.sess.CheckDirSyncAttributes(names)
+}
+
+// HighestCommittedUSN implements provider.Feeder.
+func (p *ADProvider) HighestCommittedUSN(ctx context.Context) (int64, error) {
+	if !p.sessionOK() {
+		return 0, provider.ErrNoBoundDC
+	}
+	return p.sess.HighestCommittedUSN(ctx)
+}
+
+// DeletionLifetime implements provider.Feeder.
+func (p *ADProvider) DeletionLifetime(ctx context.Context) (time.Duration, error) {
+	if !p.sessionOK() {
+		return 0, provider.ErrNoBoundDC
+	}
+	return p.sess.DeletionLifetime(ctx)
+}
+
+// DirSyncCycle implements provider.Feeder.
+func (p *ADProvider) DirSyncCycle(ctx context.Context, req adconn.DirSyncRequest, fn func(adconn.DirSyncPage) error) (adconn.DirSyncPage, error) {
+	if !p.sessionOK() {
+		return adconn.DirSyncPage{}, provider.ErrNoBoundDC
+	}
+	return p.sess.DirSyncCycle(ctx, req, fn)
 }

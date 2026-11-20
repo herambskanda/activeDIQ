@@ -1,7 +1,7 @@
 ---
 title: "Module: ad — account-state Actions (reset password, unlock, enable, disable)"
 date: 2026-11-07
-updated: 2026-11-07
+updated: 2026-11-15
 status: draft
 owner: heramb
 author: backend-engineer
@@ -75,6 +75,13 @@ ADM-038 restore.
 | `ad.user.rename` | `objects.user.move` (a modifyDN, TM-D19) | Reversible | Reversible (inverse: rename back) | `ad.object.rename` |
 | `ad.user.restore` | `objects.user.restore` | Lossy | Lossy iff a retained link value stays dormant, else Reversible | `ad.object.restore` |
 
+- **Ownership (ADR-0015 D2).** `ad` owns the create/modify Actions because it owns their target; `objects` owns
+  only the Template/NamingFormat definitions they consume and no directory-writing Action. Action IDs stay
+  `ad.<noun>.<verb>` (stable, in audit history).
+- **Plan order (ADR-0015 D1), fixed:** `pc.Templates.CheckTemplate` (TemplateGate, a kernel port bound to the
+  requester's chain by the Runner; refusal `template_not_permitted`), then `Template.CheckInput`, then
+  `NamingFormat.Render`, then the first directory read. `ad` never imports `rbac`; `planCreate` and the modify Plan
+  call the gate before `loadTemplate`.
 - **Create** validates the pinned Template (published, user, create, AD/hybrid, container allowed), applies
   `CheckInput`/`Effective`, renders the pinned NamingFormats (sAMAccountName, cn, displayName, UPN prefix +
   `upnSuffix`), reads the parent (a container, not Tier-0) and builds the digest attributes with
@@ -93,3 +100,42 @@ ADM-038 restore.
   (delete/restore/delete) and return `ErrIrreversible` from `Inverse` until the undo layer exists.
 - `directory.Services.ObjectReader` has no connector-backed implementation yet (see the follow-up ticket):
   nil makes every lifecycle Plan refuse `directory_unavailable`.
+
+## Other classes, membership and computer reset (T-1586, connector contract v1.6)
+
+`classes.go` holds one row per class (`user`, `group`, `computer`, `contact`, `ou`) with its LDAP class
+label, permission segment (`objects.<seg>.<verb>`; the OU segment is `ou`, the class label is
+`organizationalUnit`) and verb set. The lifecycle verbs of T-1585 are parameterised by class
+(`ad.<class>.update|delete|move|rename|restore`, `VerbID(class, verb)`); each refuses a target of another
+class with `not_a_<class>`. `createobject.go` adds the non-user create (`ObjectCreateInput`; no Template:
+Templates define user creation). Group create carries `GroupScope` and `GroupSecurity`
+(`writechange.CreateSpec`).
+
+| Action | Permission | Digest kind | Target of the step |
+| --- | --- | --- | --- |
+| `ad.group.addMember` (member is a user, computer or contact) | `objects.group.add_member` | kind 11 `ad.group.addMember` | the **group** |
+| `ad.group.nestGroup` (member is a group) | `objects.group.nest` | kind 11 | the group |
+| `ad.group.removeMember` | `objects.group.remove_member` | kind 12 `ad.group.removeMember` | the group |
+| `ad.computer.resetAccount` | `objects.computer.reset` (step-up, Irreversible, no secret) | kind 13 | the computer |
+
+- Add and nest are two Actions because a Descriptor carries one permission; the contract's "the Action
+  declares `add_member` or `nest` by member class" cannot be one Action. A group through the add Action is
+  refused `use_nest`. `MemberInverse(id, memberClass)` names the opposite Action (the Action's `Inverse`
+  returns the same input).
+- Plan reads group and member (`ObjectReader.Object`), refuses Tier-0 on either, a self-member, a class
+  mismatch, and plans nothing when `ObjectReader.DirectMember` already shows the requested state. Verify reads
+  `DirectMember` back. `rbac.GroupReach` covers the three membership permissions (AC1;
+  `Test_group_membership_actions_are_in_the_catalogue`).
+- **OU delete** reads `ObjectWithChildCount` (connector `ReadRequest.include_child_count`, §5.3a, one-level
+  count capped at `ChildCountCap` 1,000). Children present: Plan refuses with `operation.PlanRefusal` code
+  `ou_not_empty_<n>` (`ou_not_empty_<n>_or_more` when capped), so the reason names the count. `Cascade: true`
+  is refused `cascade_not_supported`: a subtree delete needs its own kind (follow-up).
+- **Computer reset** sends no attribute (`Diff` empty; the connector generates the machine password and sends
+  only `unicodePwd` over LDAPS). BitLocker recovery objects and LAPS attributes are never in the write. Verify:
+  `pwdLastSet` moved (no `ALREADY_APPLIED`; a reset is never already done).
+- `client.ObjectReader` gained `ObjectWithChildCount` and `DirectMember`. Still no production implementation
+  (nil port refuses `directory_unavailable`); follow-up ticket.
+
+**Not built (as-built deviations from contract v1.6):** the Plan-time `member` write-property probe, the C20
+refusals, cluster-object detection for kind 13 beyond the connector's SPN check (Windows only), and
+cascade. Kind 13 and OU delete have an empty `Diff`, so the async Submit skips them (T-1823).

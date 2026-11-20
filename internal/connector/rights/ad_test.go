@@ -131,7 +131,24 @@ func (f *fakeAD) Read(_ context.Context, ref dn.ObjectRef, attrs []string, opts 
 	if e == nil {
 		return nil, &ad.Error{Code: ad.CodeObjectNotFound}
 	}
-	return e, nil
+	return onlyRequested(e, attrs), nil
+}
+
+// onlyRequested trims an entry to the attributes the caller asked for, as a real DC does
+// (objectGUID is always returned: the connector's read adds it to every request). Without
+// this a read that forgets an attribute still passes against the fake.
+func onlyRequested(e *ad.Entry, attrs []string) *ad.Entry {
+	keep := map[string]bool{"objectguid": true}
+	for _, a := range attrs {
+		keep[strings.ToLower(a)] = true
+	}
+	m := map[string][][]byte{}
+	for _, n := range e.Names() {
+		if keep[n] {
+			m[n] = e.Raw(n)
+		}
+	}
+	return ad.NewEntry(e.DN, m)
 }
 
 func (f *fakeAD) SchemaByName(_ context.Context, name string, class bool) (provider.SchemaObject, bool, error) {
@@ -272,7 +289,7 @@ func (w *world) setTokens(extra ...string) {
 
 func (w *world) putRaw(e *ad.Entry, name string, v [][]byte) {
 	m := map[string][][]byte{}
-	for _, k := range []string{"objectGUID", "objectSid", "userAccountControl", "primaryGroupID", "memberOf", "tokenGroups", "nTSecurityDescriptor", "allowedAttributesEffective", "allowedChildClassesEffective", "sDRightsEffective", "msDS-AllowedToDelegateTo"} {
+	for _, k := range []string{"objectGUID", "objectSid", "userAccountControl", "primaryGroupID", "memberOf", "tokenGroups", "sIDHistory", "nTSecurityDescriptor", "allowedAttributesEffective", "allowedChildClassesEffective", "sDRightsEffective", "msDS-AllowedToDelegateTo"} {
 		if r := e.Raw(k); r != nil {
 			m[k] = r
 		}
