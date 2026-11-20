@@ -42,10 +42,10 @@ gen-proto: ## T-0157: regenerate the connector contract's Go code (internal/prot
 gen-check: ## T-0157: fail if the generated Go code under internal/proto is stale, hand-edited or orphaned (regenerates in memory and compares)
 	go run ./tools/gen/proto -check
 
-gen-modules: ## T-0997: regenerate internal/platform/store/owners/owners.gen.tsv (table -> owner key and write class) from the migrations
+gen-modules: ## T-0997, T-2164: regenerate internal/platform/store/owners/owners.gen.tsv (table -> owner key and write class) from the migrations, and the module lists internal/compose/{server,agent}/modules.gen.go from internal/modules and internal/agentmodules
 	go run ./tools/gen/modules
 
-gen-modules-check: ## T-0997: fail if owners.gen.tsv is stale, hand-edited or missing, or a migration table has no `-- write-class: <table> config|system` line (run `make gen-modules`)
+gen-modules-check: ## T-0997, T-2164: fail if a module list (modules.gen.go) is stale or hand-edited, or owners.gen.tsv is stale, hand-edited or missing, or a migration table has no `-- write-class: <table> config|system` line (run `make gen-modules`)
 	go run ./tools/gen/modules -check
 
 web-install: ## Install the pinned web dependencies from the lockfile (npm ci)
@@ -85,7 +85,7 @@ fitness: fitness-modules fitness-sso fitness-stack fitness-tenancy fitness-domai
 
 # Its own target, listed first in `ci` and `fitness`: it used to be the recipe line of `fitness`, which
 # make skips when any prerequisite fails, so a failing gate hid the layering check (T-1869).
-fitness-modules: ## T-0991, T-1869, ADR-0003 M1-M11 and ADR-0013: blueprint §2 import rules, M7 catalogue rows, M11 exempt.json (an entry for 2.5/M3 and the other no-exemption rules fails) and M14 (every contract tag has one registering module, every x-permission is in Contributions.Permissions; bound test in compose/server)
+fitness-modules: ## T-0991, T-1869, T-2164 (M3a generated lists and module pages, TG2, TG3, OW1), ADR-0003 M1-M11 and ADR-0013: blueprint §2 import rules, M7 catalogue rows, M11 exempt.json (an entry for 2.5/M3 and the other no-exemption rules fails) and M14 (every contract tag has one registering module, every x-permission is in Contributions.Permissions; bound test in compose/server)
 	@go run ./tools/fitness/modules; a=$$?; go test -count=1 -run '^Test_M14_' ./internal/compose/server; b=$$?; exit $$((a | b))
 
 fitness-keys: ## T-0525, keys-custody-design §7: FF-KEY-1 schema (tenant_keys RLS/index/trigger/grants, installation_kek grants once it exists) on PostgreSQL 16 and 18 containers (needs Docker), FF-KEY-2 single owner of tenant_keys and DEK/wrap calls, FF-KEY-3 KEK config only in compose/server, FF-KEY-5 insert sites and Rotate/ShredTenant/OpenMaintenance callers, and the bound tests of FF-KEY-1/3/4/5/6 (missing, failed or skipped fails); lists every part still pending
