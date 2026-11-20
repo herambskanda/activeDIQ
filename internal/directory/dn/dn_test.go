@@ -468,3 +468,28 @@ func TestParseLinkValue(t *testing.T) { // T-1202
 		}
 	}
 }
+
+func TestRebase(t *testing.T) {
+	d, err := Parse(`CN=Raman\, Priya,OU=Team\+A\,B,OU=Old,DC=x,DC=y`, Strict)
+	if err != nil {
+		t.Fatal(err)
+	}
+	onto, err := Parse(`OU=Old,OU=New\;Home,DC=x,DC=y`, Strict)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := Rebase(d, 2, onto)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `CN=Raman\, Priya,OU=Team\+A\,B,OU=Old,OU=New\;Home,DC=x,DC=y`
+	if got.String() != want {
+		t.Fatalf("got %s want %s", got, want)
+	}
+	if again, _ := Rebase(got, 2, onto); again.String() != want {
+		t.Fatalf("not idempotent: %s", again)
+	}
+	if _, err := Rebase(d, 9, onto); err == nil {
+		t.Fatal("keep beyond Len must fail")
+	}
+}

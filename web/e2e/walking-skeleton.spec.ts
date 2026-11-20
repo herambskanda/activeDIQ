@@ -34,10 +34,10 @@ test.use({
 test.use({ launchOptions: { args: pinnedSpkiArgs(process.env["ADIQ_E2E_CA"]) } });
 
 interface SearchItem {
-  objectGuid?: string;
+  objectId?: string;
   samAccountName?: string;
   userPrincipalName?: string;
-  enabled?: boolean;
+  status?: { kind: string }[];
 }
 
 test(`typing ${sam} in the console finds the real ${lab} user`, async ({ page }) => {
@@ -59,29 +59,34 @@ test(`typing ${sam} in the console finds the real ${lab} user`, async ({ page })
 
   // 2. Type the name. The answer comes from the real API; wait for exactly that response.
   const answered = page.waitForResponse(
-    (r) => r.url().includes("/api/v1/directory/users?") && r.url().includes(`q=${sam}`),
+    (r) =>
+      r.url().includes("/api/v1/directory/search") &&
+      r.request().method() === "POST" &&
+      r.request().postData()?.includes(sam) === true,
   );
   await box.fill(sam);
   const res = await answered;
   expect(res.status()).toBe(200);
-  const body = (await res.json()) as { items: SearchItem[] };
-  const hit = body.items.filter((u) => u.samAccountName === sam);
+  const body = (await res.json()) as { groups: { type: string; items: SearchItem[] }[] };
+  const hit = body.groups.flatMap((g) => g.items).filter((u) => u.samAccountName === sam);
   expect(hit).toHaveLength(1);
-  expect(hit[0]?.objectGuid).toMatch(
+  expect(hit[0]?.objectId).toMatch(
     /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
   );
-  expect(hit[0]?.enabled).toBe(true);
+  expect(hit[0]?.status ?? []).not.toContainEqual({ kind: "disabled" });
 
   // 3. The screen shows that same user: row, account name, enabled status, and the URL carries the query.
   const row = page.getByRole("row", { name: new RegExp(sam) });
   await expect(row).toBeVisible();
-  await expect(row.getByText("Enabled")).toBeVisible();
+  await expect(row.getByText("Disabled")).toHaveCount(0);
   await expect(page).toHaveURL(new RegExp(`/directory/users\\?q=${sam}$`));
   await page.screenshot({ path: `${evidence}/${lab}-2-found.png` });
 
   // 4. Control: a name nobody has answers an empty list, not the same row and not an error.
   const none = page.waitForResponse(
-    (r) => r.url().includes("/api/v1/directory/users?") && r.url().includes("q=no-such-user-zz"),
+    (r) =>
+      r.url().includes("/api/v1/directory/search") &&
+      r.request().postData()?.includes("no-such-user-zz") === true,
   );
   await box.fill("no-such-user-zz");
   expect((await none).status()).toBe(200);

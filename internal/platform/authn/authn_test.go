@@ -156,3 +156,13 @@ func TestGetCSRFTokenWithoutAPrincipalIs401(t *testing.T) {
 		t.Errorf("err = %v", err)
 	}
 }
+
+// GET /auth/session without a principal in the context is a 401 and never a list. (The 200 path needs the
+// chain to put the principal in the context: TestGetSessionListsHeldPermissions in compose/server.)
+func TestGetSessionWithoutAPrincipalIs401(t *testing.T) {
+	_, err := Handlers{Permissions: nil}.GetSession(context.Background(), api.GetSessionInput{})
+	var p *apitypes.Problem
+	if !errors.As(err, &p) || p.Status != 401 {
+		t.Errorf("err = %v", err)
+	}
+}

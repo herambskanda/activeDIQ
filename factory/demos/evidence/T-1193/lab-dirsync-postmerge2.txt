@@ -1,0 +1,34 @@
+=== RUN   TestLabDirSyncLifecycle
+--- PASS: TestLabDirSyncLifecycle (3.45s)
+=== RUN   TestLabDirSyncNonAdminDoesNotSeeTombstones
+    dirsync_lab_test.go:294: CC-FEED-20 (Samba): non-administrator sees the tombstone = false
+--- PASS: TestLabDirSyncNonAdminDoesNotSeeTombstones (2.35s)
+=== RUN   TestLabDirSyncIncrementalMember
+    dirsync_lab_test.go:325: add: member op=3 values=1
+--- PASS: TestLabDirSyncIncrementalMember (2.56s)
+=== RUN   TestLabDirSyncPasswordResetAndNamedSecrets
+    dirsync_lab_test.go:389: secret_attributes_dropped on the reset cycle (Samba does not send unrequested secrets): 0
+--- PASS: TestLabDirSyncPasswordResetAndNamedSecrets (2.82s)
+=== RUN   TestLabDirSyncCutOffPropertyAndParentRename
+=== RUN   TestLabDirSyncCutOffPropertyAndParentRename/seed1
+=== RUN   TestLabDirSyncCutOffPropertyAndParentRename/seed2
+=== RUN   TestLabDirSyncCutOffPropertyAndParentRename/seed3
+=== RUN   TestLabDirSyncCutOffPropertyAndParentRename/parent-rename
+--- PASS: TestLabDirSyncCutOffPropertyAndParentRename (15.07s)
+    --- PASS: TestLabDirSyncCutOffPropertyAndParentRename/seed1 (2.09s)
+    --- PASS: TestLabDirSyncCutOffPropertyAndParentRename/seed2 (5.20s)
+    --- PASS: TestLabDirSyncCutOffPropertyAndParentRename/seed3 (5.52s)
+    --- PASS: TestLabDirSyncCutOffPropertyAndParentRename/parent-rename (2.17s)
+=== RUN   TestLabDirSyncOnTheWire
+--- PASS: TestLabDirSyncOnTheWire (2.20s)
+PASS
+ok  	github.com/skenzeriq/activediq/internal/connector/ad	28.482s
+testing: warning: no tests to run
+PASS
+ok  	github.com/skenzeriq/activediq/internal/connector/ad/gssapi	0.007s [no tests to run]
+testing: warning: no tests to run
+PASS
+ok  	github.com/skenzeriq/activediq/internal/connector/ad/replxml	0.005s [no tests to run]
+testing: warning: no tests to run
+PASS
+ok  	github.com/skenzeriq/activediq/internal/connector/ad/scope	0.009s [no tests to run]

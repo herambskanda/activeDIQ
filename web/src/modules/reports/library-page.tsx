@@ -2,10 +2,9 @@ import { useEffect, useState } from "react";
 
 import { api } from "../../api/client";
 import { navigate, useLocation } from "../../app/location";
-import { Button, Select, Skeleton, StatePanel, TextInput } from "../../ds/components";
+import { Button, Link, Select, Skeleton, StatePanel, TextInput } from "../../ds/components";
 import type { ApiClient, DefinitionSummary } from "./api";
 import { ReportsFrame } from "./frame";
-import { Link } from "./link";
 import { CATEGORIES, categoryLabel } from "./model";
 import { useDefinitions } from "./use-definitions";
 

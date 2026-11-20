@@ -535,14 +535,16 @@ func TestBoundTestSkippedOrFailedFails(t *testing.T) {
 }
 
 func TestDeclaredButNotLandedFails(t *testing.T) {
-	// RP10 is the binding still waiting on its row (B11); when it lands, move this to the next one.
-	r := run(t, tree(t, map[string]string{"internal/modules/reports/schedule/d_test.go": `package schedule
+	// Every shipped binding has landed, so the not-landed case uses a binding built here.
+	name := "Test_delivery_link_authorised_by_delivery_row"
+	bs := []binding{{Check: "RP10", Name: name, Pkg: "./internal/modules/reports/export", Owner: "B11", What: "x"}}
+	r := run(t, tree(t, map[string]string{"internal/modules/reports/export/d_test.go": `package export
 
 import "testing"
 
-func Test_delivery_link_authorised_by_delivery_row(t *testing.T) {}
-`}), Options{Bindings: defaultBindings})
-	expect(t, r, "RP10", "binding-not-landed", "Test_delivery_link_authorised_by_delivery_row", "flip it")
+func ` + name + `(t *testing.T) {}
+`}), Options{Bindings: bs})
+	expect(t, r, "RP10", "binding-not-landed", name, "flip it")
 }
 
 const rp11 = "Test_dataset_reveals_nothing_outside_scope"

@@ -20,7 +20,6 @@ import (
 	connectorv1 "github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1"
 )
 
-const ncGUID = "bbbbbbbb-0000-0000-0000-000000000001"
 
 func dsa(i int) guid.GUID { return g(fmt.Sprintf("cccccccc-0000-0000-0000-%012d", i)) }
 

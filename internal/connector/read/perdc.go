@@ -10,6 +10,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/skenzeriq/activediq/internal/connector/ad"
+	"github.com/skenzeriq/activediq/internal/connector/wirevalue"
 	"github.com/skenzeriq/activediq/internal/connector/write"
 	"github.com/skenzeriq/activediq/internal/directory/attr/codec"
 	"github.com/skenzeriq/activediq/internal/directory/attr/guid"
@@ -323,7 +324,7 @@ func perDCValue(e *ad.Entry, a connectorv1.PerDcAttribute) (*connectorv1.PerDcVa
 		return nil, &ad.Error{Code: ad.CodeProtocol}
 	}
 	if info.time {
-		return &connectorv1.PerDcValue{Attribute: a, Value: &connectorv1.PerDcValue_Time{Time: timeOf(n)}}, nil
+		return &connectorv1.PerDcValue{Attribute: a, Value: &connectorv1.PerDcValue_Time{Time: wirevalue.TimeOf(n)}}, nil
 	}
 	return &connectorv1.PerDcValue{Attribute: a, Value: &connectorv1.PerDcValue_Integer{Integer: n}}, nil
 }

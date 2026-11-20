@@ -688,11 +688,13 @@ function computeStatus() {
 /* ============================================================
    Chrome: pill, updated-ago, pause, tabs, banner, title
    ============================================================ */
-/** "Merge queue: 3 waiting · in gate T-0696 · last merge 2h ago" (T-1296); '' when the server predates it. */
+/** "Merge queue: 3 waiting · in gate T-0696 · last merge 2h ago" (T-1296); one "in gate" clause per
+ * lane when more than one is running at once (T-2210, pre_merge.concurrency); '' when the server predates it. */
 function mergeQueueText(q) {
   if (!q) return '';
   const parts = [`Merge queue: ${q.waiting.length} waiting`];
-  if (q.in_gate) parts.push(`in gate ${(q.in_gate.ids?.length ? q.in_gate.ids : [q.in_gate.id]).join(', ')}`);
+  const gates = q.in_gates ?? (q.in_gate ? [q.in_gate] : []);
+  for (const g of gates) parts.push(`in gate ${(g.ids?.length ? g.ids : [g.id]).join(', ')}`);
   const last = ts(q.last_merged_at);
   parts.push(last == null ? 'no merge yet' : `last merge ${fmtRel(last)}`);
   return parts.join(' · ');
