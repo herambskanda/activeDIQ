@@ -19,6 +19,8 @@ import (
 type Service struct {
 	Runner *operation.Runner
 	DB     *store.DB
+	// Authz authorises reads that bypass the Actions (the CSV export). Nil denies.
+	Authz operation.Authorizer
 }
 
 // Job is the recorded intake of one source.
@@ -114,6 +116,37 @@ func (s *Service) SubmitJob(ctx context.Context, t tenant.ID, actor authority.Ch
 	out := Job{ID: j.JobID, ProjectID: j.ProjectID, Actor: j.Actor, SourceKind: j.Kind, State: j.State, LimitHit: j.LimitHit, SourceSHA256: j.SHA, SizeBytes: j.Size}
 	if j.State == "rejected" {
 		return out, fmt.Errorf("%w: %s", ErrSizeLimit, j.LimitHit)
+	}
+	return out, nil
+}
+
+// RecordFidelity stores the fidelity report and the proposals of a running job. Items are classified
+// here, server-side. Errors: ErrNoSuchJob, ErrJobNotRunning, ErrAlreadyRecorded, ErrInvalid.
+func (s *Service) RecordFidelity(ctx context.Context, t tenant.ID, actor authority.Chain, in RecordFidelityInput) (FidelityOutcome, error) {
+	rq, err := s.req(t, actor, RecordFidelityActionID, in)
+	if err != nil {
+		return FidelityOutcome{}, err
+	}
+	res, err := s.Runner.RunStore(ctx, rq)
+	if err != nil {
+		var pr *operation.PlanRefusal
+		switch {
+		case errors.Is(err, ErrAlreadyRecorded):
+			return FidelityOutcome{}, ErrAlreadyRecorded
+		case errors.As(err, &pr) && pr.Code == "no_such_job":
+			return FidelityOutcome{}, ErrNoSuchJob
+		case errors.As(err, &pr) && pr.Code == "job_not_running":
+			return FidelityOutcome{}, ErrJobNotRunning
+		case errors.As(err, &pr) && pr.Code == "already_recorded":
+			return FidelityOutcome{}, ErrAlreadyRecorded
+		case errors.Is(err, operation.ErrInvalid):
+			return FidelityOutcome{}, fmt.Errorf("%w: %s", ErrInvalid, err.Error())
+		}
+		return FidelityOutcome{}, err
+	}
+	var out FidelityOutcome
+	if len(res.Steps) != 1 || jsonv2.Unmarshal(res.Steps[0].Outcome.Payload, &out) != nil {
+		return FidelityOutcome{}, errors.New("migration: fidelity record outcome unreadable")
 	}
 	return out, nil
 }

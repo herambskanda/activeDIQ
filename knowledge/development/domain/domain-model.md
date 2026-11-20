@@ -2055,6 +2055,24 @@ after insert (trigger). I2 at most 3 active jobs (`quarantined`, `running`) per 
 checked under a per-tenant advisory lock. I3 `limit_hit` is set exactly when `state = rejected`, and a
 rejected job has no SHA-256 (nothing was read).
 
+### DM-92 MigrationFidelityRow · T · owner `modules/migration`
+**Definition.** The fidelity report (MIG-03) of one import job: exactly one row per parsed item, classed `exact`,
+`changed` (with its diff), `manual` or `not_supported`, with a reason code for the last two. A script body is kept
+only as bounded, escaped text on a `manual` row.
+**Key attributes:** `job_id` · `item_seq` · `item_ref` · `item_kind` · `item_name` · `class` · `reason` · `diff` · `detail`.
+**Invariants.** I1 insert-only for the runtime role; a job is recorded once. I2 `class` is decided server-side by
+`Classify`, never by the importer: what §6.4 never imports (tenant-owner, RBAC/delegation/connections permissions,
+tier0 or unresolvable scopes, credentials, raw SQL, open requests) is `not_supported`, a script is `manual`.
+I3 text is data and is re-encoded on every output (the CSV export goes through the shared encoder).
+
+### DM-93 MigrationProposal · T · owner `modules/migration`
+**Definition.** A stored, inert description of intended configuration and the grants it carries, for one `exact` or
+`changed` item. It grants nothing and no authorisation, job, schedule or notification path reads it; a later Action
+applies it (spec §6.3).
+**Key attributes:** `job_id` · `item_seq` · `class` · `config` · `grants`.
+**Invariants.** I1 at most one per item; its `class` is part of the foreign key to the fidelity row, so an item that
+is `manual` or `not_supported` cannot have one. I2 insert-only for the runtime role.
+
 ---
 
 ## 9. ManageEngine concepts → activeDIQ entities
