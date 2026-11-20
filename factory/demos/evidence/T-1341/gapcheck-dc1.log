@@ -1,0 +1,164 @@
+=== 0 regression: the package's own Windows tests (T-1315 behaviour unchanged) (rc=0)
+ownerfile: PASS
+ownerfile EXIT 0
+dial: PASS
+dial EXIT 0
+
+=== setup (rc=0)
+setup ok
+
+=== caller token (rc=0)
+caller: WINLAB\Administrator  elevated-admin: True
+
+Mandatory Label\High Mandatory Level          Label            S-1-16-12288                                            
+                                                     
+
+
+
+=== 1 elevated admin enrols for the service identity (Enroll ForAccount) (rc=0)
+=== RUN   TestWindowsLabEnrolAsServiceIdentity
+--- PASS: TestWindowsLabEnrolAsServiceIdentity (0.15s)
+PASS
+EXIT 0
+
+=== 1b service-side Load + icacls after enrol (rc=0)
+service token user: S-1-5-80-409460244-1385836514-2088821993-603093096-2089956859
+load: ok pin=sha256:0904695eae2a44938ea012fd004e6e32ded095232c33964eb35eefbf4f858535
+icacls:
+C:\lab\t1341\parent\enrol NT SERVICE\diqT1341:(OI)(CI)(F)
+                          NT AUTHORITY\SYSTEM:(OI)(CI)(F)
+                          BUILTIN\Administrators:(OI)(CI)(F)
+
+C:\lab\t1341\parent\enrol\ca-bundle.pem NT SERVICE\diqT1341:(F)
+                                        NT AUTHORITY\SYSTEM:(F)
+                                        BUILTIN\Administrators:(F)
+
+C:\lab\t1341\parent\enrol\ca-pin.txt NT SERVICE\diqT1341:(F)
+                                     NT AUTHORITY\SYSTEM:(F)
+                                     BUILTIN\Administrators:(F)
+
+C:\lab\t1341\parent\enrol\endpoints.txt NT SERVICE\diqT1341:(F)
+                                        NT AUTHORITY\SYSTEM:(F)
+                                        BUILTIN\Administrators:(F)
+
+C:\lab\t1341\parent\enrol\key.pem NT SERVICE\diqT1341:(F)
+                                  NT AUTHORITY\SYSTEM:(F)
+                                  BUILTIN\Administrators:(F)
+
+C:\lab\t1341\parent\enrol\leaf.pem NT SERVICE\diqT1341:(F)
+                                   NT AUTHORITY\SYSTEM:(F)
+                                   BUILTIN\Administrators:(F)
+
+Successfully processed 6 files; Failed processing 0 files
+
+entry: ca-bundle.pem
+entry: ca-pin.txt
+entry: endpoints.txt
+entry: key.pem
+entry: leaf.pem
+
+=== 2 non-admin (restricted token: Administrators deny-only, no privileges) is refused (Repin, Enroll) (rc=0)
+=== RUN   TestWindowsLabNonAdminRefused
+    identity_windows_test.go:118: restricted child:
+        === RUN   TestWindowsLabNonAdminRefused
+            identity_windows_test.go:150: repin refused: dial: enrollment state has unsafe ownership or permissions (dial: enrollment state is not usable): ownerfile: account "S-1-5-80-409460244-1385836514-2088821993-603093096-2089956859" does not resolve (is the service installed?): The handle is invalid.
+            identity_windows_test.go:155: enrol refused: dial: enrollment state is not usable: ownerfile: account "S-1-5-80-409460244-1385836514-2088821993-603093096-2089956859" does not resolve (is the service installed?): The handle is invalid.
+        --- PASS: TestWindowsLabNonAdminRefused (0.01s)
+        PASS
+--- PASS: TestWindowsLabNonAdminRefused (0.03s)
+PASS
+EXIT 0
+
+=== 2b service-side listing + icacls after the refusal (must equal 1b) (rc=0)
+service token user: S-1-5-80-409460244-1385836514-2088821993-603093096-2089956859
+load: ok pin=sha256:0904695eae2a44938ea012fd004e6e32ded095232c33964eb35eefbf4f858535
+icacls:
+C:\lab\t1341\parent\enrol NT SERVICE\diqT1341:(OI)(CI)(F)
+                          NT AUTHORITY\SYSTEM:(OI)(CI)(F)
+                          BUILTIN\Administrators:(OI)(CI)(F)
+
+C:\lab\t1341\parent\enrol\ca-bundle.pem NT SERVICE\diqT1341:(F)
+                                        NT AUTHORITY\SYSTEM:(F)
+                                        BUILTIN\Administrators:(F)
+
+C:\lab\t1341\parent\enrol\ca-pin.txt NT SERVICE\diqT1341:(F)
+                                     NT AUTHORITY\SYSTEM:(F)
+                                     BUILTIN\Administrators:(F)
+
+C:\lab\t1341\parent\enrol\endpoints.txt NT SERVICE\diqT1341:(F)
+                                        NT AUTHORITY\SYSTEM:(F)
+                                        BUILTIN\Administrators:(F)
+
+C:\lab\t1341\parent\enrol\key.pem NT SERVICE\diqT1341:(F)
+                                  NT AUTHORITY\SYSTEM:(F)
+                                  BUILTIN\Administrators:(F)
+
+C:\lab\t1341\parent\enrol\leaf.pem NT SERVICE\diqT1341:(F)
+                                   NT AUTHORITY\SYSTEM:(F)
+                                   BUILTIN\Administrators:(F)
+
+Successfully processed 6 files; Failed processing 0 files
+
+entry: ca-bundle.pem
+entry: ca-pin.txt
+entry: endpoints.txt
+entry: key.pem
+entry: leaf.pem
+
+=== 3 elevated admin repins (Repin ForAccount) (rc=0)
+=== RUN   TestWindowsLabRepinAsServiceIdentity
+--- PASS: TestWindowsLabRepinAsServiceIdentity (0.06s)
+PASS
+EXIT 0
+
+=== 3b service-side Load + icacls after repin (rc=0)
+service token user: S-1-5-80-409460244-1385836514-2088821993-603093096-2089956859
+load: ok pin=sha256:0cedfea13829c1bdd91405e94e5fc2e9eb2afa62874397ecb69b66c800b881dd
+icacls:
+C:\lab\t1341\parent\enrol NT SERVICE\diqT1341:(OI)(CI)(F)
+                          NT AUTHORITY\SYSTEM:(OI)(CI)(F)
+                          BUILTIN\Administrators:(OI)(CI)(F)
+
+C:\lab\t1341\parent\enrol\ca-bundle.pem NT SERVICE\diqT1341:(F)
+                                        NT AUTHORITY\SYSTEM:(F)
+                                        BUILTIN\Administrators:(F)
+
+C:\lab\t1341\parent\enrol\ca-pin.txt NT SERVICE\diqT1341:(F)
+                                     NT AUTHORITY\SYSTEM:(F)
+                                     BUILTIN\Administrators:(F)
+
+C:\lab\t1341\parent\enrol\endpoints.txt NT SERVICE\diqT1341:(F)
+                                        NT AUTHORITY\SYSTEM:(F)
+                                        BUILTIN\Administrators:(F)
+
+C:\lab\t1341\parent\enrol\key.pem NT SERVICE\diqT1341:(F)
+                                  NT AUTHORITY\SYSTEM:(F)
+                                  BUILTIN\Administrators:(F)
+
+C:\lab\t1341\parent\enrol\leaf.pem NT SERVICE\diqT1341:(F)
+                                   NT AUTHORITY\SYSTEM:(F)
+                                   BUILTIN\Administrators:(F)
+
+Successfully processed 6 files; Failed processing 0 files
+
+entry: ca-bundle.pem
+entry: ca-pin.txt
+entry: endpoints.txt
+entry: key.pem
+entry: leaf.pem
+
+=== new pin (rc=0)
+sha256:0cedfea13829c1bdd91405e94e5fc2e9eb2afa62874397ecb69b66c800b881dd
+
+=== owners (rc=0)
+enrol  owner=BUILTIN\Administrators
+ca-bundle.pem  owner=BUILTIN\Administrators
+ca-pin.txt  owner=BUILTIN\Administrators
+endpoints.txt  owner=BUILTIN\Administrators
+key.pem  owner=BUILTIN\Administrators
+leaf.pem  owner=BUILTIN\Administrators
+
+=== cleanup (rc=0)
+cleaned
+
+RESULT: PASS

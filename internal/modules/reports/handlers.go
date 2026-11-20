@@ -31,11 +31,12 @@ import (
 // of the tag answer 501 until their rows land (pending.go).
 type Handlers struct {
 	pending
-	Runs    *run.Service
-	Exports *export.Service
-	Library Library
-	Now     func() time.Time
-	Log     *slog.Logger
+	Runs      *run.Service
+	Exports   *export.Service
+	Library   Library
+	Schedules *Schedules
+	Now       func() time.Time
+	Log       *slog.Logger
 }
 
 // Bind returns the tag's routes for apihost.Build.
@@ -112,6 +113,33 @@ func (h *Handlers) CreateReportRun(ctx context.Context, in api.CreateReportRunIn
 		return nil, h.problem(err)
 	}
 	return api.CreateReportRun202{Body: runView(r, h.Runs.HiddenGroups(r), h.now()), Location: location(r.ID)}, nil
+}
+
+// GetLatestReportRun implements api.Handlers: the widget host's one call. The runner is the caller; the
+// rows, when asked, go through run.Service.Page and so through run.ReadAccess. It creates no run.
+func (h *Handlers) GetLatestReportRun(ctx context.Context, in api.GetLatestReportRunInput) (api.GetLatestReportRunOutput, error) {
+	tid, chain, err := h.caller(ctx)
+	if err != nil {
+		return nil, err
+	}
+	preset := ""
+	if in.PresetID != nil {
+		preset = *in.PresetID
+	}
+	rows := 0
+	if in.Rows != nil {
+		rows = int(*in.Rows)
+	}
+	l, err := h.Runs.Latest(ctx, tid, chain, in.DefinitionID, preset, rows)
+	if err != nil {
+		return nil, h.problem(err)
+	}
+	body, err := latestView(l, h.now())
+	if err != nil {
+		h.log().Error("reports: a stored cell could not be rendered", "err", err)
+		return nil, apitypes.Internal("")
+	}
+	return api.GetLatestReportRun200{Body: body}, nil
 }
 
 // GetReportRun implements api.Handlers.
@@ -365,6 +393,8 @@ func (h *Handlers) problem(err error) error {
 		return coded(apitypes.Validation("the cursor is not valid for this run and sort"), apitypes.InQuery, "cursor", "bad_cursor", "")
 	case errors.Is(err, run.ErrBadSort):
 		return coded(apitypes.Validation("the result cannot be sorted by that column"), apitypes.InQuery, "sortBy", "bad_sort", "")
+	case errors.Is(err, run.ErrNoTableView):
+		return coded(apitypes.Validation("this report has no table view for Home"), apitypes.InQuery, "rows", "no_table_view", "")
 	case errors.Is(err, run.ErrBadLimit):
 		return coded(apitypes.Validation("the page size is out of range"), apitypes.InQuery, "limit", "bad_limit", "")
 	case errors.Is(err, run.ErrScopesUnavailable):

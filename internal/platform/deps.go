@@ -4,9 +4,11 @@
 package platform
 
 import (
+	"github.com/skenzeriq/activediq/internal/platform/agentpolicy/signer"
 	"github.com/skenzeriq/activediq/internal/platform/audit"
 	"github.com/skenzeriq/activediq/internal/platform/authn"
 	"github.com/skenzeriq/activediq/internal/platform/jobs"
+	"github.com/skenzeriq/activediq/internal/platform/notify/delivery"
 	"github.com/skenzeriq/activediq/internal/platform/operation"
 	"github.com/skenzeriq/activediq/internal/platform/rbac"
 	"github.com/skenzeriq/activediq/internal/platform/report"
@@ -28,6 +30,9 @@ type Deps struct {
 	// with the datasets directory packages export and the ones modules register, then seals it.
 	// Nil until wired; Host methods on a nil host find no dataset.
 	Report *report.Host
+	// AgentPolicy signs the policy and keysets of the host agents (ADR-0007). Nil until the composition
+	// root wires the tenant DEK source (T-0598); agentfleet's Actions then refuse every run.
+	AgentPolicy *signer.Signer
 	// DB is the store. Nil until wired; a module that needs it then registers nothing that would use it.
 	DB *store.DB
 	// Jobs is the job registry the worker runs (EP-5). Modules never register on it directly: they
@@ -44,6 +49,16 @@ type Deps struct {
 	BlobDir string
 	// StepUp answers whether a console session is inside the step-up window (TM §7.4). Nil refuses.
 	StepUp *authn.StepUp
+	// Runner runs the Actions modules register (EP-4). A module that previews, submits or undoes its own
+	// Store Actions over HTTP uses it; nil means the module serves its reads only.
+	Runner *operation.Runner
+	// OwnerStatus says whether an account is still active in its tenant (DM-30), in the caller's transaction.
+	OwnerStatus rbac.OwnerStatus
+	// Deliveries is the DM-84 Delivery store (notify): a module hands a message to notify through it and
+	// reads who a source was sent to. Nil until wired.
+	Deliveries *delivery.Deliveries
+	// Accounts resolves an account to the mail address a message to it goes to (DM-30 email).
+	Accounts delivery.Accounts
 	// Attestation configures the TM-D17 takeover attestation. Zero when the install has not set an app
 	// registration: the module then mounts no attestation route.
 	Attestation Attestation

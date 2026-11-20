@@ -12,6 +12,8 @@
 // nothing else; it reads the caller's destination and the technician's authority through ports
 // (ports.go) and never builds an LDAP filter, DN or message string from caller input.
 //
-// Like the directory module it has no Action and no Module value yet, so it is not in modules.gen.go; the
-// HTTP routes and the sheet are the api-engineer's and frontend-engineer's follow-ups on this engine.
+// Handlers (handlers.go, contract api/openapi/modules/helpdesk.yaml) are the HTTP edge: POST only, CSRF through apihost,
+// idempotent through IssueOnce and VerifyOnce (idempotency.go), one uniform refusal per route padded to RefusalFloor, and
+// per-session and per-IP limits on top of the engine's. Like the directory module it has no Action and no Module value yet,
+// so it is not in modules.gen.go; the sheet and the port adapters in the composition root are follow-ups.
 package helpdesk

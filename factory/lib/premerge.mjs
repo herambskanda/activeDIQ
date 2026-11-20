@@ -48,6 +48,9 @@ export const PRE_MERGE_DEFAULTS = Object.freeze({
   // T-xxxx: how many times in a row the gate may refuse a ticket before the dispatcher stops
   // reopening it to its owner and opens a CEO decision instead. 1 = escalate on the first refusal.
   max_gate_failures: 2,
+  // T-1617: agent worker slots held back from `max_parallel` while a gate run is in flight, so the
+  // gate's build/test run keeps CPU and disk headroom however high max_parallel is raised. 0 = off.
+  reserved_slots: 2,
   // T-1378: reuse a cached run of the gate command on `main` when the tree differs from the one now
   // only in files under these top-level directories that no gate file mentions (computed from the
   // tree, see `readSurface`). They hold no gate code: knowledge base, agent memory, factory runtime
@@ -59,6 +62,20 @@ export const PRE_MERGE_DEFAULTS = Object.freeze({
   // the verdict still holds, so with this on the ticket merges instead of losing a 75-minute run.
   // Off by default: the move is always reported, and what it would have done is named.
   keep_unread_moves: false,
+  // Merge plan 4.1: when a train of 2+ tickets is refused, map each new finding to the one ticket whose
+  // changed files or package it names (`culprit.mjs`), refuse that ticket and gate the rest again,
+  // instead of halving. Falls back to halving whenever any finding cannot be blamed on exactly one
+  // ticket. Only matters while train_size is above 1. Off by default.
+  culprit_split: false,
+  // Merge plan 4.2: 0 = off, `train_size` is used as is. 2 or more = the largest train the dispatcher may
+  // use; the size actually used follows the pass rate of the last 20 gate verdicts (`trainsize.mjs`):
+  // this many at 0.85 or better, 2 at 0.6 or better, 1 below. Rollback: 0.
+  train_size_max: 0,
+  // Merge plan 4.4: while a gate run is in flight, run `prescreen_argv` (the cheap checks, about 5 minutes) on the tickets
+  // at the front of the line, side by side with it. A ticket that fails is reopened to its owner at once, with no strike,
+  // so the failure costs no gate run. A pass changes nothing: the ticket still gets the full gate. Off by default.
+  prescreen_ahead: false,
+  prescreen_argv: ['make', 'prescreen'],
 });
 
 /**
@@ -81,6 +98,21 @@ export function preMergeSettings(config) {
   }
   if (typeof s.keep_unread_moves !== 'boolean') {
     throw new FactoryError('dispatcher.pre_merge.keep_unread_moves must be true or false');
+  }
+  if (!Number.isInteger(s.train_size_max) || s.train_size_max < 0) {
+    throw new FactoryError('dispatcher.pre_merge.train_size_max must be a whole number, 0 (off) or more');
+  }
+  if (typeof s.culprit_split !== 'boolean') {
+    throw new FactoryError('dispatcher.pre_merge.culprit_split must be true or false');
+  }
+  if (typeof s.prescreen_ahead !== 'boolean') {
+    throw new FactoryError('dispatcher.pre_merge.prescreen_ahead must be true or false');
+  }
+  if (!Array.isArray(s.prescreen_argv) || !s.prescreen_argv.length || s.prescreen_argv.some((a) => typeof a !== 'string')) {
+    throw new FactoryError('dispatcher.pre_merge.prescreen_argv must be a non-empty array of strings');
+  }
+  if (!Number.isInteger(s.reserved_slots) || s.reserved_slots < 0) {
+    throw new FactoryError('dispatcher.pre_merge.reserved_slots must be a whole number, 0 or more');
   }
   if (!Array.isArray(s.baseline_reuse_roots) || s.baseline_reuse_roots.some((r) => typeof r !== 'string' || !/^[\w.-]+$/.test(r))) {
     throw new FactoryError('dispatcher.pre_merge.baseline_reuse_roots must be an array of top-level directory names');

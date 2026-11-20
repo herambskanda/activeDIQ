@@ -52,6 +52,7 @@ type Settings interface {
 // ErrNoApprovalPath when a hold is needed and nothing could ever approve it.
 type holdInput struct {
 	d            Descriptor
+	input        Input // the persisted validated Input; nil for a SecretInput Action
 	req          Request
 	items        int
 	worst        Reversibility
@@ -67,7 +68,7 @@ func kernelHold(in holdInput) HoldReason {
 	switch {
 	case in.req.Origin == OriginUndo && in.req.UndoNeededApproval:
 		return HoldUndoNeededAppr
-	case in.d.StepUp && !in.req.FreshStepUp && !canStepUp(chain):
+	case !in.req.FreshStepUp && !canStepUp(chain) && in.d.NeedsStepUp(in.input):
 		return HoldStepUp
 	case in.req.MaxObjects > 0 && in.items > in.req.MaxObjects && in.req.Origin == OriginAutomation:
 		return HoldBlastRadius

@@ -21,6 +21,8 @@ func (d Descriptor) validate() error {
 		return fmt.Errorf("%w: %q has no audit kind", ErrInvalid, d.ID)
 	case d.Reversibility.rank() < 0:
 		return fmt.Errorf("%w: %q has no reversibility class", ErrInvalid, d.ID)
+	case d.StepUp && d.StepUpWhen != nil:
+		return fmt.Errorf("%w: %q sets both StepUp and StepUpWhen; they are mutually exclusive", ErrInvalid, d.ID)
 	}
 	switch d.Target {
 	case TargetAD, TargetEntra, TargetStore:

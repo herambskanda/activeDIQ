@@ -72,7 +72,10 @@ var neverCrossPrefixes = []string{"rbac.", "authz.", "delegation.", "scope.", "c
 	"notify.",
 	// audit. reads the tenant's own tamper-evident trail (T-2300): evidence about the platform itself, assigned
 	// only to the console account, never carried across a hybrid correlation.
-	"audit."}
+	"audit.",
+	// agentfleet. changes the policy every DC agent of the tenant enforces and the key that signs it
+	// (ADR-0007): configuration of the platform itself, assigned only to the console account.
+	"agentfleet."}
 
 // NeverCrosses reports whether permission p is one that never carries across a correlation.
 func NeverCrosses(p Permission) bool {

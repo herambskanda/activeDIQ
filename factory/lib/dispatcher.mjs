@@ -29,6 +29,8 @@ import { EMBARGO_TAG, orderDoneQueue } from './mergequeue.mjs';
 import { applyMigrationRenumber, blockedNote, preMergeSettings, runPreMergeTrain, splitTrain, unreadMove } from './premerge.mjs';
 import { postMergeVerifySettings, readKnownFindings, runPostMergeVerify } from './postmerge.mjs';
 import { git } from './git.mjs';
+import { planDrop } from './culprit.mjs';
+import { effectiveTrainSize, mustGoAlone } from './trainsize.mjs';
 import { recordShadowSkip, runShadowGate, shadowGateSettings } from './shadowgate.mjs';
 import {
   awaitPredecessor, awaitSuccessor, factoryChange, mainSha, shortSha, spawnSuccessor, stopStaleGateChildren,
@@ -44,6 +46,10 @@ export { selectCandidates, launchGate } from './candidates.mjs';
  * @param {string} dir
  * @returns {number|null}
  */
+/** At most this many conflicting tickets are reopened in one merge pass, so a long run of them cannot start a burst of reworks. */
+const MAX_PRESCREEN_FAILURES = 3;
+const MAX_CONFLICT_REOPENS_PER_PASS = 5;
+
 export function diskFreeBytes(dir) {
   try {
     const st = fs.statfsSync(dir);
@@ -127,6 +133,7 @@ export class Dispatcher {
     this.wake = null;
     this.gateLanes = []; // pre-merge gates + merge(s) in flight, each { ids, abort, run } (T-1297, T-2210: up to pre_merge.concurrency at once)
     this.mergeLock = Promise.resolve(); // serializes real merges into ctx.root across lanes (T-2210): git allows only one merge in progress at a time
+    this.lastTrainSize = null; // the train size last reported (pre_merge.train_size_max)
     this.gateRetryAt = new Map(); // ticket id → ms before which a gate that could not judge is not retried
     this.heldOnMain = new Map(); // ticket id → the broken main commit it waits on; retried once main moves
     this.drainNoted = false; // a merge drain (`factory drain`) was last seen on; so its start and end are each reported once
@@ -134,6 +141,9 @@ export class Dispatcher {
     this.runShadow = runShadowGate; // (ctx, ticket, {mainSha, branchSha, verdict, signal}) → record; replaceable in tests
     this.shadowRun = null; // shadow gate in flight (logs only, never blocks or decides anything)
     this.shadowAbort = null;
+    this.prescreenRun = null; // merge plan 4.4: pre-screen of a ticket at the front of the line, in flight
+    this.prescreenAbort = null;
+    this.prescreened = new Map(); // ticket id → the branch commit already pre-screened
     this.verifyRun = null; // post-merge ci-full check in flight (never blocks a merge)
     this.verifyAbort = null;
     this.nextVerifyAt = 0; // ms; the cooldown between verify runs
@@ -458,7 +468,7 @@ export class Dispatcher {
     const settings = preMergeSettings(this.ctx.config);
     const gated = settings.enabled;
     const concurrency = gated ? settings.concurrency : 1;
-    if (gated && this.gateLanes.length >= concurrency) return;
+    if (gated && this.gateLanes.length >= concurrency) { await this.guard('pre-screen', () => this.prescreenAhead(settings)); return; }
     const claimed = new Set(this.gateLanes.flatMap((lane) => lane.ids));
     const done = listEntities(this.ctx, 'tickets').filter((t) => t.status === 'done' && !claimed.has(t.id));
     const code = (t) => isCodeType(this.ctx.config, t.type);
@@ -466,7 +476,14 @@ export class Dispatcher {
     const pending = done.filter((t) => (code(t) ? t.links?.worktree : stranded.has(t.id)));
     const finished = orderDoneQueue(await this.settleLanded(pending), listEntities(this.ctx, 'tickets'));
     const head = this.heldOnMain.size ? await mainSha(this.ctx) : null;
+    const size = effectiveTrainSize(this.ctx, settings);
+    if (settings.train_size_max >= 2 && size !== this.lastTrainSize) {
+      appendEvent(this.ctx, { actor: 'dispatcher', kind: 'dispatcher', text: `merge train size is now ${size} (largest allowed ${settings.train_size_max}; it follows the pass rate of the last gate verdicts)` });
+      this.lastTrainSize = size;
+    }
     const train = [];
+    let stack = this.ctx.config.dispatcher.main_branch; // main plus the train so far (a commit once a ticket is in); null if it cannot be built
+    let reopened = 0;
     for (const ticket of finished) {
       if (head && this.heldOnMain.get(ticket.id) === head) continue;
       if (this.stopping) return;
@@ -476,8 +493,22 @@ export class Dispatcher {
         continue;
       }
       if ((this.gateRetryAt.get(ticket.id) ?? 0) > this.#nowMs()) continue;
+      if (size > 1) { // a ticket that does not merge cleanly with main would take a slot and give nothing back
+        if (reopened >= MAX_CONFLICT_REOPENS_PER_PASS) { if (await this.conflictsWithMain(ticket)) continue; }
+        else if (await this.reopenIfConflicting(ticket)) { reopened++; continue; }
+      }
+      if (size > 1 && (await this.mustGateAlone(ticket))) { // go.mod, Makefile, *.mk, tools/ci: can break everyone else
+        if (train.length) continue; // it goes first, alone, once it is at the front
+        train.push(ticket);
+        break;
+      }
+      // Does it fit on top of the tickets already in this train? Two tickets that each merge cleanly with main can still
+      // clash with each other (the same generated API files, say): the second would be left out of the run, so the train
+      // would be one ticket. Such a ticket stays done and waits; the next clean one takes the slot.
+      if (size > 1 && train.length && stack && (await this.conflictDetail(ticket, stack)) !== null) continue;
       train.push(ticket);
-      if (train.length >= settings.train_size) break;
+      if (train.length >= size) break;
+      if (size > 1 && stack) stack = await this.stackOn(stack, ticket);
     }
     if (!train.length) return;
     const ids = train.map((t) => t.id);
@@ -496,6 +527,44 @@ export class Dispatcher {
     // Try to fill another lane in this same pass: the selection above already excludes this
     // lane's tickets (`claimed`), so a second call picks a disjoint train, up to `concurrency`.
     if (this.gateLanes.length < concurrency) await this.mergePass();
+  }
+
+  /**
+   * Merge plan 4.4: while every gate lane is busy, run the cheap pre-screen (`pre_merge.prescreen_argv`) on the first
+   * tickets of the line, one at a time and in the background. A ticket that fails it is reopened to its owner with no
+   * strike: the failure costs no gate run. A pass changes nothing, the ticket still gets the full gate. A ticket is
+   * pre-screened once per branch commit, and given up on after MAX_PRESCREEN_FAILURES so it cannot loop.
+   */
+  async prescreenAhead(settings) {
+    if (!settings.prescreen_ahead || this.prescreenRun || this.stopping || !this.gateLanes.length) return;
+    const { ctx } = this;
+    const claimed = new Set(this.gateLanes.flatMap((lane) => lane.ids));
+    const all = listEntities(ctx, 'tickets');
+    const done = all.filter((t) => t.status === 'done' && !claimed.has(t.id) && isCodeType(ctx.config, t.type) && t.links?.worktree);
+    const head = this.heldOnMain.size ? await mainSha(ctx) : null;
+    for (const ticket of orderDoneQueue(done, all).slice(0, Math.max(1, effectiveTrainSize(ctx, settings)))) {
+      if ((ticket.tags ?? []).includes(EMBARGO_TAG) || (ticket.prescreen_failures ?? 0) >= MAX_PRESCREEN_FAILURES) continue;
+      if (head && this.heldOnMain.get(ticket.id) === head) continue;
+      const sha = (await git(ctx.root, ['rev-parse', '--verify', '-q', `refs/heads/${branchName(ticket.id)}`])).stdout.trim();
+      if (!sha || this.prescreened.get(ticket.id) === sha) continue;
+      this.prescreened.set(ticket.id, sha); // set first: a run that throws is not retried every tick
+      this.prescreenAbort = new AbortController();
+      this.prescreenRun = this.guard(`pre-screen ${ticket.id}`, () => this.prescreenOne(ticket, settings, this.prescreenAbort.signal))
+        .finally(() => { this.prescreenRun = null; this.prescreenAbort = null; this.requestTick = true; this.wake?.(); });
+      return;
+    }
+  }
+
+  async prescreenOne(ticket, settings, signal) {
+    const { ctx } = this;
+    const verdict = await this.runGate(ctx, [ticket], { signal, argv: settings.prescreen_argv });
+    if (verdict.status !== 'blocked' || verdict.mainBroken) return;
+    const now = listEntities(ctx, 'tickets').find((t) => t.id === ticket.id);
+    if (!now || now.status !== 'done' || this.gateLanes.some((lane) => lane.ids.includes(ticket.id))) return; // it moved on meanwhile
+    const failures = (now.prescreen_failures ?? 0) + 1;
+    updateEntity(ctx, 'tickets', ticket.id, (t) => { t.prescreen_failures = failures; });
+    appendEvent(ctx, { actor: 'dispatcher', kind: 'ticket', ticket: ticket.id, text: `${ticket.id} failed the pre-screen (${settings.prescreen_argv.join(' ')}) while the gate was busy with another run, so it is reopened with no gate run spent and no strike: ${verdict.summary}` });
+    reopenTicket(ctx, ticket.id, 'dispatcher', blockedNote(verdict, ctx.config.dispatcher.main_branch));
   }
 
   /**
@@ -672,6 +741,125 @@ export class Dispatcher {
    * the ticket that adds the findings is reopened. A member that conflicts with `main` is reopened
    * as before; one that conflicts with an earlier member stays `done` for the next train.
    */
+  /**
+   * The commit that is `base` with the ticket's branch merged in, built with git plumbing only (`merge-tree`, then
+   * `commit-tree`): nothing is checked out, no ref moves, the new commit is unreferenced. Null when the merge
+   * conflicts or git fails. Used to ask whether a ticket fits on top of the tickets already in a train.
+   */
+  async stackOn(base, ticket) {
+    const { ctx } = this;
+    try {
+      const r = await git(ctx.root, ['merge-tree', '--write-tree', base, `refs/heads/${branchName(ticket.id)}`]);
+      if (r.code !== 0) return null;
+      const tree = r.stdout.trim().split('\n')[0];
+      const c = await git(ctx.root, ['-c', 'user.name=factory', '-c', 'user.email=factory@localhost', 'commit-tree', tree,
+        '-p', base, '-p', `refs/heads/${branchName(ticket.id)}`, '-m', `train stack ${ticket.id}`]);
+      return c.code === 0 ? c.stdout.trim() : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** True when merging the ticket's branch into main would conflict right now. Read-only: nothing is merged. */
+  async conflictsWithMain(ticket) {
+    return (await this.conflictDetail(ticket)) !== null;
+  }
+
+  /** The git conflict lines (at most 6) when the branch conflicts with main, else null. Read-only. */
+  async conflictDetail(ticket, against = this.ctx.config.dispatcher.main_branch) {
+    const { ctx } = this;
+    try {
+      const r = await git(ctx.root, ['merge-tree', '--write-tree', against, `refs/heads/${branchName(ticket.id)}`]);
+      if (r.code !== 1) return null; // 0 = clean; anything else is a git error, not a known conflict
+      // A missing branch also exits 1 (with an error on stderr and no conflict lines), so a conflict is only
+      // what git says it is: at least one CONFLICT line.
+      const lines = r.stdout.split('\n').filter((l) => /^CONFLICT/.test(l)).slice(0, 6);
+      return lines.length ? lines.join(' | ') : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Merge plan 4.3: a ticket that conflicts with main is reopened for its owner now, as the single-ticket path
+   * does, instead of being put in a train, where it takes a slot and is only reopened after the whole gate run.
+   * Never merges anything: the check is `git merge-tree`, and the reopen needs the conflict to be found again
+   * under the merge lock, so main moving in between cannot turn this into an untested merge.
+   * @returns {Promise<boolean>} true when the ticket was reopened
+   */
+  async reopenIfConflicting(ticket) {
+    if (!(await this.conflictsWithMain(ticket))) return false;
+    return this.withMergeLock(async () => {
+      const detail = await this.conflictDetail(ticket);
+      if (detail === null) return false;
+      const { ctx } = this;
+      const main = ctx.config.dispatcher.main_branch;
+      reopenTicket(ctx, ticket.id, 'dispatcher', `merging ${branchName(ticket.id)} into ${main} conflicted (${detail}). Merge ${main} into the branch, resolve the conflicts, re-run the tests and advance again.${ticket.links?.worktree ? '' : ` This ${ticket.type} ticket works in the main checkout, so do the merge in a temporary worktree: git worktree add <dir> ${branchName(ticket.id)}.`}`);
+      return true;
+    });
+  }
+
+  /** True when the ticket changes go.mod, the Makefile, an .mk file or tools/ci, or its files cannot be read. */
+  async mustGateAlone(ticket) {
+    const { ctx } = this;
+    try {
+      const diff = await git(ctx.root, ['diff', '--name-only', `${ctx.config.dispatcher.main_branch}...refs/heads/${branchName(ticket.id)}`]);
+      return diff.code !== 0 || mustGoAlone(diff.stdout.split('\n').filter(Boolean));
+    } catch {
+      return true;
+    }
+  }
+
+  /**
+   * A single ticket the pre-merge gate refused: count the strike and either reopen it with the findings or,
+   * at `max_gate_failures`, hold it for a CEO decision.
+   */
+  refuseTicket(ticket, verdict, settings, main) {
+    const { ctx } = this;
+    appendEvent(ctx, { actor: 'dispatcher', kind: 'ticket', ticket: ticket.id, text: `${ticket.id} merge refused by the pre-merge gate: ${verdict.summary}` });
+    const failures = (ticket.gate_failures ?? 0) + 1;
+    updateEntity(ctx, 'tickets', ticket.id, (t) => { t.gate_failures = failures; });
+    const note = blockedNote(verdict, main);
+    if (failures >= settings.max_gate_failures) {
+      holdForDecision(ctx, ticket.id, 'dispatcher',
+        `the pre-merge gate has refused this ${failures} times in a row; holding for a CEO decision instead of reopening it again. ${note}`);
+      createDecision(ctx, {
+        kind: 'directional',
+        title: `${ticket.id} keeps failing the merge gate`,
+        question: `${ticket.id} (${ticket.title}) has failed the full pre-merge test suite ${failures} times in a row. How should the factory proceed?`,
+        context: note,
+        options: [
+          { id: 'retry', label: 'One more try', summary: 'Unblock to ready with a fresh attempt and gate-failure budget; the owner takes another pass.' },
+          { id: 'escalate', label: 'Escalate the owner', summary: 'Unblock to ready, reassign to principal-engineer at high effort for the retry.' },
+          { id: 'cancel', label: 'Cancel the ticket', summary: 'The approach is not working; cancel rather than keep retrying.' },
+        ],
+        blocks: [ticket.id],
+      }, { by: 'dispatcher', force: true });
+      return;
+    }
+    reopenTicket(ctx, ticket.id, 'dispatcher', note);
+  }
+
+  /**
+   * Merge plan 4.1: who to refuse and who to gate again after a refused train, or null (halve it). Each
+   * member's changed files are read against the main the verdict was judged on.
+   */
+  async planCulprits(members, verdict) {
+    const { ctx } = this;
+    const base = verdict.mainSha ?? ctx.config.dispatcher.main_branch;
+    try {
+      const withFiles = [];
+      for (const t of members) {
+        const diff = await git(ctx.root, ['diff', '--name-only', `${base}...refs/heads/${branchName(t.id)}`]);
+        if (diff.code !== 0) return null;
+        withFiles.push({ id: t.id, files: diff.stdout.split('\n').filter(Boolean) });
+      }
+      return planDrop(verdict.findings ?? [], withFiles);
+    } catch {
+      return null; // anything unexpected: halve, as before
+    }
+  }
+
   async gateGroup(group, signal) {
     const { ctx } = this;
     const main = ctx.config.dispatcher.main_branch;
@@ -711,29 +899,29 @@ export class Dispatcher {
     if (verdict.status === 'blocked') {
       if (verdict.mainBroken) { this.holdForBrokenMain(members, verdict); return; }
       if (members.length === 1) {
-        const [ticket] = members;
-        appendEvent(ctx, { actor: 'dispatcher', kind: 'ticket', ticket: ticket.id, text: `${ticket.id} merge refused by the pre-merge gate: ${verdict.summary}` });
-        const failures = (ticket.gate_failures ?? 0) + 1;
-        updateEntity(ctx, 'tickets', ticket.id, (t) => { t.gate_failures = failures; });
-        const note = blockedNote(verdict, main);
-        if (failures >= settings.max_gate_failures) {
-          holdForDecision(ctx, ticket.id, 'dispatcher',
-            `the pre-merge gate has refused this ${failures} times in a row; holding for a CEO decision instead of reopening it again. ${note}`);
-          createDecision(ctx, {
-            kind: 'directional',
-            title: `${ticket.id} keeps failing the merge gate`,
-            question: `${ticket.id} (${ticket.title}) has failed the full pre-merge test suite ${failures} times in a row. How should the factory proceed?`,
-            context: note,
-            options: [
-              { id: 'retry', label: 'One more try', summary: 'Unblock to ready with a fresh attempt and gate-failure budget; the owner takes another pass.' },
-              { id: 'escalate', label: 'Escalate the owner', summary: 'Unblock to ready, reassign to principal-engineer at high effort for the retry.' },
-              { id: 'cancel', label: 'Cancel the ticket', summary: 'The approach is not working; cancel rather than keep retrying.' },
-            ],
-            blocks: [ticket.id],
-          }, { by: 'dispatcher', force: true });
-          return;
+        this.refuseTicket(members[0], verdict, settings, main);
+        return;
+      }
+      const plan = settings.culprit_split ? await this.planCulprits(members, verdict) : null;
+      if (plan) {
+        const refuse = [...plan.drop.keys()];
+        const suspects = [...plan.suspect.keys()];
+        const parts = [
+          refuse.length ? `every new finding that names a file is in a file only ${refuse.join(', ')} changed, so refusing ${refuse.length > 1 ? 'them' : 'it'}` : null,
+          suspects.length ? `${suspects.join(', ')} changed the failing package and ${suspects.length > 1 ? 'are' : 'is'} gated alone afterwards` : null,
+          plan.keep.length ? `gating ${plan.keep.join(', ')} again` : null,
+        ].filter(Boolean);
+        appendEvent(ctx, { actor: 'dispatcher', kind: 'dispatcher', text: `pre-merge gate refused the train ${memberIds.join(', ')}: ${verdict.summary}; ${parts.join('; ')}` });
+        for (const [id, own] of plan.drop) {
+          const ticket = members.find((t) => t.id === id);
+          this.refuseTicket(ticket, { ...verdict, findings: own, summary: `${verdict.summary} (in a train with ${memberIds.filter((m) => m !== id).join(', ')}; these findings are in files only ${id} changed)` }, settings, main);
         }
-        reopenTicket(ctx, ticket.id, 'dispatcher', note);
+        const rest = members.filter((t) => plan.keep.includes(t.id));
+        if (rest.length && !this.stopping) await this.gateGroup(rest, signal);
+        for (const id of suspects) {
+          if (this.stopping) break;
+          await this.gateGroup(members.filter((t) => t.id === id), signal); // its own verdict: a pass merges it, a refusal is its strike
+        }
         return;
       }
       appendEvent(ctx, { actor: 'dispatcher', kind: 'dispatcher', text: `pre-merge gate refused the train ${memberIds.join(', ')}: ${verdict.summary}; splitting it in halves to find the ticket that adds the findings` });
@@ -1023,6 +1211,10 @@ export class Dispatcher {
       for (const lane of this.gateLanes) lane.abort.abort();
       await this.gateIdle();
     }
+    if (this.prescreenRun) { // restart only; the pre-screen belongs to this process
+      this.prescreenAbort?.abort();
+      await this.prescreenRun;
+    }
     if (this.verifyRun) { // restart only; a verify belongs to this process the same way a gate does
       this.verifyAbort?.abort();
       await this.verifyIdle();
@@ -1069,6 +1261,7 @@ export class Dispatcher {
     for (const lane of this.gateLanes) lane.abort.abort();
     this.verifyAbort?.abort();
     this.shadowAbort?.abort();
+    this.prescreenAbort?.abort();
     this.wake?.();
   }
 

@@ -33,17 +33,19 @@ func TestMain(m *testing.M) { os.Exit(storetest.Main(m)) }
 // ---- fakes: a directory, a pinner, settings, provenance, alerts, keys, a gate ----
 
 type dirFake struct {
-	mu      sync.Mutex
-	val     map[string]string
-	pwdSet  map[string]time.Time
-	applies map[string]int
-	mode    map[string]string // guid -> behaviour of Apply
-	touch   map[string]string // guid -> a second object the step's change touches (the Toucher hook)
-	secret  string
-	noNC    bool          // plan AD targets without a naming context
-	badNC   string        // set by Apply when the Step's NC/pin disagree with the plan
-	kept    secret.Secret // the Step's secret as the Action saw it
-	conn    string        // connection ID of planned targets; "c1" when empty
+	tpl        string                    // when set, Plan asks pc.Templates about this Template first
+	stepUpWhen func(Input) (bool, error) // optional TM-D30 predicate for the action it builds
+	mu         sync.Mutex
+	val        map[string]string
+	pwdSet     map[string]time.Time
+	applies    map[string]int
+	mode       map[string]string // guid -> behaviour of Apply
+	touch      map[string]string // guid -> a second object the step's change touches (the Toucher hook)
+	secret     string
+	noNC       bool          // plan AD targets without a naming context
+	badNC      string        // set by Apply when the Step's NC/pin disagree with the plan
+	kept       secret.Secret // the Step's secret as the Action saw it
+	conn       string        // connection ID of planned targets; "c1" when empty
 	// live, when set, is what the Action's Apply reads as the target's facts before it re-checks, as
 	// client.Write does; otherwise Apply re-checks with bare "exists" facts.
 	live func(context.Context, authority.FactsQuery) (authority.Facts, error)
@@ -79,8 +81,13 @@ type dirOut struct {
 func (d *dirFake) action(t *testing.T, id ActionID, stepUp, secretIn bool, class Reversibility) Action {
 	a, err := Define(Typed[dirIn, dirPayload, dirOut]{
 		Descriptor: Descriptor{ID: id, Version: 1, Permission: "ad.user.set", Input: "#/components/schemas/Dir", Target: TargetAD,
-			Reversibility: class, AuditKind: "directory.user.changed", StepUp: stepUp, SecretInput: secretIn},
-		Plan: func(_ context.Context, _ PlanContext, in dirIn) ([]TypedStep[dirPayload], error) {
+			Reversibility: class, AuditKind: "directory.user.changed", StepUp: stepUp, StepUpWhen: d.stepUpWhen, SecretInput: secretIn},
+		Plan: func(ctx context.Context, pc PlanContext, in dirIn) ([]TypedStep[dirPayload], error) {
+			if d.tpl != "" {
+				if err := pc.Templates.CheckTemplate(ctx, "ad.user.set", d.tpl); err != nil {
+					return nil, err
+				}
+			}
 			nc := authority.NamingContextID("dc=example")
 			if d.noNC {
 				nc = ""
@@ -326,12 +333,14 @@ type rigOpt struct {
 	attempts int
 	slots    int
 	stepUp   bool
-	secretIn bool
-	class    Reversibility
-	pinner   Pinner // overrides pinFake
-	sites    SiteHints
-	ref      string           // Request reference the hold gate returns
-	cred     CredentialSource // overrides credFake
+	// stepUpWhen is a predicate descriptor: step-up is required when the input wants "ext".
+	stepUpWhen func(Input) (bool, error)
+	secretIn   bool
+	class      Reversibility
+	pinner     Pinner // overrides pinFake
+	sites      SiteHints
+	ref        string           // Request reference the hold gate returns
+	cred       CredentialSource // overrides credFake
 }
 
 func newPRig(t *testing.T, s *storetest.Server, o rigOpt) *prig {
@@ -354,6 +363,7 @@ func newPRig(t *testing.T, s *storetest.Server, o rigOpt) *prig {
 	if o.class == "" {
 		o.class = Reversible
 	}
+	p.dir.stepUpWhen = o.stepUpWhen
 	reg, err := NewRegistry(p.dir.action(t, "ad.user.set", o.stepUp, o.secretIn, o.class))
 	if err != nil {
 		t.Fatal(err)
@@ -1175,6 +1185,44 @@ func TestKernelHolds(t *testing.T) {
 				t.Fatalf("human without step-up: %v", err)
 			}
 		})
+		t.Run("StepUpWhen: true is refused for a human and held for a token; false needs neither (TM-D30)", func(t *testing.T) {
+			p := newPRig(t, s, rigOpt{stepUpWhen: wantsExt})
+			tok := authority.Chain{Requester: authority.Principal{ID: "tok", Kind: authority.APIToken}}
+			// predicate true
+			r := p.req(itemIn{GUID: "a", Want: "ext"})
+			r.Actor = tok
+			if sub, err := p.r.SubmitDirectory(context.Background(), r); err != nil || sub.Hold != HoldStepUp {
+				t.Fatalf("token, predicate true: %+v %v", sub, err)
+			}
+			if _, err := p.r.SubmitDirectory(context.Background(), p.req(itemIn{GUID: "b", Want: "ext"})); !errors.Is(err, ErrDenied) {
+				t.Fatalf("human without step-up, predicate true: %v", err)
+			}
+			fresh := p.req(itemIn{GUID: "c", Want: "ext"})
+			fresh.FreshStepUp = true
+			if sub, err := p.r.SubmitDirectory(context.Background(), fresh); err != nil || sub.Hold == HoldStepUp {
+				t.Fatalf("human with step-up, predicate true: %+v %v", sub, err)
+			}
+			// predicate false
+			r = p.req(itemIn{GUID: "d", Want: "int"})
+			r.Actor = tok
+			if sub, err := p.r.SubmitDirectory(context.Background(), r); err != nil || sub.Hold == HoldStepUp {
+				t.Fatalf("token, predicate false: %+v %v", sub, err)
+			}
+			if sub, err := p.r.SubmitDirectory(context.Background(), p.req(itemIn{GUID: "e", Want: "int"})); err != nil || sub.Hold == HoldStepUp {
+				t.Fatalf("human, predicate false: %+v %v", sub, err)
+			}
+		})
+		t.Run("StepUpWhen: a predicate error fails closed", func(t *testing.T) {
+			p := newPRig(t, s, rigOpt{stepUpWhen: func(Input) (bool, error) { return false, errors.New("boom") }})
+			if _, err := p.r.SubmitDirectory(context.Background(), p.req(itemIn{GUID: "a", Want: "n"})); !errors.Is(err, ErrDenied) {
+				t.Fatalf("human: %v", err)
+			}
+			r := p.req(itemIn{GUID: "a", Want: "n"})
+			r.Actor = authority.Chain{Requester: authority.Principal{ID: "tok", Kind: authority.APIToken}}
+			if sub, err := p.r.SubmitDirectory(context.Background(), r); err != nil || sub.Hold != HoldStepUp {
+				t.Fatalf("token: %+v %v", sub, err)
+			}
+		})
 		t.Run("undo of an operation that needed approval is held", func(t *testing.T) {
 			p := newPRig(t, s, rigOpt{})
 			r := p.req(itemIn{GUID: "a", Want: "n"})
@@ -1210,6 +1258,30 @@ func TestApprovals(t *testing.T) {
 			}
 			if p.events("operation.approved") != 1 {
 				t.Fatal("approval not recorded")
+			}
+		})
+		t.Run("StepUpWhen: an approval of an operation whose input trips the predicate needs a fresh step-up", func(t *testing.T) {
+			ext := func(t *testing.T, want string) (*prig, Submission) {
+				o := rigOpt{stepUpWhen: wantsExt, gate: holdGate{route: Route{Kind: RouteHold}}}
+				p := newPRig(t, s, o)
+				r := p.req(itemIn{GUID: "a", Want: want})
+				r.FreshStepUp = true
+				sub, err := p.r.SubmitDirectory(context.Background(), r)
+				if err != nil || sub.State != OpAwaitingApproval {
+					t.Fatalf("%+v %v", sub, err)
+				}
+				return p, sub
+			}
+			p, sub := ext(t, "ext")
+			if _, err := p.r.Approve(ctx, p.tn, string(sub.Operation), sub.PlanHash, human); !errors.Is(err, ErrStepUpRequired) {
+				t.Fatalf("predicate true, no step-up: %v", err)
+			}
+			if got, err := p.r.Approve(ctx, p.tn, string(sub.Operation), sub.PlanHash, Approval{Principal: bob, Interactive: true, FreshStepUp: true}); err != nil || got.State != OpQueued {
+				t.Fatalf("predicate true, step-up: %+v %v", got, err)
+			}
+			p, sub = ext(t, "int")
+			if got, err := p.r.Approve(ctx, p.tn, string(sub.Operation), sub.PlanHash, human); err != nil || got.State != OpQueued {
+				t.Fatalf("predicate false: %+v %v", got, err)
 			}
 		})
 		t.Run("refusals", func(t *testing.T) {
@@ -1624,6 +1696,20 @@ func TestPinnerReceivesOperationTenant(t *testing.T) {
 	})
 }
 
+// wantsExt is the test predicate: step-up is required when any item wants "ext".
+func wantsExt(in Input) (bool, error) {
+	var v dirIn
+	if err := json.Unmarshal(in, &v); err != nil {
+		return false, err
+	}
+	for _, it := range v.Items {
+		if it.Want == "ext" {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 type siteHints struct {
 	sites []string
 	err   error
@@ -1689,6 +1775,42 @@ func TestSitePreferenceReadFailureFailsPlan(t *testing.T) {
 		}
 		if st := p.opState(sub.Operation); st != "plan_failed" {
 			t.Fatalf("state = %s, want plan_failed", st)
+		}
+	})
+}
+
+// AC1/AC3 on the Submit path: the Plan's gate carries the stored operation's chain and tenant, and a
+// refusal fails the plan as a denied attempt with the gate's code. Removing the Templates binding in
+// planAndRoute turns the first case into a nil-gate panic/denial and fails this test.
+func TestSubmitBindsTemplateGateAndAuditsRefusal(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		p := newPRig(t, s, rigOpt{})
+		p.dir.tpl = "tpl-1"
+		ta := &tmplAuthz{}
+		p.r.cfg.TemplateAuthz = ta
+		sub, err := p.r.SubmitDirectory(context.Background(), p.req(itemIn{GUID: "g1", Want: "new"}))
+		if err != nil || sub.State != OpQueued {
+			t.Fatalf("sub=%+v err=%v", sub, err)
+		}
+		if ta.calls != 1 || ta.chain.Requester.ID != alice.Requester.ID || ta.tenant != p.tn.String() || ta.template != "tpl-1" {
+			t.Fatalf("calls=%d chain=%+v tenant=%q template=%q", ta.calls, ta.chain, ta.tenant, ta.template)
+		}
+
+		ta.err = errors.New("not permitted")
+		sub, err = p.r.SubmitDirectory(context.Background(), p.req(itemIn{GUID: "g2", Want: "x"}))
+		if err == nil || sub.State != OpPlanFailed {
+			t.Fatalf("refused: sub=%+v err=%v", sub, err)
+		}
+		env := p.completedEnvelope(sub.Operation)
+		if env.Outcome != "denied" || env.Reason != "template_not_permitted" || env.Requester.ID == "" {
+			t.Fatalf("audit = %s/%s", env.Outcome, env.Reason)
+		}
+
+		// No TemplateAuthz at all: fail closed, same refusal.
+		p.r.cfg.TemplateAuthz = nil
+		sub, err = p.r.SubmitDirectory(context.Background(), p.req(itemIn{GUID: "g3", Want: "x"}))
+		if err == nil || sub.State != OpPlanFailed || p.completedEnvelope(sub.Operation).Reason != "template_not_permitted" {
+			t.Fatalf("nil authz: sub=%+v err=%v", sub, err)
 		}
 	})
 }

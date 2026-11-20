@@ -143,6 +143,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/auth/session": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The permission names the calling session holds
+         * @description Answers the names of the catalogue permissions the calling console session holds at tenant scope, sorted, so the console can hide navigation the session could not use (for example Reports without reports.run). Names only: no scope, role or grant detail. It is display only; every operation still authorises the request itself and stays the authority. Needs a cookie session and no permission beyond it. The answer is never cached. Additive to the preview auth plane.
+         */
+        get: operations["getSession"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/auth/step-up": {
         parameters: {
             query?: never;
@@ -410,6 +430,50 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/helpdesk/caller-verifications": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Send a verification code to the caller
+         * @description Sends a one-time code to the destination the directory holds for the target (email or SMS); the technician never supplies or sees an address, only a masked form. This is a user act, never made on page render. Opening the sheet again attaches to the technician's open challenge (reused true) and sends nothing; resend true is the only way to a second code and supersedes the first.
+         *     Idempotency-Key is required. A retry with the same key and body answers what the first attempt answered and sends nothing; the same key with a different body is refused 422 idempotency-key-reuse; a retry while the first request is still running is 409. Only a success is remembered, so a refused request is evaluated again on a retry.
+         *     Refusals. 422 caller-verification-unavailable is one answer, with identical status, body and timing class, for an unknown, disabled, out-of-scope, protected or self target and for a target with no held destination for the factor; it never says which. 429 caller-verification-limit with errors[].code quota (the hourly issue limit of the target or the technician) or paused (too many failed challenges; try later). 502 caller-verification-delivery-failed when the message could not be sent: no code exists and the issue does not count. 429 rate-limited when the session or source address is over its limit. 403 for a token principal or a missing permission.
+         */
+        post: operations["issueCallerVerification"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/helpdesk/caller-verifications/{challengeId}/verify": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Check the code the caller read back
+         * @description Checks the code against the challenge. Every attempt is charged before the code is compared, so three attempts at most are possible per challenge whatever the concurrency.
+         *     Every failure answers one 422 caller-verification-refused with the same status, body and timing class, whether the code was wrong, the attempts are used up, the challenge expired, was superseded or never existed, or belongs to another technician: a client cannot tell a wrong code from a cap. The code travels only in this body, never in a URL, and no response, log line or audit event repeats it.
+         *     Idempotency-Key is required. A retry with the same key and code replays the first answer, a pass or the refusal, and charges no second attempt; the same key with a different code is 422 idempotency-key-reuse.
+         */
+        post: operations["verifyCallerVerification"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/notify/siem-destinations": {
         parameters: {
             query?: never;
@@ -448,6 +512,1746 @@ export interface paths {
          * @description Replaces the writable fields. The change redirects the SIEM stream, so it is audited with the previous and the new target. The Idempotency-Key is the request ID of the audit events; use a new key for each intended change. A key that already recorded an update is never applied twice: a replay with the same settings returns the current destination, with different settings it is a 422.
          */
         put: operations["updateSiemDestination"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/objects/computers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create a computer account
+         * @description Creates a computer account in the container named by parentGuid. The attributes are plain text on the class's allow list; anything that grants access or changes who the object is has its own Action. This is the Action ad.computer.create (ADR-0004 rule 14); preview it first with the twin previewCreateComputer. Idempotency-Key is required: a retry with the same key and body answers what the first attempt answered; the same key with another body is refused 422 idempotency-key-reuse. The submit plans again against the live state and re-checks the caller's scope immediately before the write (ADR-0005 rule 7); a target that left the scope answers 403, not a stale success. The answer is the operation reference; ActiveDIQ-Operation-Id is the undo handle. The diff and the reversibility class are in the preview and in the audited operation, and a secret value is in neither.
+         */
+        post: operations["createComputer"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/objects/computers/{objectGuid}/delete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Delete a computer account
+         * @description Deletes the computer account: a tombstone, or a recycle-bin disable when the forest has the recycle bin. cascade is refused at plan (cascade_not_supported) for an organizational unit. This is the Action ad.computer.delete (ADR-0004 rule 14); preview it first with the twin previewDeleteComputer. Idempotency-Key is required: a retry with the same key and body answers what the first attempt answered; the same key with another body is refused 422 idempotency-key-reuse. If-Match pins the version the admin read: a stale value answers 412 precondition-failed, an absent one 428 precondition-required. The submit plans again against the live state and re-checks the caller's scope immediately before the write (ADR-0005 rule 7); a target that left the scope answers 403, not a stale success. The answer is the operation reference; ActiveDIQ-Operation-Id is the undo handle. The diff and the reversibility class are in the preview and in the audited operation, and a secret value is in neither.
+         */
+        post: operations["deleteComputer"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/objects/computers/{objectGuid}/move": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Move a computer account
+         * @description Moves the computer account to another container of the same naming context. Both the source and the destination parent are re-checked live immediately before the write. This is the Action ad.computer.move (ADR-0004 rule 14); preview it first with the twin previewMoveComputer. Idempotency-Key is required: a retry with the same key and body answers what the first attempt answered; the same key with another body is refused 422 idempotency-key-reuse. If-Match pins the version the admin read: a stale value answers 412 precondition-failed, an absent one 428 precondition-required. The submit plans again against the live state and re-checks the caller's scope immediately before the write (ADR-0005 rule 7); a target that left the scope answers 403, not a stale success. The answer is the operation reference; ActiveDIQ-Operation-Id is the undo handle. The diff and the reversibility class are in the preview and in the audited operation, and a secret value is in neither.
+         */
+        post: operations["moveComputer"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/objects/computers/{objectGuid}/previews/delete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview delete a computer account
+         * @description The dry run of deleteComputer as the Action ad.computer.delete (ADR-0004 rule 14): it plans against the live state, authorises the change for the caller and asks the gate, and answers the diff (attribute before and after per step), the reversibility class, required confirmations and whether it can be undone. It writes, persists and audits nothing, and needs no step-up. A refusal the plan finds is a 200 with outcome refused and blocked[].code (for example attribute_not_allowed, tier0_blocked, name_invalid), never a problem; so is a gate denial. Same x-permission, parameters and body as deleteComputer.
+         */
+        post: operations["previewDeleteComputer"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/objects/computers/{objectGuid}/previews/move": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview move a computer account
+         * @description The dry run of moveComputer as the Action ad.computer.move (ADR-0004 rule 14): it plans against the live state, authorises the change for the caller and asks the gate, and answers the diff (attribute before and after per step), the reversibility class, required confirmations and whether it can be undone. It writes, persists and audits nothing, and needs no step-up. A refusal the plan finds is a 200 with outcome refused and blocked[].code (for example attribute_not_allowed, tier0_blocked, name_invalid), never a problem; so is a gate denial. Same x-permission, parameters and body as moveComputer.
+         */
+        post: operations["previewMoveComputer"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/objects/computers/{objectGuid}/previews/rename": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview rename a computer account
+         * @description The dry run of renameComputer as the Action ad.computer.rename (ADR-0004 rule 14): it plans against the live state, authorises the change for the caller and asks the gate, and answers the diff (attribute before and after per step), the reversibility class, required confirmations and whether it can be undone. It writes, persists and audits nothing, and needs no step-up. A refusal the plan finds is a 200 with outcome refused and blocked[].code (for example attribute_not_allowed, tier0_blocked, name_invalid), never a problem; so is a gate denial. Same x-permission, parameters and body as renameComputer.
+         */
+        post: operations["previewRenameComputer"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/objects/computers/{objectGuid}/previews/reset-account": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview reset a computer account
+         * @description The dry run of resetAccountComputer as the Action ad.computer.resetAccount (ADR-0004 rule 14): it plans against the live state, authorises the change for the caller and asks the gate, and answers the diff (attribute before and after per step), the reversibility class, required confirmations and whether it can be undone. It writes, persists and audits nothing, and needs no step-up. A refusal the plan finds is a 200 with outcome refused and blocked[].code (for example attribute_not_allowed, tier0_blocked, name_invalid), never a problem; so is a gate denial. Same x-permission, parameters and body as resetAccountComputer. Irreversible: no undo exists, the preview says reversibility irreversible and the undo preview answers 409 operation-not-undoable.
+         */
+        post: operations["previewResetAccountComputer"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/objects/computers/{objectGuid}/previews/restore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview restore a deleted computer account
+         * @description The dry run of restoreComputer as the Action ad.computer.restore (ADR-0004 rule 14): it plans against the live state, authorises the change for the caller and asks the gate, and answers the diff (attribute before and after per step), the reversibility class, required confirmations and whether it can be undone. It writes, persists and audits nothing, and needs no step-up. A refusal the plan finds is a 200 with outcome refused and blocked[].code (for example attribute_not_allowed, tier0_blocked, name_invalid), never a problem; so is a gate denial. Same x-permission, parameters and body as restoreComputer.
+         */
+        post: operations["previewRestoreComputer"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/objects/computers/{objectGuid}/previews/update": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview change a computer account's attributes
+         * @description The dry run of updateComputer as the Action ad.computer.update (ADR-0004 rule 14): it plans against the live state, authorises the change for the caller and asks the gate, and answers the diff (attribute before and after per step), the reversibility class, required confirmations and whether it can be undone. It writes, persists and audits nothing, and needs no step-up. A refusal the plan finds is a 200 with outcome refused and blocked[].code (for example attribute_not_allowed, tier0_blocked, name_invalid), never a problem; so is a gate denial. Same x-permission, parameters and body as updateComputer.
+         */
+        post: operations["previewUpdateComputer"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/objects/computers/{objectGuid}/rename": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Rename a computer account
+         * @description Changes the computer account's name (its RDN value, never a DN). A rename is a modifyDN, so it needs objects.computer.move (TM-D19). This is the Action ad.computer.rename (ADR-0004 rule 14); preview it first with the twin previewRenameComputer. Idempotency-Key is required: a retry with the same key and body answers what the first attempt answered; the same key with another body is refused 422 idempotency-key-reuse. If-Match pins the version the admin read: a stale value answers 412 precondition-failed, an absent one 428 precondition-required. The submit plans again against the live state and re-checks the caller's scope immediately before the write (ADR-0005 rule 7); a target that left the scope answers 403, not a stale success. The answer is the operation reference; ActiveDIQ-Operation-Id is the undo handle. The diff and the reversibility class are in the preview and in the audited operation, and a secret value is in neither.
+         */
+        post: operations["renameComputer"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/objects/computers/{objectGuid}/reset-account": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Reset a computer account
+         * @description Resets the computer account's secure-channel password so the machine must rejoin or re-establish trust. This is the Action ad.computer.resetAccount (ADR-0004 rule 14); preview it first with the twin previewResetAccountComputer. Idempotency-Key is required: a retry with the same key and body answers what the first attempt answered; the same key with another body is refused 422 idempotency-key-reuse. If-Match pins the version the admin read: a stale value answers 412 precondition-failed, an absent one 428 precondition-required. The submit plans again against the live state and re-checks the caller's scope immediately before the write (ADR-0005 rule 7); a target that left the scope answers 403, not a stale success. Needs a fresh MFA (TM-D16): an interactive caller without one is answered 401 step-up-required and nothing changes; a token or an automation is held for an approval that carries step-up (202, holdReason step_up). Irreversible: no undo exists, the preview says reversibility irreversible and the undo preview answers 409 operation-not-undoable. The answer is the operation reference; ActiveDIQ-Operation-Id is the undo handle. The diff and the reversibility class are in the preview and in the audited operation, and a secret value is in neither.
+         */
+        post: operations["resetAccountComputer"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/objects/computers/{objectGuid}/restore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Restore a deleted computer account
+         * @description Restores a deleted computer account within the tombstone lifetime. It is lossy: the preview lists the link values that do not return (DM-16). This is the Action ad.computer.restore (ADR-0004 rule 14); preview it first with the twin previewRestoreComputer. Idempotency-Key is required: a retry with the same key and body answers what the first attempt answered; the same key with another body is refused 422 idempotency-key-reuse. If-Match pins the version the admin read: a stale value answers 412 precondition-failed, an absent one 428 precondition-required. The submit plans again against the live state and re-checks the caller's scope immediately before the write (ADR-0005 rule 7); a target that left the scope answers 403, not a stale success. The answer is the operation reference; ActiveDIQ-Operation-Id is the undo handle. The diff and the reversibility class are in the preview and in the audited operation, and a secret value is in neither.
+         */
+        post: operations["restoreComputer"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/objects/computers/{objectGuid}/update": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Change a computer account's attributes
+         * @description Sets and clears plain-text attributes of the computer account. set replaces a value, clear removes the attribute. This is the Action ad.computer.update (ADR-0004 rule 14); preview it first with the twin previewUpdateComputer. Idempotency-Key is required: a retry with the same key and body answers what the first attempt answered; the same key with another body is refused 422 idempotency-key-reuse. If-Match pins the version the admin read: a stale value answers 412 precondition-failed, an absent one 428 precondition-required. The submit plans again against the live state and re-checks the caller's scope immediately before the write (ADR-0005 rule 7); a target that left the scope answers 403, not a stale success. The answer is the operation reference; ActiveDIQ-Operation-Id is the undo handle. The diff and the reversibility class are in the preview and in the audited operation, and a secret value is in neither.
+         */
+        post: operations["updateComputer"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/objects/computers/operations/{operationId}/previews/undo": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview undoing a computer account change
+         * @description The dry run of undoing one ad.computer.* operation: the inverse Action's diff, its reversibility class (restore of a deleted object is lossy) and whether the caller may undo it. It writes, persists and audits nothing. 404 when the operation is unknown or is not an ad.computer.* operation. 409 operation-not-undoable when no inverse can be planned at all.
+         */
+        post: operations["previewUndoComputerOperation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/objects/computers/operations/{operationId}/undo": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Undo a computer account change
+         * @description Undoes one ad.computer.* operation, named by the ActiveDIQ-Operation-Id its write answered (ADR-0004 rule 14). The undo is a new operation, planned against the live object for the caller under the permission of the inverse Action, run inline, audited, and itself undoable. 409 operation-not-undoable with errors[].code irreversible (a password or account reset), already_undone, superseded (the object changed after this operation), not_finished or tier0_blocked. Undoing an operation that itself needed approval is always held (202). confirmations repeats the requiredConfirmations of the undo preview; an empty list when it listed none.
+         */
+        post: operations["undoComputerOperation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/objects/computers/previews/create": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview create a computer account
+         * @description The dry run of createComputer as the Action ad.computer.create (ADR-0004 rule 14): it plans against the live state, authorises the change for the caller and asks the gate, and answers the diff (attribute before and after per step), the reversibility class, required confirmations and whether it can be undone. It writes, persists and audits nothing, and needs no step-up. A refusal the plan finds is a 200 with outcome refused and blocked[].code (for example attribute_not_allowed, tier0_blocked, name_invalid), never a problem; so is a gate denial. Same x-permission, parameters and body as createComputer. A secret in the body is never echoed: the preview shows a redacted value.
+         */
+        post: operations["previewCreateComputer"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/objects/contacts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create a contact
+         * @description Creates a contact in the container named by parentGuid. The attributes are plain text on the class's allow list; anything that grants access or changes who the object is has its own Action. This is the Action ad.contact.create (ADR-0004 rule 14); preview it first with the twin previewCreateContact. Idempotency-Key is required: a retry with the same key and body answers what the first attempt answered; the same key with another body is refused 422 idempotency-key-reuse. The submit plans again against the live state and re-checks the caller's scope immediately before the write (ADR-0005 rule 7); a target that left the scope answers 403, not a stale success. The answer is the operation reference; ActiveDIQ-Operation-Id is the undo handle. The diff and the reversibility class are in the preview and in the audited operation, and a secret value is in neither.
+         */
+        post: operations["createContact"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/objects/contacts/{objectGuid}/delete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Delete a contact
+         * @description Deletes the contact: a tombstone, or a recycle-bin disable when the forest has the recycle bin. cascade is refused at plan (cascade_not_supported) for an organizational unit. This is the Action ad.contact.delete (ADR-0004 rule 14); preview it first with the twin previewDeleteContact. Idempotency-Key is required: a retry with the same key and body answers what the first attempt answered; the same key with another body is refused 422 idempotency-key-reuse. If-Match pins the version the admin read: a stale value answers 412 precondition-failed, an absent one 428 precondition-required. The submit plans again against the live state and re-checks the caller's scope immediately before the write (ADR-0005 rule 7); a target that left the scope answers 403, not a stale success. The answer is the operation reference; ActiveDIQ-Operation-Id is the undo handle. The diff and the reversibility class are in the preview and in the audited operation, and a secret value is in neither.
+         */
+        post: operations["deleteContact"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/objects/contacts/{objectGuid}/move": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Move a contact
+         * @description Moves the contact to another container of the same naming context. Both the source and the destination parent are re-checked live immediately before the write. This is the Action ad.contact.move (ADR-0004 rule 14); preview it first with the twin previewMoveContact. Idempotency-Key is required: a retry with the same key and body answers what the first attempt answered; the same key with another body is refused 422 idempotency-key-reuse. If-Match pins the version the admin read: a stale value answers 412 precondition-failed, an absent one 428 precondition-required. The submit plans again against the live state and re-checks the caller's scope immediately before the write (ADR-0005 rule 7); a target that left the scope answers 403, not a stale success. The answer is the operation reference; ActiveDIQ-Operation-Id is the undo handle. The diff and the reversibility class are in the preview and in the audited operation, and a secret value is in neither.
+         */
+        post: operations["moveContact"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/objects/contacts/{objectGuid}/previews/delete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview delete a contact
+         * @description The dry run of deleteContact as the Action ad.contact.delete (ADR-0004 rule 14): it plans against the live state, authorises the change for the caller and asks the gate, and answers the diff (attribute before and after per step), the reversibility class, required confirmations and whether it can be undone. It writes, persists and audits nothing, and needs no step-up. A refusal the plan finds is a 200 with outcome refused and blocked[].code (for example attribute_not_allowed, tier0_blocked, name_invalid), never a problem; so is a gate denial. Same x-permission, parameters and body as deleteContact.
+         */
+        post: operations["previewDeleteContact"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/objects/contacts/{objectGuid}/previews/move": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview move a contact
+         * @description The dry run of moveContact as the Action ad.contact.move (ADR-0004 rule 14): it plans against the live state, authorises the change for the caller and asks the gate, and answers the diff (attribute before and after per step), the reversibility class, required confirmations and whether it can be undone. It writes, persists and audits nothing, and needs no step-up. A refusal the plan finds is a 200 with outcome refused and blocked[].code (for example attribute_not_allowed, tier0_blocked, name_invalid), never a problem; so is a gate denial. Same x-permission, parameters and body as moveContact.
+         */
+        post: operations["previewMoveContact"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/objects/contacts/{objectGuid}/previews/rename": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview rename a contact
+         * @description The dry run of renameContact as the Action ad.contact.rename (ADR-0004 rule 14): it plans against the live state, authorises the change for the caller and asks the gate, and answers the diff (attribute before and after per step), the reversibility class, required confirmations and whether it can be undone. It writes, persists and audits nothing, and needs no step-up. A refusal the plan finds is a 200 with outcome refused and blocked[].code (for example attribute_not_allowed, tier0_blocked, name_invalid), never a problem; so is a gate denial. Same x-permission, parameters and body as renameContact.
+         */
+        post: operations["previewRenameContact"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/objects/contacts/{objectGuid}/previews/restore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview restore a deleted contact
+         * @description The dry run of restoreContact as the Action ad.contact.restore (ADR-0004 rule 14): it plans against the live state, authorises the change for the caller and asks the gate, and answers the diff (attribute before and after per step), the reversibility class, required confirmations and whether it can be undone. It writes, persists and audits nothing, and needs no step-up. A refusal the plan finds is a 200 with outcome refused and blocked[].code (for example attribute_not_allowed, tier0_blocked, name_invalid), never a problem; so is a gate denial. Same x-permission, parameters and body as restoreContact.
+         */
+        post: operations["previewRestoreContact"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/objects/contacts/{objectGuid}/previews/update": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview change a contact's attributes
+         * @description The dry run of updateContact as the Action ad.contact.update (ADR-0004 rule 14): it plans against the live state, authorises the change for the caller and asks the gate, and answers the diff (attribute before and after per step), the reversibility class, required confirmations and whether it can be undone. It writes, persists and audits nothing, and needs no step-up. A refusal the plan finds is a 200 with outcome refused and blocked[].code (for example attribute_not_allowed, tier0_blocked, name_invalid), never a problem; so is a gate denial. Same x-permission, parameters and body as updateContact.
+         */
+        post: operations["previewUpdateContact"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/objects/contacts/{objectGuid}/rename": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Rename a contact
+         * @description Changes the contact's name (its RDN value, never a DN). A rename is a modifyDN, so it needs objects.contact.move (TM-D19). This is the Action ad.contact.rename (ADR-0004 rule 14); preview it first with the twin previewRenameContact. Idempotency-Key is required: a retry with the same key and body answers what the first attempt answered; the same key with another body is refused 422 idempotency-key-reuse. If-Match pins the version the admin read: a stale value answers 412 precondition-failed, an absent one 428 precondition-required. The submit plans again against the live state and re-checks the caller's scope immediately before the write (ADR-0005 rule 7); a target that left the scope answers 403, not a stale success. The answer is the operation reference; ActiveDIQ-Operation-Id is the undo handle. The diff and the reversibility class are in the preview and in the audited operation, and a secret value is in neither.
+         */
+        post: operations["renameContact"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/objects/contacts/{objectGuid}/restore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Restore a deleted contact
+         * @description Restores a deleted contact within the tombstone lifetime. It is lossy: the preview lists the link values that do not return (DM-16). This is the Action ad.contact.restore (ADR-0004 rule 14); preview it first with the twin previewRestoreContact. Idempotency-Key is required: a retry with the same key and body answers what the first attempt answered; the same key with another body is refused 422 idempotency-key-reuse. If-Match pins the version the admin read: a stale value answers 412 precondition-failed, an absent one 428 precondition-required. The submit plans again against the live state and re-checks the caller's scope immediately before the write (ADR-0005 rule 7); a target that left the scope answers 403, not a stale success. The answer is the operation reference; ActiveDIQ-Operation-Id is the undo handle. The diff and the reversibility class are in the preview and in the audited operation, and a secret value is in neither.
+         */
+        post: operations["restoreContact"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/objects/contacts/{objectGuid}/update": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Change a contact's attributes
+         * @description Sets and clears plain-text attributes of the contact. set replaces a value, clear removes the attribute. This is the Action ad.contact.update (ADR-0004 rule 14); preview it first with the twin previewUpdateContact. Idempotency-Key is required: a retry with the same key and body answers what the first attempt answered; the same key with another body is refused 422 idempotency-key-reuse. If-Match pins the version the admin read: a stale value answers 412 precondition-failed, an absent one 428 precondition-required. The submit plans again against the live state and re-checks the caller's scope immediately before the write (ADR-0005 rule 7); a target that left the scope answers 403, not a stale success. The answer is the operation reference; ActiveDIQ-Operation-Id is the undo handle. The diff and the reversibility class are in the preview and in the audited operation, and a secret value is in neither.
+         */
+        post: operations["updateContact"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/objects/contacts/operations/{operationId}/previews/undo": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview undoing a contact change
+         * @description The dry run of undoing one ad.contact.* operation: the inverse Action's diff, its reversibility class (restore of a deleted object is lossy) and whether the caller may undo it. It writes, persists and audits nothing. 404 when the operation is unknown or is not an ad.contact.* operation. 409 operation-not-undoable when no inverse can be planned at all.
+         */
+        post: operations["previewUndoContactOperation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/objects/contacts/operations/{operationId}/undo": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Undo a contact change
+         * @description Undoes one ad.contact.* operation, named by the ActiveDIQ-Operation-Id its write answered (ADR-0004 rule 14). The undo is a new operation, planned against the live object for the caller under the permission of the inverse Action, run inline, audited, and itself undoable. 409 operation-not-undoable with errors[].code irreversible (a password or account reset), already_undone, superseded (the object changed after this operation), not_finished or tier0_blocked. Undoing an operation that itself needed approval is always held (202). confirmations repeats the requiredConfirmations of the undo preview; an empty list when it listed none.
+         */
+        post: operations["undoContactOperation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/objects/contacts/previews/create": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview create a contact
+         * @description The dry run of createContact as the Action ad.contact.create (ADR-0004 rule 14): it plans against the live state, authorises the change for the caller and asks the gate, and answers the diff (attribute before and after per step), the reversibility class, required confirmations and whether it can be undone. It writes, persists and audits nothing, and needs no step-up. A refusal the plan finds is a 200 with outcome refused and blocked[].code (for example attribute_not_allowed, tier0_blocked, name_invalid), never a problem; so is a gate denial. Same x-permission, parameters and body as createContact. A secret in the body is never echoed: the preview shows a redacted value.
+         */
+        post: operations["previewCreateContact"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/objects/groups": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create a group
+         * @description Creates a group in the container named by parentGuid. The attributes are plain text on the class's allow list; anything that grants access or changes who the object is has its own Action. This is the Action ad.group.create (ADR-0004 rule 14); preview it first with the twin previewCreateGroup. Idempotency-Key is required: a retry with the same key and body answers what the first attempt answered; the same key with another body is refused 422 idempotency-key-reuse. The submit plans again against the live state and re-checks the caller's scope immediately before the write (ADR-0005 rule 7); a target that left the scope answers 403, not a stale success. The answer is the operation reference; ActiveDIQ-Operation-Id is the undo handle. The diff and the reversibility class are in the preview and in the audited operation, and a secret value is in neither.
+         */
+        post: operations["createGroup"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/objects/groups/{objectGuid}/add-member": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Add a member to a group
+         * @description Adds a user, computer or contact as a direct member. This is the Action ad.group.addMember (ADR-0004 rule 14); preview it first with the twin previewAddMemberGroup. Idempotency-Key is required: a retry with the same key and body answers what the first attempt answered; the same key with another body is refused 422 idempotency-key-reuse. If-Match pins the version the admin read: a stale value answers 412 precondition-failed, an absent one 428 precondition-required. The submit plans again against the live state and re-checks the caller's scope immediately before the write (ADR-0005 rule 7); a target that left the scope answers 403, not a stale success. The answer is the operation reference; ActiveDIQ-Operation-Id is the undo handle. The diff and the reversibility class are in the preview and in the audited operation, and a secret value is in neither.
+         */
+        post: operations["addMemberGroup"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/objects/groups/{objectGuid}/delete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Delete a group
+         * @description Deletes the group: a tombstone, or a recycle-bin disable when the forest has the recycle bin. cascade is refused at plan (cascade_not_supported) for an organizational unit. This is the Action ad.group.delete (ADR-0004 rule 14); preview it first with the twin previewDeleteGroup. Idempotency-Key is required: a retry with the same key and body answers what the first attempt answered; the same key with another body is refused 422 idempotency-key-reuse. If-Match pins the version the admin read: a stale value answers 412 precondition-failed, an absent one 428 precondition-required. The submit plans again against the live state and re-checks the caller's scope immediately before the write (ADR-0005 rule 7); a target that left the scope answers 403, not a stale success. The answer is the operation reference; ActiveDIQ-Operation-Id is the undo handle. The diff and the reversibility class are in the preview and in the audited operation, and a secret value is in neither.
+         */
+        post: operations["deleteGroup"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/objects/groups/{objectGuid}/move": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Move a group
+         * @description Moves the group to another container of the same naming context. Both the source and the destination parent are re-checked live immediately before the write. This is the Action ad.group.move (ADR-0004 rule 14); preview it first with the twin previewMoveGroup. Idempotency-Key is required: a retry with the same key and body answers what the first attempt answered; the same key with another body is refused 422 idempotency-key-reuse. If-Match pins the version the admin read: a stale value answers 412 precondition-failed, an absent one 428 precondition-required. The submit plans again against the live state and re-checks the caller's scope immediately before the write (ADR-0005 rule 7); a target that left the scope answers 403, not a stale success. The answer is the operation reference; ActiveDIQ-Operation-Id is the undo handle. The diff and the reversibility class are in the preview and in the audited operation, and a secret value is in neither.
+         */
+        post: operations["moveGroup"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/objects/groups/{objectGuid}/nest-group": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Nest a group in a group
+         * @description Adds a group as a member of this group. Undo removes it. This is the Action ad.group.nestGroup (ADR-0004 rule 14); preview it first with the twin previewNestGroupGroup. Idempotency-Key is required: a retry with the same key and body answers what the first attempt answered; the same key with another body is refused 422 idempotency-key-reuse. If-Match pins the version the admin read: a stale value answers 412 precondition-failed, an absent one 428 precondition-required. The submit plans again against the live state and re-checks the caller's scope immediately before the write (ADR-0005 rule 7); a target that left the scope answers 403, not a stale success. The answer is the operation reference; ActiveDIQ-Operation-Id is the undo handle. The diff and the reversibility class are in the preview and in the audited operation, and a secret value is in neither.
+         */
+        post: operations["nestGroupGroup"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/objects/groups/{objectGuid}/previews/add-member": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview add a member to a group
+         * @description The dry run of addMemberGroup as the Action ad.group.addMember (ADR-0004 rule 14): it plans against the live state, authorises the change for the caller and asks the gate, and answers the diff (attribute before and after per step), the reversibility class, required confirmations and whether it can be undone. It writes, persists and audits nothing, and needs no step-up. A refusal the plan finds is a 200 with outcome refused and blocked[].code (for example attribute_not_allowed, tier0_blocked, name_invalid), never a problem; so is a gate denial. Same x-permission, parameters and body as addMemberGroup.
+         */
+        post: operations["previewAddMemberGroup"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/objects/groups/{objectGuid}/previews/delete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview delete a group
+         * @description The dry run of deleteGroup as the Action ad.group.delete (ADR-0004 rule 14): it plans against the live state, authorises the change for the caller and asks the gate, and answers the diff (attribute before and after per step), the reversibility class, required confirmations and whether it can be undone. It writes, persists and audits nothing, and needs no step-up. A refusal the plan finds is a 200 with outcome refused and blocked[].code (for example attribute_not_allowed, tier0_blocked, name_invalid), never a problem; so is a gate denial. Same x-permission, parameters and body as deleteGroup.
+         */
+        post: operations["previewDeleteGroup"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/objects/groups/{objectGuid}/previews/move": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview move a group
+         * @description The dry run of moveGroup as the Action ad.group.move (ADR-0004 rule 14): it plans against the live state, authorises the change for the caller and asks the gate, and answers the diff (attribute before and after per step), the reversibility class, required confirmations and whether it can be undone. It writes, persists and audits nothing, and needs no step-up. A refusal the plan finds is a 200 with outcome refused and blocked[].code (for example attribute_not_allowed, tier0_blocked, name_invalid), never a problem; so is a gate denial. Same x-permission, parameters and body as moveGroup.
+         */
+        post: operations["previewMoveGroup"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/objects/groups/{objectGuid}/previews/nest-group": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview nest a group in a group
+         * @description The dry run of nestGroupGroup as the Action ad.group.nestGroup (ADR-0004 rule 14): it plans against the live state, authorises the change for the caller and asks the gate, and answers the diff (attribute before and after per step), the reversibility class, required confirmations and whether it can be undone. It writes, persists and audits nothing, and needs no step-up. A refusal the plan finds is a 200 with outcome refused and blocked[].code (for example attribute_not_allowed, tier0_blocked, name_invalid), never a problem; so is a gate denial. Same x-permission, parameters and body as nestGroupGroup.
+         */
+        post: operations["previewNestGroupGroup"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/objects/groups/{objectGuid}/previews/remove-member": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview remove a member from a group
+         * @description The dry run of removeMemberGroup as the Action ad.group.removeMember (ADR-0004 rule 14): it plans against the live state, authorises the change for the caller and asks the gate, and answers the diff (attribute before and after per step), the reversibility class, required confirmations and whether it can be undone. It writes, persists and audits nothing, and needs no step-up. A refusal the plan finds is a 200 with outcome refused and blocked[].code (for example attribute_not_allowed, tier0_blocked, name_invalid), never a problem; so is a gate denial. Same x-permission, parameters and body as removeMemberGroup.
+         */
+        post: operations["previewRemoveMemberGroup"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/objects/groups/{objectGuid}/previews/rename": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview rename a group
+         * @description The dry run of renameGroup as the Action ad.group.rename (ADR-0004 rule 14): it plans against the live state, authorises the change for the caller and asks the gate, and answers the diff (attribute before and after per step), the reversibility class, required confirmations and whether it can be undone. It writes, persists and audits nothing, and needs no step-up. A refusal the plan finds is a 200 with outcome refused and blocked[].code (for example attribute_not_allowed, tier0_blocked, name_invalid), never a problem; so is a gate denial. Same x-permission, parameters and body as renameGroup.
+         */
+        post: operations["previewRenameGroup"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/objects/groups/{objectGuid}/previews/restore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview restore a deleted group
+         * @description The dry run of restoreGroup as the Action ad.group.restore (ADR-0004 rule 14): it plans against the live state, authorises the change for the caller and asks the gate, and answers the diff (attribute before and after per step), the reversibility class, required confirmations and whether it can be undone. It writes, persists and audits nothing, and needs no step-up. A refusal the plan finds is a 200 with outcome refused and blocked[].code (for example attribute_not_allowed, tier0_blocked, name_invalid), never a problem; so is a gate denial. Same x-permission, parameters and body as restoreGroup.
+         */
+        post: operations["previewRestoreGroup"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/objects/groups/{objectGuid}/previews/update": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview change a group's attributes
+         * @description The dry run of updateGroup as the Action ad.group.update (ADR-0004 rule 14): it plans against the live state, authorises the change for the caller and asks the gate, and answers the diff (attribute before and after per step), the reversibility class, required confirmations and whether it can be undone. It writes, persists and audits nothing, and needs no step-up. A refusal the plan finds is a 200 with outcome refused and blocked[].code (for example attribute_not_allowed, tier0_blocked, name_invalid), never a problem; so is a gate denial. Same x-permission, parameters and body as updateGroup.
+         */
+        post: operations["previewUpdateGroup"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/objects/groups/{objectGuid}/remove-member": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Remove a member from a group
+         * @description Removes a direct member. Undo adds it back. This is the Action ad.group.removeMember (ADR-0004 rule 14); preview it first with the twin previewRemoveMemberGroup. Idempotency-Key is required: a retry with the same key and body answers what the first attempt answered; the same key with another body is refused 422 idempotency-key-reuse. If-Match pins the version the admin read: a stale value answers 412 precondition-failed, an absent one 428 precondition-required. The submit plans again against the live state and re-checks the caller's scope immediately before the write (ADR-0005 rule 7); a target that left the scope answers 403, not a stale success. The answer is the operation reference; ActiveDIQ-Operation-Id is the undo handle. The diff and the reversibility class are in the preview and in the audited operation, and a secret value is in neither.
+         */
+        post: operations["removeMemberGroup"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/objects/groups/{objectGuid}/rename": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Rename a group
+         * @description Changes the group's name (its RDN value, never a DN). A rename is a modifyDN, so it needs objects.group.move (TM-D19). This is the Action ad.group.rename (ADR-0004 rule 14); preview it first with the twin previewRenameGroup. Idempotency-Key is required: a retry with the same key and body answers what the first attempt answered; the same key with another body is refused 422 idempotency-key-reuse. If-Match pins the version the admin read: a stale value answers 412 precondition-failed, an absent one 428 precondition-required. The submit plans again against the live state and re-checks the caller's scope immediately before the write (ADR-0005 rule 7); a target that left the scope answers 403, not a stale success. The answer is the operation reference; ActiveDIQ-Operation-Id is the undo handle. The diff and the reversibility class are in the preview and in the audited operation, and a secret value is in neither.
+         */
+        post: operations["renameGroup"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/objects/groups/{objectGuid}/restore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Restore a deleted group
+         * @description Restores a deleted group within the tombstone lifetime. It is lossy: the preview lists the link values that do not return (DM-16). This is the Action ad.group.restore (ADR-0004 rule 14); preview it first with the twin previewRestoreGroup. Idempotency-Key is required: a retry with the same key and body answers what the first attempt answered; the same key with another body is refused 422 idempotency-key-reuse. If-Match pins the version the admin read: a stale value answers 412 precondition-failed, an absent one 428 precondition-required. The submit plans again against the live state and re-checks the caller's scope immediately before the write (ADR-0005 rule 7); a target that left the scope answers 403, not a stale success. The answer is the operation reference; ActiveDIQ-Operation-Id is the undo handle. The diff and the reversibility class are in the preview and in the audited operation, and a secret value is in neither.
+         */
+        post: operations["restoreGroup"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/objects/groups/{objectGuid}/update": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Change a group's attributes
+         * @description Sets and clears plain-text attributes of the group. set replaces a value, clear removes the attribute. This is the Action ad.group.update (ADR-0004 rule 14); preview it first with the twin previewUpdateGroup. Idempotency-Key is required: a retry with the same key and body answers what the first attempt answered; the same key with another body is refused 422 idempotency-key-reuse. If-Match pins the version the admin read: a stale value answers 412 precondition-failed, an absent one 428 precondition-required. The submit plans again against the live state and re-checks the caller's scope immediately before the write (ADR-0005 rule 7); a target that left the scope answers 403, not a stale success. The answer is the operation reference; ActiveDIQ-Operation-Id is the undo handle. The diff and the reversibility class are in the preview and in the audited operation, and a secret value is in neither.
+         */
+        post: operations["updateGroup"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/objects/groups/operations/{operationId}/previews/undo": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview undoing a group change
+         * @description The dry run of undoing one ad.group.* operation: the inverse Action's diff, its reversibility class (restore of a deleted object is lossy) and whether the caller may undo it. It writes, persists and audits nothing. 404 when the operation is unknown or is not an ad.group.* operation. 409 operation-not-undoable when no inverse can be planned at all.
+         */
+        post: operations["previewUndoGroupOperation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/objects/groups/operations/{operationId}/undo": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Undo a group change
+         * @description Undoes one ad.group.* operation, named by the ActiveDIQ-Operation-Id its write answered (ADR-0004 rule 14). The undo is a new operation, planned against the live object for the caller under the permission of the inverse Action, run inline, audited, and itself undoable. 409 operation-not-undoable with errors[].code irreversible (a password or account reset), already_undone, superseded (the object changed after this operation), not_finished or tier0_blocked. Undoing an operation that itself needed approval is always held (202). confirmations repeats the requiredConfirmations of the undo preview; an empty list when it listed none.
+         */
+        post: operations["undoGroupOperation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/objects/groups/previews/create": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview create a group
+         * @description The dry run of createGroup as the Action ad.group.create (ADR-0004 rule 14): it plans against the live state, authorises the change for the caller and asks the gate, and answers the diff (attribute before and after per step), the reversibility class, required confirmations and whether it can be undone. It writes, persists and audits nothing, and needs no step-up. A refusal the plan finds is a 200 with outcome refused and blocked[].code (for example attribute_not_allowed, tier0_blocked, name_invalid), never a problem; so is a gate denial. Same x-permission, parameters and body as createGroup. A secret in the body is never echoed: the preview shows a redacted value.
+         */
+        post: operations["previewCreateGroup"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/objects/ous": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create a organizational unit
+         * @description Creates a organizational unit in the container named by parentGuid. The attributes are plain text on the class's allow list; anything that grants access or changes who the object is has its own Action. This is the Action ad.ou.create (ADR-0004 rule 14); preview it first with the twin previewCreateOU. Idempotency-Key is required: a retry with the same key and body answers what the first attempt answered; the same key with another body is refused 422 idempotency-key-reuse. The submit plans again against the live state and re-checks the caller's scope immediately before the write (ADR-0005 rule 7); a target that left the scope answers 403, not a stale success. The answer is the operation reference; ActiveDIQ-Operation-Id is the undo handle. The diff and the reversibility class are in the preview and in the audited operation, and a secret value is in neither.
+         */
+        post: operations["createOU"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/objects/ous/{objectGuid}/delete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Delete a organizational unit
+         * @description Deletes the organizational unit: a tombstone, or a recycle-bin disable when the forest has the recycle bin. cascade is refused at plan (cascade_not_supported) for an organizational unit. This is the Action ad.ou.delete (ADR-0004 rule 14); preview it first with the twin previewDeleteOU. Idempotency-Key is required: a retry with the same key and body answers what the first attempt answered; the same key with another body is refused 422 idempotency-key-reuse. If-Match pins the version the admin read: a stale value answers 412 precondition-failed, an absent one 428 precondition-required. The submit plans again against the live state and re-checks the caller's scope immediately before the write (ADR-0005 rule 7); a target that left the scope answers 403, not a stale success. The answer is the operation reference; ActiveDIQ-Operation-Id is the undo handle. The diff and the reversibility class are in the preview and in the audited operation, and a secret value is in neither.
+         */
+        post: operations["deleteOU"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/objects/ous/{objectGuid}/move": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Move a organizational unit
+         * @description Moves the organizational unit to another container of the same naming context. Both the source and the destination parent are re-checked live immediately before the write. This is the Action ad.ou.move (ADR-0004 rule 14); preview it first with the twin previewMoveOU. Idempotency-Key is required: a retry with the same key and body answers what the first attempt answered; the same key with another body is refused 422 idempotency-key-reuse. If-Match pins the version the admin read: a stale value answers 412 precondition-failed, an absent one 428 precondition-required. The submit plans again against the live state and re-checks the caller's scope immediately before the write (ADR-0005 rule 7); a target that left the scope answers 403, not a stale success. The answer is the operation reference; ActiveDIQ-Operation-Id is the undo handle. The diff and the reversibility class are in the preview and in the audited operation, and a secret value is in neither.
+         */
+        post: operations["moveOU"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/objects/ous/{objectGuid}/previews/delete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview delete a organizational unit
+         * @description The dry run of deleteOU as the Action ad.ou.delete (ADR-0004 rule 14): it plans against the live state, authorises the change for the caller and asks the gate, and answers the diff (attribute before and after per step), the reversibility class, required confirmations and whether it can be undone. It writes, persists and audits nothing, and needs no step-up. A refusal the plan finds is a 200 with outcome refused and blocked[].code (for example attribute_not_allowed, tier0_blocked, name_invalid), never a problem; so is a gate denial. Same x-permission, parameters and body as deleteOU.
+         */
+        post: operations["previewDeleteOU"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/objects/ous/{objectGuid}/previews/move": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview move a organizational unit
+         * @description The dry run of moveOU as the Action ad.ou.move (ADR-0004 rule 14): it plans against the live state, authorises the change for the caller and asks the gate, and answers the diff (attribute before and after per step), the reversibility class, required confirmations and whether it can be undone. It writes, persists and audits nothing, and needs no step-up. A refusal the plan finds is a 200 with outcome refused and blocked[].code (for example attribute_not_allowed, tier0_blocked, name_invalid), never a problem; so is a gate denial. Same x-permission, parameters and body as moveOU.
+         */
+        post: operations["previewMoveOU"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/objects/ous/{objectGuid}/previews/rename": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview rename a organizational unit
+         * @description The dry run of renameOU as the Action ad.ou.rename (ADR-0004 rule 14): it plans against the live state, authorises the change for the caller and asks the gate, and answers the diff (attribute before and after per step), the reversibility class, required confirmations and whether it can be undone. It writes, persists and audits nothing, and needs no step-up. A refusal the plan finds is a 200 with outcome refused and blocked[].code (for example attribute_not_allowed, tier0_blocked, name_invalid), never a problem; so is a gate denial. Same x-permission, parameters and body as renameOU.
+         */
+        post: operations["previewRenameOU"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/objects/ous/{objectGuid}/previews/restore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview restore a deleted organizational unit
+         * @description The dry run of restoreOU as the Action ad.ou.restore (ADR-0004 rule 14): it plans against the live state, authorises the change for the caller and asks the gate, and answers the diff (attribute before and after per step), the reversibility class, required confirmations and whether it can be undone. It writes, persists and audits nothing, and needs no step-up. A refusal the plan finds is a 200 with outcome refused and blocked[].code (for example attribute_not_allowed, tier0_blocked, name_invalid), never a problem; so is a gate denial. Same x-permission, parameters and body as restoreOU.
+         */
+        post: operations["previewRestoreOU"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/objects/ous/{objectGuid}/previews/update": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview change a organizational unit's attributes
+         * @description The dry run of updateOU as the Action ad.ou.update (ADR-0004 rule 14): it plans against the live state, authorises the change for the caller and asks the gate, and answers the diff (attribute before and after per step), the reversibility class, required confirmations and whether it can be undone. It writes, persists and audits nothing, and needs no step-up. A refusal the plan finds is a 200 with outcome refused and blocked[].code (for example attribute_not_allowed, tier0_blocked, name_invalid), never a problem; so is a gate denial. Same x-permission, parameters and body as updateOU.
+         */
+        post: operations["previewUpdateOU"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/objects/ous/{objectGuid}/rename": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Rename a organizational unit
+         * @description Changes the organizational unit's name (its RDN value, never a DN). A rename is a modifyDN, so it needs objects.ou.move (TM-D19). This is the Action ad.ou.rename (ADR-0004 rule 14); preview it first with the twin previewRenameOU. Idempotency-Key is required: a retry with the same key and body answers what the first attempt answered; the same key with another body is refused 422 idempotency-key-reuse. If-Match pins the version the admin read: a stale value answers 412 precondition-failed, an absent one 428 precondition-required. The submit plans again against the live state and re-checks the caller's scope immediately before the write (ADR-0005 rule 7); a target that left the scope answers 403, not a stale success. The answer is the operation reference; ActiveDIQ-Operation-Id is the undo handle. The diff and the reversibility class are in the preview and in the audited operation, and a secret value is in neither.
+         */
+        post: operations["renameOU"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/objects/ous/{objectGuid}/restore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Restore a deleted organizational unit
+         * @description Restores a deleted organizational unit within the tombstone lifetime. It is lossy: the preview lists the link values that do not return (DM-16). This is the Action ad.ou.restore (ADR-0004 rule 14); preview it first with the twin previewRestoreOU. Idempotency-Key is required: a retry with the same key and body answers what the first attempt answered; the same key with another body is refused 422 idempotency-key-reuse. If-Match pins the version the admin read: a stale value answers 412 precondition-failed, an absent one 428 precondition-required. The submit plans again against the live state and re-checks the caller's scope immediately before the write (ADR-0005 rule 7); a target that left the scope answers 403, not a stale success. The answer is the operation reference; ActiveDIQ-Operation-Id is the undo handle. The diff and the reversibility class are in the preview and in the audited operation, and a secret value is in neither.
+         */
+        post: operations["restoreOU"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/objects/ous/{objectGuid}/update": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Change a organizational unit's attributes
+         * @description Sets and clears plain-text attributes of the organizational unit. set replaces a value, clear removes the attribute. This is the Action ad.ou.update (ADR-0004 rule 14); preview it first with the twin previewUpdateOU. Idempotency-Key is required: a retry with the same key and body answers what the first attempt answered; the same key with another body is refused 422 idempotency-key-reuse. If-Match pins the version the admin read: a stale value answers 412 precondition-failed, an absent one 428 precondition-required. The submit plans again against the live state and re-checks the caller's scope immediately before the write (ADR-0005 rule 7); a target that left the scope answers 403, not a stale success. The answer is the operation reference; ActiveDIQ-Operation-Id is the undo handle. The diff and the reversibility class are in the preview and in the audited operation, and a secret value is in neither.
+         */
+        post: operations["updateOU"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/objects/ous/operations/{operationId}/previews/undo": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview undoing a organizational unit change
+         * @description The dry run of undoing one ad.ou.* operation: the inverse Action's diff, its reversibility class (restore of a deleted object is lossy) and whether the caller may undo it. It writes, persists and audits nothing. 404 when the operation is unknown or is not an ad.ou.* operation. 409 operation-not-undoable when no inverse can be planned at all.
+         */
+        post: operations["previewUndoOUOperation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/objects/ous/operations/{operationId}/undo": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Undo a organizational unit change
+         * @description Undoes one ad.ou.* operation, named by the ActiveDIQ-Operation-Id its write answered (ADR-0004 rule 14). The undo is a new operation, planned against the live object for the caller under the permission of the inverse Action, run inline, audited, and itself undoable. 409 operation-not-undoable with errors[].code irreversible (a password or account reset), already_undone, superseded (the object changed after this operation), not_finished or tier0_blocked. Undoing an operation that itself needed approval is always held (202). confirmations repeats the requiredConfirmations of the undo preview; an empty list when it listed none.
+         */
+        post: operations["undoOUOperation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/objects/ous/previews/create": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview create a organizational unit
+         * @description The dry run of createOU as the Action ad.ou.create (ADR-0004 rule 14): it plans against the live state, authorises the change for the caller and asks the gate, and answers the diff (attribute before and after per step), the reversibility class, required confirmations and whether it can be undone. It writes, persists and audits nothing, and needs no step-up. A refusal the plan finds is a 200 with outcome refused and blocked[].code (for example attribute_not_allowed, tier0_blocked, name_invalid), never a problem; so is a gate denial. Same x-permission, parameters and body as createOU. A secret in the body is never echoed: the preview shows a redacted value.
+         */
+        post: operations["previewCreateOU"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/objects/users": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create a user account
+         * @description Creates a user account in the container named by parentGuid. The attributes are plain text on the class's allow list; anything that grants access or changes who the object is has its own Action. This is the Action ad.user.create (ADR-0004 rule 14); preview it first with the twin previewCreateUser. Idempotency-Key is required: a retry with the same key and body answers what the first attempt answered; the same key with another body is refused 422 idempotency-key-reuse. The submit plans again against the live state and re-checks the caller's scope immediately before the write (ADR-0005 rule 7); a target that left the scope answers 403, not a stale success. The answer is the operation reference; ActiveDIQ-Operation-Id is the undo handle. The diff and the reversibility class are in the preview and in the audited operation, and a secret value is in neither.
+         */
+        post: operations["createUser"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/objects/users/{objectGuid}/delete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Delete a user account
+         * @description Deletes the user account: a tombstone, or a recycle-bin disable when the forest has the recycle bin. cascade is refused at plan (cascade_not_supported) for an organizational unit. This is the Action ad.user.delete (ADR-0004 rule 14); preview it first with the twin previewDeleteUser. Idempotency-Key is required: a retry with the same key and body answers what the first attempt answered; the same key with another body is refused 422 idempotency-key-reuse. If-Match pins the version the admin read: a stale value answers 412 precondition-failed, an absent one 428 precondition-required. The submit plans again against the live state and re-checks the caller's scope immediately before the write (ADR-0005 rule 7); a target that left the scope answers 403, not a stale success. The answer is the operation reference; ActiveDIQ-Operation-Id is the undo handle. The diff and the reversibility class are in the preview and in the audited operation, and a secret value is in neither.
+         */
+        post: operations["deleteUser"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/objects/users/{objectGuid}/disable": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Disable a user account
+         * @description Disables the account. Undo enables it again, restoring the prior userAccountControl state. This is the Action ad.user.disable (ADR-0004 rule 14); preview it first with the twin previewDisableUser. Idempotency-Key is required: a retry with the same key and body answers what the first attempt answered; the same key with another body is refused 422 idempotency-key-reuse. If-Match pins the version the admin read: a stale value answers 412 precondition-failed, an absent one 428 precondition-required. The submit plans again against the live state and re-checks the caller's scope immediately before the write (ADR-0005 rule 7); a target that left the scope answers 403, not a stale success. The answer is the operation reference; ActiveDIQ-Operation-Id is the undo handle. The diff and the reversibility class are in the preview and in the audited operation, and a secret value is in neither.
+         */
+        post: operations["disableUser"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/objects/users/{objectGuid}/enable": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Enable a user account
+         * @description Enables the account. Undo disables it again, restoring the prior userAccountControl state. This is the Action ad.user.enable (ADR-0004 rule 14); preview it first with the twin previewEnableUser. Idempotency-Key is required: a retry with the same key and body answers what the first attempt answered; the same key with another body is refused 422 idempotency-key-reuse. If-Match pins the version the admin read: a stale value answers 412 precondition-failed, an absent one 428 precondition-required. The submit plans again against the live state and re-checks the caller's scope immediately before the write (ADR-0005 rule 7); a target that left the scope answers 403, not a stale success. The answer is the operation reference; ActiveDIQ-Operation-Id is the undo handle. The diff and the reversibility class are in the preview and in the audited operation, and a secret value is in neither.
+         */
+        post: operations["enableUser"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/objects/users/{objectGuid}/move": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Move a user account
+         * @description Moves the user account to another container of the same naming context. Both the source and the destination parent are re-checked live immediately before the write. This is the Action ad.user.move (ADR-0004 rule 14); preview it first with the twin previewMoveUser. Idempotency-Key is required: a retry with the same key and body answers what the first attempt answered; the same key with another body is refused 422 idempotency-key-reuse. If-Match pins the version the admin read: a stale value answers 412 precondition-failed, an absent one 428 precondition-required. The submit plans again against the live state and re-checks the caller's scope immediately before the write (ADR-0005 rule 7); a target that left the scope answers 403, not a stale success. The answer is the operation reference; ActiveDIQ-Operation-Id is the undo handle. The diff and the reversibility class are in the preview and in the audited operation, and a secret value is in neither.
+         */
+        post: operations["moveUser"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/objects/users/{objectGuid}/previews/delete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview delete a user account
+         * @description The dry run of deleteUser as the Action ad.user.delete (ADR-0004 rule 14): it plans against the live state, authorises the change for the caller and asks the gate, and answers the diff (attribute before and after per step), the reversibility class, required confirmations and whether it can be undone. It writes, persists and audits nothing, and needs no step-up. A refusal the plan finds is a 200 with outcome refused and blocked[].code (for example attribute_not_allowed, tier0_blocked, name_invalid), never a problem; so is a gate denial. Same x-permission, parameters and body as deleteUser.
+         */
+        post: operations["previewDeleteUser"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/objects/users/{objectGuid}/previews/disable": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview disable a user account
+         * @description The dry run of disableUser as the Action ad.user.disable (ADR-0004 rule 14): it plans against the live state, authorises the change for the caller and asks the gate, and answers the diff (attribute before and after per step), the reversibility class, required confirmations and whether it can be undone. It writes, persists and audits nothing, and needs no step-up. A refusal the plan finds is a 200 with outcome refused and blocked[].code (for example attribute_not_allowed, tier0_blocked, name_invalid), never a problem; so is a gate denial. Same x-permission, parameters and body as disableUser.
+         */
+        post: operations["previewDisableUser"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/objects/users/{objectGuid}/previews/enable": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview enable a user account
+         * @description The dry run of enableUser as the Action ad.user.enable (ADR-0004 rule 14): it plans against the live state, authorises the change for the caller and asks the gate, and answers the diff (attribute before and after per step), the reversibility class, required confirmations and whether it can be undone. It writes, persists and audits nothing, and needs no step-up. A refusal the plan finds is a 200 with outcome refused and blocked[].code (for example attribute_not_allowed, tier0_blocked, name_invalid), never a problem; so is a gate denial. Same x-permission, parameters and body as enableUser.
+         */
+        post: operations["previewEnableUser"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/objects/users/{objectGuid}/previews/move": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview move a user account
+         * @description The dry run of moveUser as the Action ad.user.move (ADR-0004 rule 14): it plans against the live state, authorises the change for the caller and asks the gate, and answers the diff (attribute before and after per step), the reversibility class, required confirmations and whether it can be undone. It writes, persists and audits nothing, and needs no step-up. A refusal the plan finds is a 200 with outcome refused and blocked[].code (for example attribute_not_allowed, tier0_blocked, name_invalid), never a problem; so is a gate denial. Same x-permission, parameters and body as moveUser.
+         */
+        post: operations["previewMoveUser"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/objects/users/{objectGuid}/previews/rename": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview rename a user account
+         * @description The dry run of renameUser as the Action ad.user.rename (ADR-0004 rule 14): it plans against the live state, authorises the change for the caller and asks the gate, and answers the diff (attribute before and after per step), the reversibility class, required confirmations and whether it can be undone. It writes, persists and audits nothing, and needs no step-up. A refusal the plan finds is a 200 with outcome refused and blocked[].code (for example attribute_not_allowed, tier0_blocked, name_invalid), never a problem; so is a gate denial. Same x-permission, parameters and body as renameUser.
+         */
+        post: operations["previewRenameUser"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/objects/users/{objectGuid}/previews/reset-password": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview reset a user's password
+         * @description The dry run of resetPasswordUser as the Action ad.user.resetPassword (ADR-0004 rule 14): it plans against the live state, authorises the change for the caller and asks the gate, and answers the diff (attribute before and after per step), the reversibility class, required confirmations and whether it can be undone. It writes, persists and audits nothing, and needs no step-up. A refusal the plan finds is a 200 with outcome refused and blocked[].code (for example attribute_not_allowed, tier0_blocked, name_invalid), never a problem; so is a gate denial. Same x-permission, parameters and body as resetPasswordUser. Irreversible: no undo exists, the preview says reversibility irreversible and the undo preview answers 409 operation-not-undoable. A secret in the body is never echoed: the preview shows a redacted value.
+         */
+        post: operations["previewResetPasswordUser"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/objects/users/{objectGuid}/previews/restore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview restore a deleted user account
+         * @description The dry run of restoreUser as the Action ad.user.restore (ADR-0004 rule 14): it plans against the live state, authorises the change for the caller and asks the gate, and answers the diff (attribute before and after per step), the reversibility class, required confirmations and whether it can be undone. It writes, persists and audits nothing, and needs no step-up. A refusal the plan finds is a 200 with outcome refused and blocked[].code (for example attribute_not_allowed, tier0_blocked, name_invalid), never a problem; so is a gate denial. Same x-permission, parameters and body as restoreUser.
+         */
+        post: operations["previewRestoreUser"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/objects/users/{objectGuid}/previews/unlock": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview unlock a user account
+         * @description The dry run of unlockUser as the Action ad.user.unlock (ADR-0004 rule 14): it plans against the live state, authorises the change for the caller and asks the gate, and answers the diff (attribute before and after per step), the reversibility class, required confirmations and whether it can be undone. It writes, persists and audits nothing, and needs no step-up. A refusal the plan finds is a 200 with outcome refused and blocked[].code (for example attribute_not_allowed, tier0_blocked, name_invalid), never a problem; so is a gate denial. Same x-permission, parameters and body as unlockUser.
+         */
+        post: operations["previewUnlockUser"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/objects/users/{objectGuid}/previews/update": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview change a user account's attributes
+         * @description The dry run of updateUser as the Action ad.user.update (ADR-0004 rule 14): it plans against the live state, authorises the change for the caller and asks the gate, and answers the diff (attribute before and after per step), the reversibility class, required confirmations and whether it can be undone. It writes, persists and audits nothing, and needs no step-up. A refusal the plan finds is a 200 with outcome refused and blocked[].code (for example attribute_not_allowed, tier0_blocked, name_invalid), never a problem; so is a gate denial. Same x-permission, parameters and body as updateUser.
+         */
+        post: operations["previewUpdateUser"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/objects/users/{objectGuid}/rename": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Rename a user account
+         * @description Changes the user account's name (its RDN value, never a DN). A rename is a modifyDN, so it needs objects.user.move (TM-D19). This is the Action ad.user.rename (ADR-0004 rule 14); preview it first with the twin previewRenameUser. Idempotency-Key is required: a retry with the same key and body answers what the first attempt answered; the same key with another body is refused 422 idempotency-key-reuse. If-Match pins the version the admin read: a stale value answers 412 precondition-failed, an absent one 428 precondition-required. The submit plans again against the live state and re-checks the caller's scope immediately before the write (ADR-0005 rule 7); a target that left the scope answers 403, not a stale success. The answer is the operation reference; ActiveDIQ-Operation-Id is the undo handle. The diff and the reversibility class are in the preview and in the audited operation, and a secret value is in neither.
+         */
+        post: operations["renameUser"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/objects/users/{objectGuid}/reset-password": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Reset a user's password
+         * @description Sets a new password on the account and, with mustChangeAtNextLogon, forces a change at next sign-in. This is the Action ad.user.resetPassword (ADR-0004 rule 14); preview it first with the twin previewResetPasswordUser. Idempotency-Key is required: a retry with the same key and body answers what the first attempt answered; the same key with another body is refused 422 idempotency-key-reuse. If-Match pins the version the admin read: a stale value answers 412 precondition-failed, an absent one 428 precondition-required. The submit plans again against the live state and re-checks the caller's scope immediately before the write (ADR-0005 rule 7); a target that left the scope answers 403, not a stale success. Needs a fresh MFA (TM-D16): an interactive caller without one is answered 401 step-up-required and nothing changes; a token or an automation is held for an approval that carries step-up (202, holdReason step_up). Irreversible: no undo exists, the preview says reversibility irreversible and the undo preview answers 409 operation-not-undoable. The answer is the operation reference; ActiveDIQ-Operation-Id is the undo handle. The diff and the reversibility class are in the preview and in the audited operation, and a secret value is in neither.
+         */
+        post: operations["resetPasswordUser"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/objects/users/{objectGuid}/restore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Restore a deleted user account
+         * @description Restores a deleted user account within the tombstone lifetime. It is lossy: the preview lists the link values that do not return (DM-16). This is the Action ad.user.restore (ADR-0004 rule 14); preview it first with the twin previewRestoreUser. Idempotency-Key is required: a retry with the same key and body answers what the first attempt answered; the same key with another body is refused 422 idempotency-key-reuse. If-Match pins the version the admin read: a stale value answers 412 precondition-failed, an absent one 428 precondition-required. The submit plans again against the live state and re-checks the caller's scope immediately before the write (ADR-0005 rule 7); a target that left the scope answers 403, not a stale success. The answer is the operation reference; ActiveDIQ-Operation-Id is the undo handle. The diff and the reversibility class are in the preview and in the audited operation, and a secret value is in neither.
+         */
+        post: operations["restoreUser"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/objects/users/{objectGuid}/unlock": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Unlock a user account
+         * @description Clears the account lockout. Undo restores the prior lockout state. This is the Action ad.user.unlock (ADR-0004 rule 14); preview it first with the twin previewUnlockUser. Idempotency-Key is required: a retry with the same key and body answers what the first attempt answered; the same key with another body is refused 422 idempotency-key-reuse. If-Match pins the version the admin read: a stale value answers 412 precondition-failed, an absent one 428 precondition-required. The submit plans again against the live state and re-checks the caller's scope immediately before the write (ADR-0005 rule 7); a target that left the scope answers 403, not a stale success. The answer is the operation reference; ActiveDIQ-Operation-Id is the undo handle. The diff and the reversibility class are in the preview and in the audited operation, and a secret value is in neither.
+         */
+        post: operations["unlockUser"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/objects/users/{objectGuid}/update": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Change a user account's attributes
+         * @description Sets and clears plain-text attributes of the user account. set replaces a value, clear removes the attribute. This is the Action ad.user.update (ADR-0004 rule 14); preview it first with the twin previewUpdateUser. Idempotency-Key is required: a retry with the same key and body answers what the first attempt answered; the same key with another body is refused 422 idempotency-key-reuse. If-Match pins the version the admin read: a stale value answers 412 precondition-failed, an absent one 428 precondition-required. The submit plans again against the live state and re-checks the caller's scope immediately before the write (ADR-0005 rule 7); a target that left the scope answers 403, not a stale success. The answer is the operation reference; ActiveDIQ-Operation-Id is the undo handle. The diff and the reversibility class are in the preview and in the audited operation, and a secret value is in neither.
+         */
+        post: operations["updateUser"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/objects/users/operations/{operationId}/previews/undo": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview undoing a user account change
+         * @description The dry run of undoing one ad.user.* operation: the inverse Action's diff, its reversibility class (restore of a deleted object is lossy) and whether the caller may undo it. It writes, persists and audits nothing. 404 when the operation is unknown or is not an ad.user.* operation. 409 operation-not-undoable when no inverse can be planned at all.
+         */
+        post: operations["previewUndoUserOperation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/objects/users/operations/{operationId}/undo": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Undo a user account change
+         * @description Undoes one ad.user.* operation, named by the ActiveDIQ-Operation-Id its write answered (ADR-0004 rule 14). The undo is a new operation, planned against the live object for the caller under the permission of the inverse Action, run inline, audited, and itself undoable. 409 operation-not-undoable with errors[].code irreversible (a password or account reset), already_undone, superseded (the object changed after this operation), not_finished or tier0_blocked. Undoing an operation that itself needed approval is always held (202). confirmations repeats the requiredConfirmations of the undo preview; an empty list when it listed none.
+         */
+        post: operations["undoUserOperation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/objects/users/previews/create": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview create a user account
+         * @description The dry run of createUser as the Action ad.user.create (ADR-0004 rule 14): it plans against the live state, authorises the change for the caller and asks the gate, and answers the diff (attribute before and after per step), the reversibility class, required confirmations and whether it can be undone. It writes, persists and audits nothing, and needs no step-up. A refusal the plan finds is a 200 with outcome refused and blocked[].code (for example attribute_not_allowed, tier0_blocked, name_invalid), never a problem; so is a gate denial. Same x-permission, parameters and body as createUser. A secret in the body is never echoed: the preview shows a redacted value.
+         */
+        post: operations["previewCreateUser"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/operations/catalogue": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List the Actions the caller may start
+         * @description The registered Actions (operation.Catalogue(), ADR-0003 F4) the caller holds the permission of, in Action ID order, for the command palette and for scripts that discover what they can submit. Read-only: it shows an Action's ID, version, permission, target kind, worst-case reversibility and whether it needs step-up; it never shows an input value, a secret or an Action the caller cannot start. Not paged: the registry is finite and small.
+         */
+        get: operations["listOperationCatalogue"];
+        put?: never;
         post?: never;
         delete?: never;
         options?: never;
@@ -533,6 +2337,110 @@ export interface paths {
         get: operations["downloadReportExport"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/reports/managers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Find managers to run a manager report for
+         * @description The picker list of USR-12 Manager Based Users (reports-2 second slice 6.1, 11): users, inside the caller's read scope, who have at least one direct report, matching q. The pick is carried back as a ReportSubjectRef (connectionId and objectGUID, never a DN) in ReportRunParameters.subjects of a definition whose subjectKind is manager; no new parameter shape is needed. q is literal text matched against name and logon name: nothing from it is placed in a directory query as syntax, and a wildcard or filter character has no meaning. An absent or empty q lists the managers in a stable order (display name, then objectGUID), so the picker can show recent or first managers before the admin types. Two managers with the same display name are told apart by logonName and ouPath, never by order. directReports counts the direct reports inside the caller's scope. The list is read from the inventory (a link edge), not from a live directory read, and the run-time freshness label applies to the report, not to this list. A scope that grants nothing answers an empty page.
+         */
+        get: operations["listReportManagers"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/reports/replication/thresholds": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read the DC replication status thresholds
+         * @description The tenant's thresholds that turn a replication link's last-success age into a status in SYS-03 DC Replication Status (reports-2 second slice 7.3.3). They are the tenant's setting, not the run's: a run pins the values it used in ReportRun.replication.thresholds and its stored statuses never change when this is edited. Before anyone edits them, isDefault is true and the values are the product defaults (defaults). The ETag is the version for updateReportReplicationThresholds.
+         */
+        get: operations["getReportReplicationThresholds"];
+        /**
+         * Set the DC replication status thresholds
+         * @description Replaces both thresholds, as the Action reports.replication.thresholds.update (ADR-0005 rule 10): preview diff, gate, audit, and undo that restores the previous values. Needs If-Match with the ETag read. The warning threshold must be shorter than the failing threshold, otherwise 400 with errors[].code thresholds_not_ordered; each is 5 minutes to 30 days, otherwise 400. A change applies to runs that start after it; it never rewrites a stored run. It widens no directory right and reads no directory. Preview it first with previewUpdateReportReplicationThresholds (same body and parameters; nothing is written). The ActiveDIQ-Operation-Id it answers is the undo handle.
+         */
+        put: operations["updateReportReplicationThresholds"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/reports/replication/thresholds/operations/{operationId}/previews/undo": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview undoing a thresholds change
+         * @description The dry run of undoing one reports.replication.thresholds.* operation (ADR-0004 rule 14): it plans the inverse, reports.replication.thresholds.restore, against the live thresholds for the caller. A plan refusal is a 200 with outcome refused. It writes, persists and audits nothing. 404 when the operation is unknown or is not a reports.replication.thresholds.* operation. 409 operation-not-undoable with errors[].code irreversible, already_undone, superseded (the thresholds changed after this operation; undo the later change first) or not_finished.
+         */
+        post: operations["previewUndoReportReplicationThresholdsOperation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/reports/replication/thresholds/operations/{operationId}/undo": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Undo a thresholds change
+         * @description Undoes one reports.replication.thresholds.* operation, named by the ActiveDIQ-Operation-Id its write answered (ADR-0004 rule 14, ADR-0005 rule 10). The undo is a new operation of the Action reports.replication.thresholds.restore, planned against the live thresholds for the caller, run inline, audited, and itself undoable. It restores the values before the operation; runs already stored are not touched. 404 as for the preview. 409 operation-not-undoable with errors[].code irreversible, already_undone, superseded, not_finished or plan_refused. Undoing an operation that itself needed approval is always held (202).
+         */
+        post: operations["undoReportReplicationThresholdsOperation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/reports/replication/thresholds/previews/update": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview setting the DC replication status thresholds
+         * @description The dry run of updateReportReplicationThresholds as the Action reports.replication.thresholds.update (ADR-0004 rule 14): it plans the change against the live values, authorises it for the caller and asks the gate, and answers the diff, reversibility and whether it can be undone. It writes, persists and audits nothing. A refusal the plan finds, such as thresholds_not_ordered, is a 200 with outcome refused and blocked[].code, never a problem. Same x-permission, parameters (including If-Match) and body as updateReportReplicationThresholds.
+         */
+        post: operations["previewUpdateReportReplicationThresholds"];
         delete?: never;
         options?: never;
         head?: never;
@@ -675,6 +2583,46 @@ export interface paths {
          * @description Reads a page of the run's stored rows. Order is the run order, or sortBy with order, then the run order as the tie-break; the cursor is bound to the sort it was issued for and a cursor used with another sort is a 400. The total is the run's rowCount and is never a count over the rows. The result is stored and frozen (ADR-0010 rule 3): a page never reflects newer data. Cells of a derived state show unknown, never an inferred value (FR-09). Run-read gate (modules/reports.md 6.6, run.ReadAccess), in order: runner account equals the caller, otherwise 404; the run is not expired, otherwise 410 report-result-expired; the caller's current read scope fingerprint equals the one stored with the run, otherwise 409 with errors[].code scope_changed_rerun (the client creates a new run); the run has succeeded, otherwise 409 with errors[].code run_not_ready (queued or running) or run_failed (failed or cancelled, with the reason). The three 409 codes are separate and a client must branch on the code, not the status.
          */
         get: operations["listReportRunRows"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/reports/runs/{runId}/rows/{rowKey}/detail": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read the detail of one change-history row of a run
+         * @description The docked detail of one row of a change-history run (USR-06, GRP-05, CMP-03, CTC-02, OU-02: spec reports-2-second-slice 4.1, design 2). The rows read carries no per-row detail; this read does, for the row whose rowKey (the object GUID) is given. The body is exactly one of five kinds, chosen by kind: edited, membership, credential, permissions, removed (the Deleted presets). Every kind carries when, object and actor; the fields beyond those are the kind's own and no kind carries a field of another. A value the history does not hold (no originating time because the change was only observed, a replication version that was not recorded, a restore status the connection account cannot read) is a typed unknown, never an empty string, 0 or a guess (FR-09). Names only: no kind carries an old or new value, a password or a security descriptor (spec rule 3). actor is notRecorded for a native change (spec rule 6, DM-18.I3) and activediq, with the principal and the operation, only for a change made through activeDIQ. Scope: the object is shown only when its recorded ancestry is in the caller's read scope, otherwise 404 (the existence of an object outside scope is not disclosed). For a membership row the member names are paged and trimmed to the caller's scope: membership.names is one page of the side chosen by side (added by default), and addedCount, removedCount, addedOutOfScope and removedOutOfScope are totals over the whole change, never over the page; members outside scope are counted, never named. The cursor is bound to this run, row and side. The run-read gate is that of listReportRunRows, in the same order: runner equals the caller, otherwise 404; not expired, otherwise 410 report-result-expired; scope fingerprint unchanged, otherwise 409 with errors[].code scope_changed_rerun; succeeded, otherwise 409 with errors[].code run_not_ready or run_failed. A rowKey that is not a row of the run, or whose run is not a change-history report, is a 404. The result is stored and frozen with the run (ADR-0010 rule 3). Read-only; the detail offers no restore (restore is 2b, ADM-098).
+         */
+        get: operations["getReportRunRowDetail"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/reports/runs/latest": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get the caller's latest run of a report, for a Home widget
+         * @description Answers the one thing a Home widget needs (specs/home-report-widgets.md 3.2): the caller's own latest succeeded run of definitionId and presetId, or why there is none. It never creates a run. The runner is the caller, taken from the principal; no parameter names another account, so a schedule owned by someone else that delivers to the caller never makes a candidate and the caller sees never_run until they run it themselves. The latest succeeded run is preferred over a newer failed one; a newer queued or running run is reported as inFlight and the state is running. state is one of current, stale_data (current and the freshness state is stale: asOf and freshness.stale name the connections), scope_changed (the caller's read scope differs from the one the run was trimmed with: no rows and no count), expired (past expiresAt: no rows), running, failed (no earlier run is current; failure is on the run header), never_run, unavailable (the definition or preset is not in the library). With rows=10 and a current run, table holds the first 10 rows of the definition's widget-profile columns (at most 5), read through the run-read gate (run.ReadAccess, 6.6 checks 1 to 5); there is no second gate. rows is 0 or 10, anything else is a 400; rows=10 on a definition whose widget profile has no table view is a 400. The response never carries the digest, the parameters or the scope text; getReportRun answers those. asOf is the freshness watermark of the run and is the age to show; it is never called live.
+         */
+        get: operations["getLatestReportRun"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1074,6 +3022,47 @@ export interface components {
             password: components["schemas"]["SecretInput"];
             username: string;
         };
+        CallerVerificationChallenge: {
+            /** Format: uuid */
+            challengeId: string;
+            /** @description Where the code went, masked. The full address is never returned. */
+            destinationMasked: string;
+            /** Format: date-time */
+            expiresAt: string;
+            factor: components["schemas"]["CallerVerificationFactor"];
+            /** @description True when an open challenge was attached to, or this is a replay of an earlier identical request; nothing was sent now. */
+            reused: boolean;
+        };
+        /**
+         * @description How the caller was verified. Clients ignore values they do not know.
+         * @enum {string}
+         */
+        CallerVerificationFactor: "email_otp" | "sms_otp" | (string & {});
+        /**
+         * @description The factor a technician asks for. totp is reserved for the enrolment work and is not accepted until then.
+         * @enum {string}
+         */
+        CallerVerificationFactorSetting: "email_otp" | "sms_otp";
+        CallerVerified: {
+            /**
+             * Format: date-time
+             * @description Until when the challenge may authorise one reset or unlock for this target.
+             */
+            authorisedUntil: string;
+            /** Format: uuid */
+            challengeId: string;
+        };
+        ComputerCreate: {
+            attributes?: components["schemas"]["ObjectAttributeSet"];
+            /** Format: uuid */
+            connectionId: string;
+            enabled?: boolean;
+            name: string;
+            /** Format: uuid */
+            namingContext: string;
+            /** Format: uuid */
+            parentGuid: string;
+        };
         /** @description The health of one connection. Nothing here is a credential or an identity the connection binds as. */
         ConnectionHealth: {
             /** @description Domain controllers that answered the last probe. */
@@ -1104,6 +3093,17 @@ export interface components {
         /** @description How many connections the tenant has. A count only; no connection is identified. */
         ConnectionSummary: {
             connectionCount: number;
+        };
+        ContactCreate: {
+            attributes?: components["schemas"]["ObjectAttributeSet"];
+            /** Format: uuid */
+            connectionId: string;
+            enabled?: boolean;
+            name: string;
+            /** Format: uuid */
+            namingContext: string;
+            /** Format: uuid */
+            parentGuid: string;
         };
         /** @description Which header carries the CSRF value and what it is. Named value, not token, because it is not a credential. */
         CsrfValue: {
@@ -1308,6 +3308,38 @@ export interface components {
          * @enum {string}
          */
         ExplorerView: "containers" | "all";
+        GroupCreate: {
+            attributes?: components["schemas"]["ObjectAttributeSet"];
+            /** Format: uuid */
+            connectionId: string;
+            enabled?: boolean;
+            groupScope?: components["schemas"]["GroupScope"];
+            groupSecurity?: boolean;
+            name: string;
+            /** Format: uuid */
+            namingContext: string;
+            /** Format: uuid */
+            parentGuid: string;
+        };
+        GroupMemberBody: {
+            /** Format: uuid */
+            connectionId: string;
+            memberClass: components["schemas"]["GroupMemberClass"];
+            /** Format: uuid */
+            memberGuid: string;
+            /** Format: uuid */
+            namingContext: string;
+        };
+        /**
+         * @description The class of the member being added or removed. A closed request enum.
+         * @enum {string}
+         */
+        GroupMemberClass: "user" | "group" | "computer" | "contact";
+        /**
+         * @description The scope of a new group. A closed request enum.
+         * @enum {string}
+         */
+        GroupScope: "global" | "domain_local" | "universal";
         /** @description A reference to a directory object by objectGUID. A DN is never a key. */
         GUIDRef: {
             /** Format: uuid */
@@ -1336,6 +3368,21 @@ export interface components {
          * @example 9007199254740993
          */
         Int64String: string;
+        IssueCallerVerificationRequest: {
+            /**
+             * Format: uuid
+             * @description The directory connection the caller's account belongs to.
+             */
+            connectionId: string;
+            factor: components["schemas"]["CallerVerificationFactorSetting"];
+            /**
+             * Format: uuid
+             * @description The caller's objectGUID. A DN is never accepted.
+             */
+            objectGuid: string;
+            /** @description True only for the explicit "Send a new code" act; it supersedes the open challenge. */
+            resend?: boolean;
+        };
         /** @description A long operation (bulk change). It reports progress and per-item results, and is resumable after a restart. */
         Job: {
             /** Format: date-time */
@@ -1373,6 +3420,64 @@ export interface components {
          * @enum {string}
          */
         JobStatus: "queued" | "running" | "succeeded" | "failed" | "cancelled" | (string & {});
+        /** @description Attribute name to plain-text value. A name not on the class's allow list is refused by the plan (blocked attribute_not_allowed). */
+        ObjectAttributeSet: {
+            [key: string]: string;
+        };
+        ObjectDeleteBody: {
+            cascade?: boolean;
+            /** Format: uuid */
+            connectionId: string;
+            /** Format: uuid */
+            namingContext: string;
+        };
+        ObjectMoveBody: {
+            /** Format: uuid */
+            connectionId: string;
+            /** Format: uuid */
+            namingContext: string;
+            /** Format: uuid */
+            newParentGuid: string;
+        };
+        ObjectRenameBody: {
+            /** Format: uuid */
+            connectionId: string;
+            /** Format: uuid */
+            namingContext: string;
+            newName: string;
+        };
+        /** @description newParentGuid and name default to the last known parent and name the directory kept. */
+        ObjectRestoreBody: {
+            /** Format: uuid */
+            connectionId: string;
+            name?: string;
+            /** Format: uuid */
+            namingContext: string;
+            /** Format: uuid */
+            newParentGuid?: string;
+        };
+        /** @description Where the object lives. Both are UUIDs the console read from the directory; neither is a DN. */
+        ObjectTarget: {
+            /** Format: uuid */
+            connectionId: string;
+            /** Format: uuid */
+            namingContext: string;
+        };
+        /** @description The body of an Action that changes the object's state and takes no other input. */
+        ObjectTargetBody: {
+            /** Format: uuid */
+            connectionId: string;
+            /** Format: uuid */
+            namingContext: string;
+        };
+        ObjectUpdateBody: {
+            clear?: string[];
+            /** Format: uuid */
+            connectionId: string;
+            /** Format: uuid */
+            namingContext: string;
+            set?: components["schemas"]["ObjectAttributeSet"];
+        };
         /** @description A directory object as the server shows it. dn is for display only. */
         ObjectView: {
             dn: string;
@@ -1383,6 +3488,18 @@ export interface components {
         OperationBlocked: {
             code: string;
             target: components["schemas"]["OperationTarget"];
+        };
+        OperationCatalogue: {
+            actions: components["schemas"]["OperationCatalogueEntry"][];
+        };
+        OperationCatalogueEntry: {
+            action: string;
+            permission: string;
+            reversibility: components["schemas"]["OperationReversibilityValue"];
+            stepUp: boolean;
+            /** @description Where the Action writes (directory or store). Clients accept values they do not know. */
+            target: string;
+            version: number;
         };
         /** @description One changed field. field is the camelCase member path in the target's resource schema. before is absent when the field is set for the first time or the target is created; after is absent when it is removed or the target deleted. (The dialect allows only primitive nullables, so absence is a variant of OperationValue, not null.) */
         OperationChange: {
@@ -1545,6 +3662,17 @@ export interface components {
             /** Format: date-time */
             value: string;
         };
+        OUCreate: {
+            attributes?: components["schemas"]["ObjectAttributeSet"];
+            /** Format: uuid */
+            connectionId: string;
+            enabled?: boolean;
+            name: string;
+            /** Format: uuid */
+            namingContext: string;
+            /** Format: uuid */
+            parentGuid: string;
+        };
         /** @description Cursor paging of a directory collection. Order is stable; nextCursor is null on the last page. */
         PageInfo: {
             nextCursor: string | null;
@@ -1664,10 +3792,10 @@ export interface components {
             label: string;
         };
         /**
-         * @description A column of the dataset registry (DM-70) that a 2a report carries. Closed: a column name that is not listed is refused, and a column the chosen definition does not carry is a 400 with code column_not_available. The registry holds no secret attribute (D8). Policy columns (SYS-01, one row per policy, rowKey the policy GUID): policy_name (text); policy_kind (enum domain or pso, the ReportPolicyKindValue); precedence (integer, count; absent on the domain row); applies_to_count (integer, count of direct targets in the runner's scope, 0 for a PSO with none, absent on the domain row); applies_to_first (textList, the first two target names by name order, empty when none; the full list is listReportRunPolicyTargets); min_length, history_length, lockout_threshold (integer, count); max_age, min_age, lockout_duration, lockout_window (integer, seconds; max_age, lockout_threshold and lockout_duration are a never cell when the policy sets no limit, see ReportCellNever); complexity and reversible_encryption (boolean). A value that was not read is an unknown cell, never 0 or false. Deltas against the domain row are computed by the client from these typed cells (the unit is on the column); the server sends no delta text.
+         * @description A column of the dataset registry (DM-70) that a 2a report carries. Closed: a column name that is not listed is refused, and a column the chosen definition does not carry is a 400 with code column_not_available. The registry holds no secret attribute (D8). Policy columns (SYS-01, one row per policy, rowKey the policy GUID): policy_name (text); policy_kind (enum domain or pso, the ReportPolicyKindValue); precedence (integer, count; absent on the domain row); applies_to_count (integer, count of direct targets in the runner's scope, 0 for a PSO with none, absent on the domain row); applies_to_first (textList, the first two target names by name order, empty when none; the full list is listReportRunPolicyTargets); min_length, history_length, lockout_threshold (integer, count); max_age, min_age, lockout_duration, lockout_window (integer, seconds; max_age, lockout_threshold and lockout_duration are a never cell when the policy sets no limit, see ReportCellNever); complexity and reversible_encryption (boolean). A value that was not read is an unknown cell, never 0 or false. Deltas against the domain row are computed by the client from these typed cells (the unit is on the column); the server sends no delta text. SYS-03 DC Replication Status (reports-2 second slice 7.3) adds ten ids, one row per destination DC, partition and partner (source DC), and reuses domain and status. Cell kinds, in this order: domain_controller text (the destination DC's DNS host name); domain text; partition text (the naming context's name, never a DN); partner_dc text (the source DC's DNS host name); last_attempt time; last_success time, or never when replication has never succeeded; consecutive_failures integer; last_error_code integer (the error the DC reports, a Win32 or replication error number such as 8524); last_error text (the meaning of the code, or the DC's message, escaped like any text); status enum (ReportReplicationStatusValue); lingering_risk enum (ReportLingeringRiskValue; the column's label never says detected); read_at time (when this DC was read). A value the DC did not return is absent, never a default, and its row's status is not_reported. A DC that did not answer has one row: domain_controller, domain, status not_reported, last_error text from the coverage error, read_at, and absent in every other cell. The status column of SYS-03 takes the choices of ReportReplicationStatusValue, and sorting by it orders by severity, failing first.
          * @enum {string}
          */
-        ReportColumnId: "name" | "logon_name" | "upn" | "status" | "domain" | "ou_path" | "manager" | "created" | "account_expires" | "days_to_expiry" | "last_logon" | "days_since" | "probable_service_account" | "real_last_logon" | "from_dc" | "dc_coverage" | "locked_out_since" | "lockout_ends" | "policy_source" | "data_as_of" | "password_last_set" | "password_expires" | "password_state" | "last_failed_logon" | "failures_on_dc" | "group_type" | "group_scope" | "direct_members" | "effective_members" | "managed_by" | "group" | "member" | "member_type" | "membership_kind" | "via" | "user" | "primary_group" | "dns_name" | "computer_type" | "operating_system" | "os_version" | "delegation" | "last_activity" | "activity_source" | "path" | "users" | "computers" | "groups" | "other_objects" | "objects_in_subtree" | "email" | "policy_name" | "policy_kind" | "precedence" | "applies_to_count" | "applies_to_first" | "min_length" | "history_length" | "max_age" | "min_age" | "complexity" | "reversible_encryption" | "lockout_threshold" | "lockout_duration" | "lockout_window";
+        ReportColumnId: "name" | "logon_name" | "upn" | "status" | "domain" | "ou_path" | "manager" | "created" | "account_expires" | "days_to_expiry" | "last_logon" | "days_since" | "probable_service_account" | "real_last_logon" | "from_dc" | "dc_coverage" | "locked_out_since" | "lockout_ends" | "policy_source" | "data_as_of" | "password_last_set" | "password_expires" | "password_state" | "last_failed_logon" | "failures_on_dc" | "group_type" | "group_scope" | "direct_members" | "effective_members" | "managed_by" | "group" | "member" | "member_type" | "membership_kind" | "via" | "user" | "primary_group" | "dns_name" | "computer_type" | "operating_system" | "os_version" | "delegation" | "last_activity" | "activity_source" | "path" | "users" | "computers" | "groups" | "other_objects" | "objects_in_subtree" | "email" | "policy_name" | "policy_kind" | "precedence" | "applies_to_count" | "applies_to_first" | "min_length" | "history_length" | "max_age" | "min_age" | "complexity" | "reversible_encryption" | "lockout_threshold" | "lockout_duration" | "lockout_window" | "domain_controller" | "partition" | "partner_dc" | "last_attempt" | "last_success" | "consecutive_failures" | "last_error_code" | "last_error" | "lingering_risk" | "read_at";
         /** @description A column of a definition, or of one run (a label can change with the run, such as Last logon (at least)). filterOperators are the operators the column takes. unit is present on an integer column that measures something, so a client can compare and format its cells without parsing text. */
         ReportColumnInfo: {
             choices: components["schemas"]["ReportChoice"][];
@@ -1695,16 +3823,40 @@ export interface components {
          * @enum {string}
          */
         ReportCompareOperator: "equals" | "not_equals" | "less_than" | "less_or_equal" | "greater_than" | "greater_or_equal" | "contains" | "starts_with";
-        /** @description How many DCs answered a per-DC report. A partial coverage makes the maximum a lower bound (spec 6.5). */
+        /** @description How many DCs answered a per-DC report. A partial coverage makes the maximum a lower bound (spec 6.5). dcsInScope counts every DC in the runner's scope, including those a cap left unread. dcsAnswered counts the DCs that gave data. complete is true only when every DC in scope answered: it is false when any DC did not answer or when notReadByCap is above zero, and zero DCs answered is coverage, never an empty result. unanswered, notReadByCap and readCap are set by SYS-03 DC Replication Status (reports-2 second slice 7.3) and may be absent on other per-DC reports. unanswered lists the DCs that were read and gave no data, each with its reason and error, in DNS-name order; dcsAnswered plus the length of unanswered plus notReadByCap equals dcsInScope. A DC not read because of readCap has no row and no entry in unanswered; only the count is given, and the console says Narrow the scope. SYS-03 reads at most readCap DCs (100) and reads them in DNS-name order; it does not refuse the run, unlike the read cap of USR-04 and PWD-03 (failure reason per_dc_read_cap_exceeded). */
         ReportDcCoverage: {
             complete: boolean;
             dcsAnswered: number;
             dcsInScope: number;
             /** @description The header text, "Read from 2 of 3 DCs · 1 unreachable: dc2.example.test: timeout". */
             label?: string;
+            notReadByCap?: number;
+            readCap?: number;
+            unanswered?: components["schemas"]["ReportDcUnanswered"][];
             /** @description The DCs that did not answer, each with the fixed code it gave (never driver text). Empty when coverage is complete. */
             unreachable?: components["schemas"]["ReportUnreachableDc"][];
         };
+        /** @description Why a DC gave no data. code is a stable slug to branch on, such as connection_refused, dns_failure or tls_untrusted; message is fixed text for the code. Neither carries a DN, LDAP result text, a stack trace or a secret. */
+        ReportDcError: {
+            code: string;
+            message: string;
+        };
+        /** @description A DC in scope that was read and gave no replication data: one entry of the Did not answer band. dc is the DC's DNS host name. rowKey is the key of this DC's row in the stored result (status not_reported), so the band and the grid, the export and the digest agree. readAt is when the read was tried. */
+        ReportDcUnanswered: {
+            /** Format: uuid */
+            connectionId: string;
+            dc: string;
+            error: components["schemas"]["ReportDcError"];
+            /** Format: date-time */
+            readAt: string;
+            reason: components["schemas"]["ReportDcUnansweredReason"];
+            rowKey: string;
+        };
+        /**
+         * @description Why a DC in scope gave no replication data. unreachable: no connection could be made. timed_out: the read passed its time limit. tls_failed: the TLS handshake or certificate check failed. access_denied: the connection account could not bind or read. right_not_granted: the optional replication-monitoring right is not granted (reports-2 second slice 13). attributes_not_returned: the DC answered and returned no replication values. decode_refused: the connector's safe decoder refused the DC's value.
+         * @enum {string}
+         */
+        ReportDcUnansweredReason: "unreachable" | "timed_out" | "tls_failed" | "access_denied" | "right_not_granted" | "attributes_not_returned" | "decode_refused" | (string & {});
         /** @description A report definition: an immutable AST over one registered dataset (FR-03, FR-05), shown as its presets, crosswalk and columns. exportFormats are the formats this installation can produce, and the console offers no others. subjectKind says whether the report requires groups or users (GRP-02, GRP-03). minScheduleIntervalHours is 24 for per-DC reports. */
         ReportDefinition: {
             alsoKnownAs: components["schemas"]["ReportMeName"][];
@@ -1721,6 +3873,7 @@ export interface components {
             presets: components["schemas"]["ReportPreset"][];
             subjectKind: string;
             version: number;
+            widget?: components["schemas"]["ReportWidgetProfile"];
         };
         /** @description A page of the library. */
         ReportDefinitionList: {
@@ -1755,6 +3908,60 @@ export interface components {
          * @enum {string}
          */
         ReportDeliveryStateValue: "none_yet" | "queued" | "sent" | "failed" | "given_up" | (string & {});
+        /** @description Who made the change. notRecorded: the directory does not hold it (spec rule 6). activediq: the change was made through activeDIQ, so the principal and the operation are known; operation is the handle of the operation. */
+        ReportDetailActor: components["schemas"]["ReportDetailActorNotRecorded"] | components["schemas"]["ReportDetailActorActiveDiq"];
+        ReportDetailActorActiveDiq: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "activediq";
+            /** Format: uuid */
+            operation: string;
+            principal: string;
+        };
+        ReportDetailActorNotRecorded: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "notRecorded";
+        };
+        /** @description One attribute the change touched, with its name, the originating time and the replication version where recorded, each unknown where not. Never a value. */
+        ReportDetailAttribute: {
+            name: string;
+            originAt: components["schemas"]["ReportDetailTime"];
+            version: components["schemas"]["ReportDetailInteger"];
+        };
+        /**
+         * @description Where a time comes from. origin: the DC time of the change, from replication metadata (independent of the DC). observed: the time activeDIQ observed it. last_seen: the object as last observed before it left the feed.
+         * @enum {string}
+         */
+        ReportDetailBasisValue: "origin" | "observed" | "last_seen" | (string & {});
+        /** @description A whole number as a decimal string, or unknown when the history does not hold it. */
+        ReportDetailInteger: components["schemas"]["ReportCellInteger"] | components["schemas"]["ReportCellUnknown"];
+        /** @description The object the change is on. dn is the full distinguished name, an attribute of the object and never a key; the client addresses the object by objectGuid. For a removed row every field is as last seen by activeDIQ. logonName is absent for a kind without one (a group or OU). */
+        ReportDetailObject: {
+            dn: components["schemas"]["ReportDetailText"];
+            domain: string;
+            logonName: components["schemas"]["ReportDetailText"];
+            name: string;
+            /** Format: uuid */
+            objectGuid: string;
+            ouPath: components["schemas"]["ReportDetailText"];
+        };
+        /** @description Text, absent when the object has none, or unknown when it was not read. */
+        ReportDetailText: components["schemas"]["ReportCellText"] | components["schemas"]["ReportCellAbsent"] | components["schemas"]["ReportCellUnknown"];
+        /** @description An instant the history holds, or unknown when it does not. */
+        ReportDetailTime: components["schemas"]["ReportValueTime"] | components["schemas"]["ReportCellUnknown"];
+        /** @description When the change happened. changedAt is the originating time where the history holds one, else the observed time, and basis says which. observedAt is always the observation time. gapMinutes is the minutes between the previous observation and this one, unknown when there is no previous observation. observationBased is always true: several changes between two observations show as one. */
+        ReportDetailWhen: {
+            basis: components["schemas"]["ReportDetailBasisValue"];
+            changedAt: components["schemas"]["ReportDetailTime"];
+            gapMinutes: components["schemas"]["ReportDetailInteger"];
+            observationBased: boolean;
+            observedAt: components["schemas"]["ReportDetailTime"];
+        };
         /**
          * @description Why a succeeded run has no rows because of scope, as opposed to its filters. scope_grants_nothing: the runner's role covers no directory objects. unsupported_scope_kind: the role's scope uses a kind 2a reports cannot evaluate, so it grants nothing (fail closed).
          * @enum {string}
@@ -1937,6 +4144,75 @@ export interface components {
          * @enum {string}
          */
         ReportLastRunOutcome: "sent" | "nothing_to_send" | "partly_failed" | "failed" | (string & {});
+        /** @description The caller's latest run of one report for a widget. runId, asOf, rowCount, finishedAt and expiresAt describe the run the state names and are null for never_run and unavailable. rowCount is null when state is scope_changed, expired, failed or running without a current result. table is present only when rows=10 was asked and the state serves rows. inFlight is a newer queued or running run. failure is the reason of a failed run. */
+        ReportLatestRun: {
+            /** Format: date-time */
+            asOf: string | null;
+            /** Format: date-time */
+            expiresAt: string | null;
+            failure?: components["schemas"]["ReportFailure"];
+            /** Format: date-time */
+            finishedAt: string | null;
+            freshness?: components["schemas"]["ReportFreshness"];
+            inFlight?: components["schemas"]["ReportRunSummary"];
+            rowCount: number | null;
+            /** Format: uuid */
+            runId: string | null;
+            state: components["schemas"]["ReportLatestState"];
+            table?: components["schemas"]["ReportLatestTable"];
+        };
+        /**
+         * @description What a Home widget renders for the caller's latest run (specs/home-report-widgets.md 3.3).
+         * @enum {string}
+         */
+        ReportLatestState: "current" | "stale_data" | "scope_changed" | "expired" | "running" | "failed" | "never_run" | "unavailable" | (string & {});
+        /** @description The first rows of a current run in the columns of the definition's widget profile, in the profile's order. */
+        ReportLatestTable: {
+            columns: components["schemas"]["ReportColumnInfo"][];
+            rows: components["schemas"]["ReportRow"][];
+        };
+        /**
+         * @description The lingering-object risk indicator of SYS-03 (7.3.4). at_risk: a partner's last success is older than the forest's tombstone lifetime. no_indication: it is not. not_reported: the last success or the tombstone lifetime is not known. This is an indicator, never a detection: no label, text or value says that lingering objects were detected.
+         * @enum {string}
+         */
+        ReportLingeringRiskValue: "at_risk" | "no_indication" | "not_reported" | (string & {});
+        /** @description A user with at least one direct report, offered by the manager picker. Two with the same displayName differ in logonName or ouPath. connectionId and guid are what ReportSubjectRef carries back. */
+        ReportManagerCandidate: {
+            /** Format: uuid */
+            connectionId: string;
+            directReports: number;
+            displayName: string;
+            /** Format: uuid */
+            guid: string;
+            logonName: string;
+            ouPath: string;
+        };
+        /** @description A page of managers, ordered by display name then objectGUID. */
+        ReportManagerList: {
+            items: components["schemas"]["ReportManagerCandidate"][];
+            page: components["schemas"]["PageInfo"];
+        };
+        /** @description One member added or removed, addressed by objectGUID. The name is the one last observed. */
+        ReportMembershipName: {
+            name: string;
+            /** Format: uuid */
+            objectGuid: string;
+        };
+        /** @description One page of in-scope member names of one side of a membership change, by name then objectGUID, stable. */
+        ReportMembershipNamePage: {
+            items: components["schemas"]["ReportMembershipName"][];
+            page: components["schemas"]["PageInfo"];
+        };
+        /**
+         * @description Which side of a membership change to page. A closed request enum.
+         * @enum {string}
+         */
+        ReportMembershipSide: "added" | "removed";
+        /**
+         * @description Which side of a membership change a page of names is.
+         * @enum {string}
+         */
+        ReportMembershipSideValue: "added" | "removed" | (string & {});
         /** @description An exact ManageEngine report name and the preset that answers it (spec 6.2). */
         ReportMeName: {
             meName: string;
@@ -2253,10 +4529,149 @@ export interface components {
          * @enum {string}
          */
         ReportRelativeTime: "within_last" | "within_next" | "older_than";
+        /** @description How many rows of the run have one status. */
+        ReportReplicationStatusCount: {
+            count: number;
+            status: components["schemas"]["ReportReplicationStatusValue"];
+        };
+        /**
+         * @description The derived status of one SYS-03 row (reports-2 second slice 7.3.3). healthy: the last success is within the warning threshold and there are no consecutive failures. warning: no failures, and the last success is older than the warning threshold and not older than the failing threshold. failing: consecutive failures above zero, or a last success older than the failing threshold. not_reported: the DC did not answer, or answered without the value; it is never healthy and never a count of problems. unreachable is not a status: an unreachable DC is not_reported, with its reason and error in the coverage block. Severity, for sort order, is failing, warning, not_reported, healthy.
+         * @enum {string}
+         */
+        ReportReplicationStatusValue: "healthy" | "warning" | "failing" | "not_reported" | (string & {});
+        /** @description What a SYS-03 run adds to its header, present only on a run of DC Replication Status (absent on every other report). thresholds are the values the run applied, pinned when it started. statusCounts has one entry for each of failing, warning, healthy and not_reported, in that order, zeros included, and counts the run's stored rows; their sum is rowCount, so the chips All, Failing, Warning, Healthy and Not reported are filters on the status column with these counts. A DC that did not answer has a row with status not_reported, so it is counted there and never under healthy. tombstoneLifetimeDays is the tombstone lifetime the risk indicator was judged against (the shortest of the forests in scope); null when it was not read, and then every lingering_risk cell is not_reported. nextReadAllowedAfter is when the 1 hour floor of reports-2a 8.4 lets the next run read the DCs; null until the run has started. */
+        ReportReplicationSummary: {
+            /** Format: date-time */
+            nextReadAllowedAfter: string | null;
+            statusCounts: components["schemas"]["ReportReplicationStatusCount"][];
+            thresholds: components["schemas"]["ReportReplicationThresholdPair"];
+            tombstoneLifetimeDays: number | null;
+        };
+        /** @description A pair of thresholds in seconds. */
+        ReportReplicationThresholdPair: {
+            failingAfterSeconds: number;
+            warningAfterSeconds: number;
+        };
+        /** @description The tenant's SYS-03 thresholds in seconds. defaults are the product defaults (1 hour warning, 24 hours failing; [PROPOSED] in reports-2 second slice 7.3.3 until ad-expert and reporting-engineer confirm), so a client can offer Reset. isDefault is true while nobody has set values. updatedAt and updatedBy are absent while isDefault. */
+        ReportReplicationThresholds: {
+            defaults: components["schemas"]["ReportReplicationThresholdPair"];
+            failingAfterSeconds: number;
+            isDefault: boolean;
+            /** Format: date-time */
+            updatedAt?: string;
+            updatedBy?: components["schemas"]["JobActor"];
+            warningAfterSeconds: number;
+        };
+        /** @description Both thresholds of SYS-03 DC Replication Status, in seconds. warningAfterSeconds must be less than failingAfterSeconds. Both are required: a write replaces the pair. */
+        ReportReplicationThresholdsWrite: {
+            failingAfterSeconds: number;
+            warningAfterSeconds: number;
+        };
+        /**
+         * @description What is known of a removed object. removed_restore_unknown: it left the feed, and whether it is a restorable tombstone, recycled or purged is not readable by the connection account and is never guessed from elapsed time.
+         * @enum {string}
+         */
+        ReportRestoreStateValue: "removed_restore_unknown" | (string & {});
+        /**
+         * @description Why the restore status is unknown. deleted_objects_not_readable: the connection account is least-privilege and cannot read CN=Deleted Objects; noSuchObject there is not proof the tombstone expired (spec rule 7).
+         * @enum {string}
+         */
+        ReportRestoreUnknownReasonValue: "deleted_objects_not_readable" | (string & {});
         /** @description One row of a stored result. rowKey is the object GUID or edge key; cells follow the page's columns. */
         ReportRow: {
             cells: components["schemas"]["ReportCell"][];
             rowKey: string;
+        };
+        /** @description The detail of one change-history row, exactly one of five kinds. A client branches on kind and on nothing else. */
+        ReportRowDetail: components["schemas"]["ReportRowDetailEdited"] | components["schemas"]["ReportRowDetailMembership"] | components["schemas"]["ReportRowDetailCredential"] | components["schemas"]["ReportRowDetailPermissions"] | components["schemas"]["ReportRowDetailRemoved"];
+        /** @description A credential event: a password was changed or reset, recognised from replication metadata. It carries no value and no attribute list beyond the fact (spec rule 2). */
+        ReportRowDetailCredential: {
+            actor: components["schemas"]["ReportDetailActor"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "credential";
+            object: components["schemas"]["ReportDetailObject"];
+            /** Format: uuid */
+            rowKey: string;
+            /** Format: uuid */
+            runId: string;
+            when: components["schemas"]["ReportDetailWhen"];
+        };
+        /** @description An edit (also a created, moved or renamed change, whose attributes are the ones it touched). attributes are names with originating time and version; valuesRecorded is always false (names only, old and new values are not recorded). */
+        ReportRowDetailEdited: {
+            actor: components["schemas"]["ReportDetailActor"];
+            attributes: components["schemas"]["ReportDetailAttribute"][];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "edited";
+            object: components["schemas"]["ReportDetailObject"];
+            /** Format: uuid */
+            rowKey: string;
+            /** Format: uuid */
+            runId: string;
+            valuesRecorded: boolean;
+            when: components["schemas"]["ReportDetailWhen"];
+        };
+        /** @description A membership change of a group. The four counts are totals over the whole change in the caller's scope or outside it; names is one page of the side asked for. A member outside the caller's scope is counted in addedOutOfScope or removedOutOfScope and never named. */
+        ReportRowDetailMembership: {
+            actor: components["schemas"]["ReportDetailActor"];
+            addedCount: number;
+            addedOutOfScope: number;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "membership";
+            names: components["schemas"]["ReportMembershipNamePage"];
+            object: components["schemas"]["ReportDetailObject"];
+            removedCount: number;
+            removedOutOfScope: number;
+            /** Format: uuid */
+            rowKey: string;
+            /** Format: uuid */
+            runId: string;
+            side: components["schemas"]["ReportMembershipSideValue"];
+            when: components["schemas"]["ReportDetailWhen"];
+        };
+        /** @description A permissions change, recognised from the replication metadata of nTSecurityDescriptor. descriptorRead is always false: no descriptor was read or compared, so the change cannot be told from inheritance or SDProp propagation (spec rule 2). */
+        ReportRowDetailPermissions: {
+            actor: components["schemas"]["ReportDetailActor"];
+            descriptorRead: boolean;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "permissions";
+            object: components["schemas"]["ReportDetailObject"];
+            /** Format: uuid */
+            rowKey: string;
+            /** Format: uuid */
+            runId: string;
+            when: components["schemas"]["ReportDetailWhen"];
+        };
+        /** @description A row of a Deleted preset. deletedAt is the time activeDIQ first observed the object gone and means on or before that time (onOrBefore is always true; no DC time is shown for a deletion that was not read). object is as last seen by activeDIQ. state and restorableUntil are the restore-status fields; restorableUntil is always the typed unknown (a time is never shown, because the connection account cannot read it and elapsed time is no proof) with restoreUnknownReason saying why; a later read that can know it is an additive change. There is no restore link in this read. */
+        ReportRowDetailRemoved: {
+            actor: components["schemas"]["ReportDetailActor"];
+            deletedAt: components["schemas"]["ReportDetailTime"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "removed";
+            object: components["schemas"]["ReportDetailObject"];
+            onOrBefore: boolean;
+            restorableUntil: components["schemas"]["ReportCellUnknown"];
+            restoreUnknownReason: components["schemas"]["ReportRestoreUnknownReasonValue"];
+            /** Format: uuid */
+            rowKey: string;
+            /** Format: uuid */
+            runId: string;
+            state: components["schemas"]["ReportRestoreStateValue"];
+            when: components["schemas"]["ReportDetailWhen"];
         };
         /** @description A page of a stored result. rowCount is the run's total after trimming. */
         ReportRowPage: {
@@ -2293,6 +4708,7 @@ export interface components {
             policyReads?: components["schemas"]["ReportPolicyReads"];
             presetId: string | null;
             progress: components["schemas"]["ReportRunProgress"];
+            replication?: components["schemas"]["ReportReplicationSummary"];
             /** Format: uuid */
             rerunOf?: string;
             rowCount: number | null;
@@ -2401,6 +4817,11 @@ export interface components {
             /** Format: date-time */
             updatedAt: string;
         };
+        /** @description The input of the Action reports.schedule.delete: the schedule to archive. It has no request body; the id is the path parameter. */
+        ReportScheduleDelete: {
+            /** Format: uuid */
+            scheduleId: string;
+        };
         /** @description A page of schedules. */
         ReportScheduleList: {
             items: components["schemas"]["ReportSchedule"][];
@@ -2411,10 +4832,25 @@ export interface components {
          * @enum {string}
          */
         ReportScheduleOwner: "me" | "any";
+        /** @description The input of the Action reports.schedule.pause: the schedule to pause. It has no request body; the id is the path parameter. */
+        ReportSchedulePause: {
+            /** Format: uuid */
+            scheduleId: string;
+        };
         /** @description Hands a schedule to another account. */
         ReportScheduleReassign: {
             /** Format: uuid */
             ownerAccountId: string;
+        };
+        /** @description The input of the Action reports.schedule.restore, the inverse of every other schedule Action. Clients never send it: undoReportScheduleOperation builds it from the operation it undoes. */
+        ReportScheduleRestore: {
+            confirmedExternal?: string[];
+            expect: number;
+            /** @description version, archive or reassign_back. */
+            mode: string;
+            /** Format: uuid */
+            scheduleId: string;
+            version?: number;
         };
         /** @description The confirmation that resumes a schedule. confirmedExternal lists every external recipient of the schedule, classified now against the current allowed recipient domains (Data leaves your organisation); it must equal that set, and is an empty array when the schedule has none. It is how the owner, a new owner after a reassignment included, shows they saw who receives the data (T-0893 R5). */
         ReportScheduleResume: {
@@ -2532,6 +4968,13 @@ export interface components {
             /** Format: date-time */
             value: string;
         };
+        /** @description The views a Home widget may render for the report (specs/home-report-widgets.md 3.1). count is always allowed and is listed. tableColumns are the at most 5 columns of the table view, in order, and are empty unless views holds table. trend plots the run's row count only. A definition without this member supports the count view only. */
+        ReportWidgetProfile: {
+            tableColumns: string[];
+            views: components["schemas"]["ReportWidgetView"][];
+        };
+        /** @enum {string} */
+        ReportWidgetView: "count" | "table" | "trend" | (string & {});
         /** @description Input of delegation.role.create. The caller chooses roleId, so a retry is the same role. A role is never deleted; empty it with delegation.role.update. */
         RoleCreate: {
             name: string;
@@ -2547,6 +4990,11 @@ export interface components {
         };
         /** @description A secret a client sends: a password, a token. It is write-only, never appears in a response, and is held in memory only as a secret.Secret that is destroyed after the request. */
         SecretInput: string;
+        /** @description What the calling session may do, as permission names only. */
+        SessionInfo: {
+            /** @description The catalogue permission names the session holds at tenant scope, sorted. Display only. */
+            permissions: string[];
+        };
         /** @description The one-time setup secret and the details of the first tenant owner. */
         SetupClaimRequest: {
             owner: components["schemas"]["SetupOwner"];
@@ -2633,8 +5081,41 @@ export interface components {
         TakeoverAttestationStart: {
             authorizeUrl: string;
         };
+        TemplateRef: {
+            /** Format: uuid */
+            id: string;
+            /** @description 0 or absent means the newest published version. */
+            version?: number;
+        };
         /** @description A TOTP code from the account's authenticator. */
         TotpCodeRequest: {
+            code: components["schemas"]["SecretInput"];
+        };
+        /** @description A template, when given, derives sAMAccountName, userPrincipalName, cn and displayName from the attributes. initialPassword is write-only (rule 9). */
+        UserCreate: {
+            attributes: components["schemas"]["ObjectAttributeSet"];
+            /** Format: uuid */
+            connectionId: string;
+            enabled: boolean;
+            initialPassword?: components["schemas"]["SecretInput"];
+            /** Format: uuid */
+            namingContext: string;
+            /** Format: uuid */
+            parentGuid: string;
+            template?: components["schemas"]["TemplateRef"];
+            upnSuffix?: string;
+        };
+        /** @description The new password is write-only and appears in no response, preview, event, export or log (rule 9). */
+        UserResetPasswordBody: {
+            /** Format: uuid */
+            connectionId: string;
+            mustChangeAtNextLogon: boolean;
+            /** Format: uuid */
+            namingContext: string;
+            newPassword: components["schemas"]["SecretInput"];
+        };
+        /** @description The six digits the caller read back, held as a secret and destroyed after the request. */
+        VerifyCallerVerificationRequest: {
             code: components["schemas"]["SecretInput"];
         };
         /** @description The authenticator's assertion, each field base64url (RFC 4648 section 5) without padding. */
@@ -2670,6 +5151,78 @@ export interface components {
         WebAuthnUserVerification: "required" | "preferred" | "discouraged" | (string & {});
     };
     responses: {
+        /** @description The code could not be delivered. No code exists, none is shown and the issue does not count against the limits. */
+        CallerVerificationDeliveryFailed: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                /**
+                 * @example {
+                 *       "status": 502,
+                 *       "title": "The code could not be delivered",
+                 *       "type": "/problems/caller-verification-delivery-failed"
+                 *     }
+                 */
+                "application/problem+json": components["schemas"]["Problem"];
+            };
+        };
+        /** @description A caller-verification limit was reached. errors[].code is quota (the hourly issue limit of the target or the technician) or paused (too many failed challenges). */
+        CallerVerificationLimit: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                /**
+                 * @example {
+                 *       "errors": [
+                 *         {
+                 *           "code": "quota",
+                 *           "detail": "The hourly limit of codes for this caller or technician is reached.",
+                 *           "in": "body",
+                 *           "pointer": "/"
+                 *         }
+                 *       ],
+                 *       "status": 429,
+                 *       "title": "The verification limit was reached",
+                 *       "type": "/problems/caller-verification-limit"
+                 *     }
+                 */
+                "application/problem+json": components["schemas"]["Problem"];
+            };
+        };
+        /** @description The verification was refused. One answer for a wrong code, used-up attempts, an expired, superseded, unknown or foreign challenge; it never says which and never repeats the code. */
+        CallerVerificationRefused: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                /**
+                 * @example {
+                 *       "status": 422,
+                 *       "title": "The verification was refused",
+                 *       "type": "/problems/caller-verification-refused"
+                 *     }
+                 */
+                "application/problem+json": components["schemas"]["Problem"];
+            };
+        };
+        /** @description The caller cannot be verified. One answer for an unknown, disabled, out-of-scope, protected or own target and for a target with no held destination; it never says which. */
+        CallerVerificationUnavailable: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                /**
+                 * @example {
+                 *       "status": 422,
+                 *       "title": "This caller cannot be verified",
+                 *       "type": "/problems/caller-verification-unavailable"
+                 *     }
+                 */
+                "application/problem+json": components["schemas"]["Problem"];
+            };
+        };
         /** @description The object already exists or the request conflicts */
         Conflict: {
             headers: {
@@ -3241,6 +5794,10 @@ export interface components {
         };
     };
     parameters: {
+        /** @description The challenge returned by issueCallerVerification. */
+        CallerVerificationChallengeId: string;
+        /** @description Makes a retry safe. Honoured for 24 hours per technician and operation. */
+        CallerVerificationKey: string;
         /** @description The Entra connection. */
         ConnectionId: string;
         /** @description Only reports of this category. */
@@ -3263,6 +5820,14 @@ export interface components {
         IdempotencyKey: string;
         /** @description The ETag of the version being changed; a stale value answers precondition-failed. */
         IfMatch: string;
+        /** @description Which side of a membership change the names are paged from. Absent is added. Ignored for a row that is not a membership change. */
+        MembershipSide: components["schemas"]["ReportMembershipSide"];
+        /** @description The object's objectGUID. A DN is never a key. */
+        ObjectGuid: string;
+        /** @description The ETag of the object version being changed, as read. A stale value answers precondition-failed; an absent one precondition-required. */
+        ObjectIfMatch: string;
+        /** @description Makes a retry safe. The same key with the same body answers the first answer; the same key with a different body is refused. */
+        ObjectWriteKey: string;
         /** @description The operation to undo: the value of the ActiveDIQ-Operation-Id header that the Action-backed write answered. */
         OperationId: string;
         /** @description The nextCursor of the previous page. */
@@ -3273,8 +5838,10 @@ export interface components {
         PolicyId: string;
         /** @description The request ID. It names the audit events of the change and makes a retry of a create safe. */
         RequiredIdempotencyKey: string;
-        /** @description The ETag of the schedule version being changed. A stale value answers precondition-failed; an absent one precondition-required. */
+        /** @description The ETag of the version being changed (a schedule, or the replication thresholds). A stale value answers precondition-failed; an absent one precondition-required. */
         RequiredIfMatch: string;
+        /** @description The rowKey of a row of the run; for a change-history run, the object's GUID. */
+        RowKey: string;
         /** @description Only runs of this report definition. */
         RunDefinitionFilter: string;
         /** @description The run. */
@@ -3507,6 +6074,30 @@ export interface operations {
             401: components["responses"]["SignInFailed"];
             413: components["responses"]["PayloadTooLarge"];
             415: components["responses"]["UnsupportedMediaType"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+            501: components["responses"]["NotImplemented"];
+        };
+    };
+    getSession: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The permission names this session holds. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionInfo"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
             429: components["responses"]["RateLimited"];
             500: components["responses"]["Internal"];
             501: components["responses"]["NotImplemented"];
@@ -3987,6 +6578,82 @@ export interface operations {
             503: components["responses"]["NotReady"];
         };
     };
+    issueCallerVerification: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Makes a retry safe. Honoured for 24 hours per technician and operation. */
+                "Idempotency-Key": components["parameters"]["CallerVerificationKey"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["IssueCallerVerificationRequest"];
+            };
+        };
+        responses: {
+            /** @description The challenge the technician sees. It never carries the code. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CallerVerificationChallenge"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            422: components["responses"]["CallerVerificationUnavailable"];
+            429: components["responses"]["CallerVerificationLimit"];
+            500: components["responses"]["Internal"];
+            502: components["responses"]["CallerVerificationDeliveryFailed"];
+        };
+    };
+    verifyCallerVerification: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Makes a retry safe. Honoured for 24 hours per technician and operation. */
+                "Idempotency-Key": components["parameters"]["CallerVerificationKey"];
+            };
+            path: {
+                /** @description The challenge returned by issueCallerVerification. */
+                challengeId: components["parameters"]["CallerVerificationChallengeId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["VerifyCallerVerificationRequest"];
+            };
+        };
+        responses: {
+            /** @description The caller is verified. The challenge may authorise one reset or unlock until authorisedUntil. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CallerVerified"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            422: components["responses"]["CallerVerificationRefused"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
     listSiemDestinations: {
         parameters: {
             query?: never;
@@ -4109,6 +6776,4031 @@ export interface operations {
             413: components["responses"]["PayloadTooLarge"];
             415: components["responses"]["UnsupportedMediaType"];
             422: components["responses"]["IdempotencyKeyReuse"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    createComputer: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Makes a retry safe. The same key with the same body answers the first answer; the same key with a different body is refused. */
+                "Idempotency-Key": components["parameters"]["ObjectWriteKey"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ComputerCreate"];
+            };
+        };
+        responses: {
+            /** @description The operation, finished (inline), or planned as a no-change */
+            200: {
+                headers: {
+                    /** @description The operation; the undo handle. */
+                    "ActiveDIQ-Operation-Id": string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationRef"];
+                };
+            };
+            /** @description Held for approval by the gate or a kernel hold (ADR-0005 rule 8); holdReason says which. Nothing changed yet */
+            202: {
+                headers: {
+                    /** @description The held operation. */
+                    "ActiveDIQ-Operation-Id": string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationRef"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            422: components["responses"]["DirectoryConstraint"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    deleteComputer: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Makes a retry safe. The same key with the same body answers the first answer; the same key with a different body is refused. */
+                "Idempotency-Key": components["parameters"]["ObjectWriteKey"];
+                /** @description The ETag of the object version being changed, as read. A stale value answers precondition-failed; an absent one precondition-required. */
+                "If-Match": components["parameters"]["ObjectIfMatch"];
+            };
+            path: {
+                /** @description The object's objectGUID. A DN is never a key. */
+                objectGuid: components["parameters"]["ObjectGuid"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ObjectDeleteBody"];
+            };
+        };
+        responses: {
+            /** @description The operation, finished (inline), or planned as a no-change */
+            200: {
+                headers: {
+                    /** @description The operation; the undo handle. */
+                    "ActiveDIQ-Operation-Id": string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationRef"];
+                };
+            };
+            /** @description Held for approval by the gate or a kernel hold (ADR-0005 rule 8); holdReason says which. Nothing changed yet */
+            202: {
+                headers: {
+                    /** @description The held operation. */
+                    "ActiveDIQ-Operation-Id": string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationRef"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            412: components["responses"]["PreconditionFailed"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            422: components["responses"]["DirectoryConstraint"];
+            428: components["responses"]["PreconditionRequired"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    moveComputer: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Makes a retry safe. The same key with the same body answers the first answer; the same key with a different body is refused. */
+                "Idempotency-Key": components["parameters"]["ObjectWriteKey"];
+                /** @description The ETag of the object version being changed, as read. A stale value answers precondition-failed; an absent one precondition-required. */
+                "If-Match": components["parameters"]["ObjectIfMatch"];
+            };
+            path: {
+                /** @description The object's objectGUID. A DN is never a key. */
+                objectGuid: components["parameters"]["ObjectGuid"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ObjectMoveBody"];
+            };
+        };
+        responses: {
+            /** @description The operation, finished (inline), or planned as a no-change */
+            200: {
+                headers: {
+                    /** @description The operation; the undo handle. */
+                    "ActiveDIQ-Operation-Id": string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationRef"];
+                };
+            };
+            /** @description Held for approval by the gate or a kernel hold (ADR-0005 rule 8); holdReason says which. Nothing changed yet */
+            202: {
+                headers: {
+                    /** @description The held operation. */
+                    "ActiveDIQ-Operation-Id": string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationRef"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            412: components["responses"]["PreconditionFailed"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            422: components["responses"]["DirectoryConstraint"];
+            428: components["responses"]["PreconditionRequired"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    previewDeleteComputer: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The ETag of the object version being changed, as read. A stale value answers precondition-failed; an absent one precondition-required. */
+                "If-Match": components["parameters"]["ObjectIfMatch"];
+            };
+            path: {
+                /** @description The object's objectGUID. A DN is never a key. */
+                objectGuid: components["parameters"]["ObjectGuid"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ObjectDeleteBody"];
+            };
+        };
+        responses: {
+            /** @description The preview */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationPreview"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            412: components["responses"]["PreconditionFailed"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            428: components["responses"]["PreconditionRequired"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    previewMoveComputer: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The ETag of the object version being changed, as read. A stale value answers precondition-failed; an absent one precondition-required. */
+                "If-Match": components["parameters"]["ObjectIfMatch"];
+            };
+            path: {
+                /** @description The object's objectGUID. A DN is never a key. */
+                objectGuid: components["parameters"]["ObjectGuid"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ObjectMoveBody"];
+            };
+        };
+        responses: {
+            /** @description The preview */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationPreview"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            412: components["responses"]["PreconditionFailed"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            428: components["responses"]["PreconditionRequired"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    previewRenameComputer: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The ETag of the object version being changed, as read. A stale value answers precondition-failed; an absent one precondition-required. */
+                "If-Match": components["parameters"]["ObjectIfMatch"];
+            };
+            path: {
+                /** @description The object's objectGUID. A DN is never a key. */
+                objectGuid: components["parameters"]["ObjectGuid"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ObjectRenameBody"];
+            };
+        };
+        responses: {
+            /** @description The preview */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationPreview"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            412: components["responses"]["PreconditionFailed"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            428: components["responses"]["PreconditionRequired"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    previewResetAccountComputer: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The ETag of the object version being changed, as read. A stale value answers precondition-failed; an absent one precondition-required. */
+                "If-Match": components["parameters"]["ObjectIfMatch"];
+            };
+            path: {
+                /** @description The object's objectGUID. A DN is never a key. */
+                objectGuid: components["parameters"]["ObjectGuid"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ObjectTargetBody"];
+            };
+        };
+        responses: {
+            /** @description The preview */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationPreview"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            412: components["responses"]["PreconditionFailed"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            428: components["responses"]["PreconditionRequired"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    previewRestoreComputer: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The ETag of the object version being changed, as read. A stale value answers precondition-failed; an absent one precondition-required. */
+                "If-Match": components["parameters"]["ObjectIfMatch"];
+            };
+            path: {
+                /** @description The object's objectGUID. A DN is never a key. */
+                objectGuid: components["parameters"]["ObjectGuid"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ObjectRestoreBody"];
+            };
+        };
+        responses: {
+            /** @description The preview */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationPreview"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            412: components["responses"]["PreconditionFailed"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            428: components["responses"]["PreconditionRequired"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    previewUpdateComputer: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The ETag of the object version being changed, as read. A stale value answers precondition-failed; an absent one precondition-required. */
+                "If-Match": components["parameters"]["ObjectIfMatch"];
+            };
+            path: {
+                /** @description The object's objectGUID. A DN is never a key. */
+                objectGuid: components["parameters"]["ObjectGuid"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ObjectUpdateBody"];
+            };
+        };
+        responses: {
+            /** @description The preview */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationPreview"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            412: components["responses"]["PreconditionFailed"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            428: components["responses"]["PreconditionRequired"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    renameComputer: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Makes a retry safe. The same key with the same body answers the first answer; the same key with a different body is refused. */
+                "Idempotency-Key": components["parameters"]["ObjectWriteKey"];
+                /** @description The ETag of the object version being changed, as read. A stale value answers precondition-failed; an absent one precondition-required. */
+                "If-Match": components["parameters"]["ObjectIfMatch"];
+            };
+            path: {
+                /** @description The object's objectGUID. A DN is never a key. */
+                objectGuid: components["parameters"]["ObjectGuid"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ObjectRenameBody"];
+            };
+        };
+        responses: {
+            /** @description The operation, finished (inline), or planned as a no-change */
+            200: {
+                headers: {
+                    /** @description The operation; the undo handle. */
+                    "ActiveDIQ-Operation-Id": string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationRef"];
+                };
+            };
+            /** @description Held for approval by the gate or a kernel hold (ADR-0005 rule 8); holdReason says which. Nothing changed yet */
+            202: {
+                headers: {
+                    /** @description The held operation. */
+                    "ActiveDIQ-Operation-Id": string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationRef"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            412: components["responses"]["PreconditionFailed"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            422: components["responses"]["DirectoryConstraint"];
+            428: components["responses"]["PreconditionRequired"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    resetAccountComputer: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Makes a retry safe. The same key with the same body answers the first answer; the same key with a different body is refused. */
+                "Idempotency-Key": components["parameters"]["ObjectWriteKey"];
+                /** @description The ETag of the object version being changed, as read. A stale value answers precondition-failed; an absent one precondition-required. */
+                "If-Match": components["parameters"]["ObjectIfMatch"];
+            };
+            path: {
+                /** @description The object's objectGUID. A DN is never a key. */
+                objectGuid: components["parameters"]["ObjectGuid"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ObjectTargetBody"];
+            };
+        };
+        responses: {
+            /** @description The operation, finished (inline), or planned as a no-change */
+            200: {
+                headers: {
+                    /** @description The operation; the undo handle. */
+                    "ActiveDIQ-Operation-Id": string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationRef"];
+                };
+            };
+            /** @description Held for approval by the gate or a kernel hold (ADR-0005 rule 8); holdReason says which. Nothing changed yet */
+            202: {
+                headers: {
+                    /** @description The held operation. */
+                    "ActiveDIQ-Operation-Id": string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationRef"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            412: components["responses"]["PreconditionFailed"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            422: components["responses"]["DirectoryConstraint"];
+            428: components["responses"]["PreconditionRequired"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    restoreComputer: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Makes a retry safe. The same key with the same body answers the first answer; the same key with a different body is refused. */
+                "Idempotency-Key": components["parameters"]["ObjectWriteKey"];
+                /** @description The ETag of the object version being changed, as read. A stale value answers precondition-failed; an absent one precondition-required. */
+                "If-Match": components["parameters"]["ObjectIfMatch"];
+            };
+            path: {
+                /** @description The object's objectGUID. A DN is never a key. */
+                objectGuid: components["parameters"]["ObjectGuid"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ObjectRestoreBody"];
+            };
+        };
+        responses: {
+            /** @description The operation, finished (inline), or planned as a no-change */
+            200: {
+                headers: {
+                    /** @description The operation; the undo handle. */
+                    "ActiveDIQ-Operation-Id": string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationRef"];
+                };
+            };
+            /** @description Held for approval by the gate or a kernel hold (ADR-0005 rule 8); holdReason says which. Nothing changed yet */
+            202: {
+                headers: {
+                    /** @description The held operation. */
+                    "ActiveDIQ-Operation-Id": string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationRef"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            412: components["responses"]["PreconditionFailed"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            422: components["responses"]["DirectoryConstraint"];
+            428: components["responses"]["PreconditionRequired"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    updateComputer: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Makes a retry safe. The same key with the same body answers the first answer; the same key with a different body is refused. */
+                "Idempotency-Key": components["parameters"]["ObjectWriteKey"];
+                /** @description The ETag of the object version being changed, as read. A stale value answers precondition-failed; an absent one precondition-required. */
+                "If-Match": components["parameters"]["ObjectIfMatch"];
+            };
+            path: {
+                /** @description The object's objectGUID. A DN is never a key. */
+                objectGuid: components["parameters"]["ObjectGuid"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ObjectUpdateBody"];
+            };
+        };
+        responses: {
+            /** @description The operation, finished (inline), or planned as a no-change */
+            200: {
+                headers: {
+                    /** @description The operation; the undo handle. */
+                    "ActiveDIQ-Operation-Id": string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationRef"];
+                };
+            };
+            /** @description Held for approval by the gate or a kernel hold (ADR-0005 rule 8); holdReason says which. Nothing changed yet */
+            202: {
+                headers: {
+                    /** @description The held operation. */
+                    "ActiveDIQ-Operation-Id": string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationRef"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            412: components["responses"]["PreconditionFailed"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            422: components["responses"]["DirectoryConstraint"];
+            428: components["responses"]["PreconditionRequired"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    previewUndoComputerOperation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The operation to undo: the value of the ActiveDIQ-Operation-Id header that the Action-backed write answered. */
+                operationId: components["parameters"]["OperationId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The preview */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationPreview"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    undoComputerOperation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The operation to undo: the value of the ActiveDIQ-Operation-Id header that the Action-backed write answered. */
+                operationId: components["parameters"]["OperationId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OperationUndoRequest"];
+            };
+        };
+        responses: {
+            /** @description The undo operation; undoes names the operation it undid */
+            200: {
+                headers: {
+                    /** @description The undo operation. Undoing it re-applies the original change. */
+                    "ActiveDIQ-Operation-Id": string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationRef"];
+                };
+            };
+            /** @description Held for approval by the gate or a kernel hold (ADR-0005 rule 8); holdReason says which. Nothing changed yet */
+            202: {
+                headers: {
+                    /** @description The held operation. */
+                    "ActiveDIQ-Operation-Id": string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationRef"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    previewCreateComputer: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ComputerCreate"];
+            };
+        };
+        responses: {
+            /** @description The preview */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationPreview"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    createContact: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Makes a retry safe. The same key with the same body answers the first answer; the same key with a different body is refused. */
+                "Idempotency-Key": components["parameters"]["ObjectWriteKey"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ContactCreate"];
+            };
+        };
+        responses: {
+            /** @description The operation, finished (inline), or planned as a no-change */
+            200: {
+                headers: {
+                    /** @description The operation; the undo handle. */
+                    "ActiveDIQ-Operation-Id": string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationRef"];
+                };
+            };
+            /** @description Held for approval by the gate or a kernel hold (ADR-0005 rule 8); holdReason says which. Nothing changed yet */
+            202: {
+                headers: {
+                    /** @description The held operation. */
+                    "ActiveDIQ-Operation-Id": string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationRef"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            422: components["responses"]["DirectoryConstraint"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    deleteContact: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Makes a retry safe. The same key with the same body answers the first answer; the same key with a different body is refused. */
+                "Idempotency-Key": components["parameters"]["ObjectWriteKey"];
+                /** @description The ETag of the object version being changed, as read. A stale value answers precondition-failed; an absent one precondition-required. */
+                "If-Match": components["parameters"]["ObjectIfMatch"];
+            };
+            path: {
+                /** @description The object's objectGUID. A DN is never a key. */
+                objectGuid: components["parameters"]["ObjectGuid"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ObjectDeleteBody"];
+            };
+        };
+        responses: {
+            /** @description The operation, finished (inline), or planned as a no-change */
+            200: {
+                headers: {
+                    /** @description The operation; the undo handle. */
+                    "ActiveDIQ-Operation-Id": string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationRef"];
+                };
+            };
+            /** @description Held for approval by the gate or a kernel hold (ADR-0005 rule 8); holdReason says which. Nothing changed yet */
+            202: {
+                headers: {
+                    /** @description The held operation. */
+                    "ActiveDIQ-Operation-Id": string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationRef"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            412: components["responses"]["PreconditionFailed"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            422: components["responses"]["DirectoryConstraint"];
+            428: components["responses"]["PreconditionRequired"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    moveContact: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Makes a retry safe. The same key with the same body answers the first answer; the same key with a different body is refused. */
+                "Idempotency-Key": components["parameters"]["ObjectWriteKey"];
+                /** @description The ETag of the object version being changed, as read. A stale value answers precondition-failed; an absent one precondition-required. */
+                "If-Match": components["parameters"]["ObjectIfMatch"];
+            };
+            path: {
+                /** @description The object's objectGUID. A DN is never a key. */
+                objectGuid: components["parameters"]["ObjectGuid"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ObjectMoveBody"];
+            };
+        };
+        responses: {
+            /** @description The operation, finished (inline), or planned as a no-change */
+            200: {
+                headers: {
+                    /** @description The operation; the undo handle. */
+                    "ActiveDIQ-Operation-Id": string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationRef"];
+                };
+            };
+            /** @description Held for approval by the gate or a kernel hold (ADR-0005 rule 8); holdReason says which. Nothing changed yet */
+            202: {
+                headers: {
+                    /** @description The held operation. */
+                    "ActiveDIQ-Operation-Id": string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationRef"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            412: components["responses"]["PreconditionFailed"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            422: components["responses"]["DirectoryConstraint"];
+            428: components["responses"]["PreconditionRequired"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    previewDeleteContact: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The ETag of the object version being changed, as read. A stale value answers precondition-failed; an absent one precondition-required. */
+                "If-Match": components["parameters"]["ObjectIfMatch"];
+            };
+            path: {
+                /** @description The object's objectGUID. A DN is never a key. */
+                objectGuid: components["parameters"]["ObjectGuid"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ObjectDeleteBody"];
+            };
+        };
+        responses: {
+            /** @description The preview */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationPreview"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            412: components["responses"]["PreconditionFailed"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            428: components["responses"]["PreconditionRequired"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    previewMoveContact: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The ETag of the object version being changed, as read. A stale value answers precondition-failed; an absent one precondition-required. */
+                "If-Match": components["parameters"]["ObjectIfMatch"];
+            };
+            path: {
+                /** @description The object's objectGUID. A DN is never a key. */
+                objectGuid: components["parameters"]["ObjectGuid"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ObjectMoveBody"];
+            };
+        };
+        responses: {
+            /** @description The preview */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationPreview"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            412: components["responses"]["PreconditionFailed"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            428: components["responses"]["PreconditionRequired"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    previewRenameContact: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The ETag of the object version being changed, as read. A stale value answers precondition-failed; an absent one precondition-required. */
+                "If-Match": components["parameters"]["ObjectIfMatch"];
+            };
+            path: {
+                /** @description The object's objectGUID. A DN is never a key. */
+                objectGuid: components["parameters"]["ObjectGuid"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ObjectRenameBody"];
+            };
+        };
+        responses: {
+            /** @description The preview */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationPreview"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            412: components["responses"]["PreconditionFailed"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            428: components["responses"]["PreconditionRequired"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    previewRestoreContact: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The ETag of the object version being changed, as read. A stale value answers precondition-failed; an absent one precondition-required. */
+                "If-Match": components["parameters"]["ObjectIfMatch"];
+            };
+            path: {
+                /** @description The object's objectGUID. A DN is never a key. */
+                objectGuid: components["parameters"]["ObjectGuid"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ObjectRestoreBody"];
+            };
+        };
+        responses: {
+            /** @description The preview */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationPreview"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            412: components["responses"]["PreconditionFailed"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            428: components["responses"]["PreconditionRequired"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    previewUpdateContact: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The ETag of the object version being changed, as read. A stale value answers precondition-failed; an absent one precondition-required. */
+                "If-Match": components["parameters"]["ObjectIfMatch"];
+            };
+            path: {
+                /** @description The object's objectGUID. A DN is never a key. */
+                objectGuid: components["parameters"]["ObjectGuid"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ObjectUpdateBody"];
+            };
+        };
+        responses: {
+            /** @description The preview */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationPreview"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            412: components["responses"]["PreconditionFailed"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            428: components["responses"]["PreconditionRequired"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    renameContact: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Makes a retry safe. The same key with the same body answers the first answer; the same key with a different body is refused. */
+                "Idempotency-Key": components["parameters"]["ObjectWriteKey"];
+                /** @description The ETag of the object version being changed, as read. A stale value answers precondition-failed; an absent one precondition-required. */
+                "If-Match": components["parameters"]["ObjectIfMatch"];
+            };
+            path: {
+                /** @description The object's objectGUID. A DN is never a key. */
+                objectGuid: components["parameters"]["ObjectGuid"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ObjectRenameBody"];
+            };
+        };
+        responses: {
+            /** @description The operation, finished (inline), or planned as a no-change */
+            200: {
+                headers: {
+                    /** @description The operation; the undo handle. */
+                    "ActiveDIQ-Operation-Id": string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationRef"];
+                };
+            };
+            /** @description Held for approval by the gate or a kernel hold (ADR-0005 rule 8); holdReason says which. Nothing changed yet */
+            202: {
+                headers: {
+                    /** @description The held operation. */
+                    "ActiveDIQ-Operation-Id": string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationRef"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            412: components["responses"]["PreconditionFailed"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            422: components["responses"]["DirectoryConstraint"];
+            428: components["responses"]["PreconditionRequired"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    restoreContact: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Makes a retry safe. The same key with the same body answers the first answer; the same key with a different body is refused. */
+                "Idempotency-Key": components["parameters"]["ObjectWriteKey"];
+                /** @description The ETag of the object version being changed, as read. A stale value answers precondition-failed; an absent one precondition-required. */
+                "If-Match": components["parameters"]["ObjectIfMatch"];
+            };
+            path: {
+                /** @description The object's objectGUID. A DN is never a key. */
+                objectGuid: components["parameters"]["ObjectGuid"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ObjectRestoreBody"];
+            };
+        };
+        responses: {
+            /** @description The operation, finished (inline), or planned as a no-change */
+            200: {
+                headers: {
+                    /** @description The operation; the undo handle. */
+                    "ActiveDIQ-Operation-Id": string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationRef"];
+                };
+            };
+            /** @description Held for approval by the gate or a kernel hold (ADR-0005 rule 8); holdReason says which. Nothing changed yet */
+            202: {
+                headers: {
+                    /** @description The held operation. */
+                    "ActiveDIQ-Operation-Id": string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationRef"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            412: components["responses"]["PreconditionFailed"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            422: components["responses"]["DirectoryConstraint"];
+            428: components["responses"]["PreconditionRequired"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    updateContact: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Makes a retry safe. The same key with the same body answers the first answer; the same key with a different body is refused. */
+                "Idempotency-Key": components["parameters"]["ObjectWriteKey"];
+                /** @description The ETag of the object version being changed, as read. A stale value answers precondition-failed; an absent one precondition-required. */
+                "If-Match": components["parameters"]["ObjectIfMatch"];
+            };
+            path: {
+                /** @description The object's objectGUID. A DN is never a key. */
+                objectGuid: components["parameters"]["ObjectGuid"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ObjectUpdateBody"];
+            };
+        };
+        responses: {
+            /** @description The operation, finished (inline), or planned as a no-change */
+            200: {
+                headers: {
+                    /** @description The operation; the undo handle. */
+                    "ActiveDIQ-Operation-Id": string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationRef"];
+                };
+            };
+            /** @description Held for approval by the gate or a kernel hold (ADR-0005 rule 8); holdReason says which. Nothing changed yet */
+            202: {
+                headers: {
+                    /** @description The held operation. */
+                    "ActiveDIQ-Operation-Id": string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationRef"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            412: components["responses"]["PreconditionFailed"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            422: components["responses"]["DirectoryConstraint"];
+            428: components["responses"]["PreconditionRequired"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    previewUndoContactOperation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The operation to undo: the value of the ActiveDIQ-Operation-Id header that the Action-backed write answered. */
+                operationId: components["parameters"]["OperationId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The preview */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationPreview"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    undoContactOperation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The operation to undo: the value of the ActiveDIQ-Operation-Id header that the Action-backed write answered. */
+                operationId: components["parameters"]["OperationId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OperationUndoRequest"];
+            };
+        };
+        responses: {
+            /** @description The undo operation; undoes names the operation it undid */
+            200: {
+                headers: {
+                    /** @description The undo operation. Undoing it re-applies the original change. */
+                    "ActiveDIQ-Operation-Id": string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationRef"];
+                };
+            };
+            /** @description Held for approval by the gate or a kernel hold (ADR-0005 rule 8); holdReason says which. Nothing changed yet */
+            202: {
+                headers: {
+                    /** @description The held operation. */
+                    "ActiveDIQ-Operation-Id": string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationRef"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    previewCreateContact: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ContactCreate"];
+            };
+        };
+        responses: {
+            /** @description The preview */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationPreview"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    createGroup: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Makes a retry safe. The same key with the same body answers the first answer; the same key with a different body is refused. */
+                "Idempotency-Key": components["parameters"]["ObjectWriteKey"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GroupCreate"];
+            };
+        };
+        responses: {
+            /** @description The operation, finished (inline), or planned as a no-change */
+            200: {
+                headers: {
+                    /** @description The operation; the undo handle. */
+                    "ActiveDIQ-Operation-Id": string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationRef"];
+                };
+            };
+            /** @description Held for approval by the gate or a kernel hold (ADR-0005 rule 8); holdReason says which. Nothing changed yet */
+            202: {
+                headers: {
+                    /** @description The held operation. */
+                    "ActiveDIQ-Operation-Id": string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationRef"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            422: components["responses"]["DirectoryConstraint"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    addMemberGroup: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Makes a retry safe. The same key with the same body answers the first answer; the same key with a different body is refused. */
+                "Idempotency-Key": components["parameters"]["ObjectWriteKey"];
+                /** @description The ETag of the object version being changed, as read. A stale value answers precondition-failed; an absent one precondition-required. */
+                "If-Match": components["parameters"]["ObjectIfMatch"];
+            };
+            path: {
+                /** @description The object's objectGUID. A DN is never a key. */
+                objectGuid: components["parameters"]["ObjectGuid"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GroupMemberBody"];
+            };
+        };
+        responses: {
+            /** @description The operation, finished (inline), or planned as a no-change */
+            200: {
+                headers: {
+                    /** @description The operation; the undo handle. */
+                    "ActiveDIQ-Operation-Id": string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationRef"];
+                };
+            };
+            /** @description Held for approval by the gate or a kernel hold (ADR-0005 rule 8); holdReason says which. Nothing changed yet */
+            202: {
+                headers: {
+                    /** @description The held operation. */
+                    "ActiveDIQ-Operation-Id": string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationRef"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            412: components["responses"]["PreconditionFailed"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            422: components["responses"]["DirectoryConstraint"];
+            428: components["responses"]["PreconditionRequired"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    deleteGroup: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Makes a retry safe. The same key with the same body answers the first answer; the same key with a different body is refused. */
+                "Idempotency-Key": components["parameters"]["ObjectWriteKey"];
+                /** @description The ETag of the object version being changed, as read. A stale value answers precondition-failed; an absent one precondition-required. */
+                "If-Match": components["parameters"]["ObjectIfMatch"];
+            };
+            path: {
+                /** @description The object's objectGUID. A DN is never a key. */
+                objectGuid: components["parameters"]["ObjectGuid"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ObjectDeleteBody"];
+            };
+        };
+        responses: {
+            /** @description The operation, finished (inline), or planned as a no-change */
+            200: {
+                headers: {
+                    /** @description The operation; the undo handle. */
+                    "ActiveDIQ-Operation-Id": string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationRef"];
+                };
+            };
+            /** @description Held for approval by the gate or a kernel hold (ADR-0005 rule 8); holdReason says which. Nothing changed yet */
+            202: {
+                headers: {
+                    /** @description The held operation. */
+                    "ActiveDIQ-Operation-Id": string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationRef"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            412: components["responses"]["PreconditionFailed"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            422: components["responses"]["DirectoryConstraint"];
+            428: components["responses"]["PreconditionRequired"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    moveGroup: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Makes a retry safe. The same key with the same body answers the first answer; the same key with a different body is refused. */
+                "Idempotency-Key": components["parameters"]["ObjectWriteKey"];
+                /** @description The ETag of the object version being changed, as read. A stale value answers precondition-failed; an absent one precondition-required. */
+                "If-Match": components["parameters"]["ObjectIfMatch"];
+            };
+            path: {
+                /** @description The object's objectGUID. A DN is never a key. */
+                objectGuid: components["parameters"]["ObjectGuid"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ObjectMoveBody"];
+            };
+        };
+        responses: {
+            /** @description The operation, finished (inline), or planned as a no-change */
+            200: {
+                headers: {
+                    /** @description The operation; the undo handle. */
+                    "ActiveDIQ-Operation-Id": string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationRef"];
+                };
+            };
+            /** @description Held for approval by the gate or a kernel hold (ADR-0005 rule 8); holdReason says which. Nothing changed yet */
+            202: {
+                headers: {
+                    /** @description The held operation. */
+                    "ActiveDIQ-Operation-Id": string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationRef"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            412: components["responses"]["PreconditionFailed"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            422: components["responses"]["DirectoryConstraint"];
+            428: components["responses"]["PreconditionRequired"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    nestGroupGroup: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Makes a retry safe. The same key with the same body answers the first answer; the same key with a different body is refused. */
+                "Idempotency-Key": components["parameters"]["ObjectWriteKey"];
+                /** @description The ETag of the object version being changed, as read. A stale value answers precondition-failed; an absent one precondition-required. */
+                "If-Match": components["parameters"]["ObjectIfMatch"];
+            };
+            path: {
+                /** @description The object's objectGUID. A DN is never a key. */
+                objectGuid: components["parameters"]["ObjectGuid"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GroupMemberBody"];
+            };
+        };
+        responses: {
+            /** @description The operation, finished (inline), or planned as a no-change */
+            200: {
+                headers: {
+                    /** @description The operation; the undo handle. */
+                    "ActiveDIQ-Operation-Id": string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationRef"];
+                };
+            };
+            /** @description Held for approval by the gate or a kernel hold (ADR-0005 rule 8); holdReason says which. Nothing changed yet */
+            202: {
+                headers: {
+                    /** @description The held operation. */
+                    "ActiveDIQ-Operation-Id": string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationRef"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            412: components["responses"]["PreconditionFailed"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            422: components["responses"]["DirectoryConstraint"];
+            428: components["responses"]["PreconditionRequired"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    previewAddMemberGroup: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The ETag of the object version being changed, as read. A stale value answers precondition-failed; an absent one precondition-required. */
+                "If-Match": components["parameters"]["ObjectIfMatch"];
+            };
+            path: {
+                /** @description The object's objectGUID. A DN is never a key. */
+                objectGuid: components["parameters"]["ObjectGuid"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GroupMemberBody"];
+            };
+        };
+        responses: {
+            /** @description The preview */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationPreview"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            412: components["responses"]["PreconditionFailed"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            428: components["responses"]["PreconditionRequired"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    previewDeleteGroup: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The ETag of the object version being changed, as read. A stale value answers precondition-failed; an absent one precondition-required. */
+                "If-Match": components["parameters"]["ObjectIfMatch"];
+            };
+            path: {
+                /** @description The object's objectGUID. A DN is never a key. */
+                objectGuid: components["parameters"]["ObjectGuid"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ObjectDeleteBody"];
+            };
+        };
+        responses: {
+            /** @description The preview */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationPreview"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            412: components["responses"]["PreconditionFailed"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            428: components["responses"]["PreconditionRequired"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    previewMoveGroup: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The ETag of the object version being changed, as read. A stale value answers precondition-failed; an absent one precondition-required. */
+                "If-Match": components["parameters"]["ObjectIfMatch"];
+            };
+            path: {
+                /** @description The object's objectGUID. A DN is never a key. */
+                objectGuid: components["parameters"]["ObjectGuid"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ObjectMoveBody"];
+            };
+        };
+        responses: {
+            /** @description The preview */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationPreview"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            412: components["responses"]["PreconditionFailed"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            428: components["responses"]["PreconditionRequired"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    previewNestGroupGroup: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The ETag of the object version being changed, as read. A stale value answers precondition-failed; an absent one precondition-required. */
+                "If-Match": components["parameters"]["ObjectIfMatch"];
+            };
+            path: {
+                /** @description The object's objectGUID. A DN is never a key. */
+                objectGuid: components["parameters"]["ObjectGuid"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GroupMemberBody"];
+            };
+        };
+        responses: {
+            /** @description The preview */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationPreview"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            412: components["responses"]["PreconditionFailed"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            428: components["responses"]["PreconditionRequired"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    previewRemoveMemberGroup: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The ETag of the object version being changed, as read. A stale value answers precondition-failed; an absent one precondition-required. */
+                "If-Match": components["parameters"]["ObjectIfMatch"];
+            };
+            path: {
+                /** @description The object's objectGUID. A DN is never a key. */
+                objectGuid: components["parameters"]["ObjectGuid"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GroupMemberBody"];
+            };
+        };
+        responses: {
+            /** @description The preview */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationPreview"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            412: components["responses"]["PreconditionFailed"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            428: components["responses"]["PreconditionRequired"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    previewRenameGroup: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The ETag of the object version being changed, as read. A stale value answers precondition-failed; an absent one precondition-required. */
+                "If-Match": components["parameters"]["ObjectIfMatch"];
+            };
+            path: {
+                /** @description The object's objectGUID. A DN is never a key. */
+                objectGuid: components["parameters"]["ObjectGuid"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ObjectRenameBody"];
+            };
+        };
+        responses: {
+            /** @description The preview */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationPreview"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            412: components["responses"]["PreconditionFailed"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            428: components["responses"]["PreconditionRequired"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    previewRestoreGroup: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The ETag of the object version being changed, as read. A stale value answers precondition-failed; an absent one precondition-required. */
+                "If-Match": components["parameters"]["ObjectIfMatch"];
+            };
+            path: {
+                /** @description The object's objectGUID. A DN is never a key. */
+                objectGuid: components["parameters"]["ObjectGuid"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ObjectRestoreBody"];
+            };
+        };
+        responses: {
+            /** @description The preview */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationPreview"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            412: components["responses"]["PreconditionFailed"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            428: components["responses"]["PreconditionRequired"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    previewUpdateGroup: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The ETag of the object version being changed, as read. A stale value answers precondition-failed; an absent one precondition-required. */
+                "If-Match": components["parameters"]["ObjectIfMatch"];
+            };
+            path: {
+                /** @description The object's objectGUID. A DN is never a key. */
+                objectGuid: components["parameters"]["ObjectGuid"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ObjectUpdateBody"];
+            };
+        };
+        responses: {
+            /** @description The preview */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationPreview"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            412: components["responses"]["PreconditionFailed"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            428: components["responses"]["PreconditionRequired"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    removeMemberGroup: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Makes a retry safe. The same key with the same body answers the first answer; the same key with a different body is refused. */
+                "Idempotency-Key": components["parameters"]["ObjectWriteKey"];
+                /** @description The ETag of the object version being changed, as read. A stale value answers precondition-failed; an absent one precondition-required. */
+                "If-Match": components["parameters"]["ObjectIfMatch"];
+            };
+            path: {
+                /** @description The object's objectGUID. A DN is never a key. */
+                objectGuid: components["parameters"]["ObjectGuid"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GroupMemberBody"];
+            };
+        };
+        responses: {
+            /** @description The operation, finished (inline), or planned as a no-change */
+            200: {
+                headers: {
+                    /** @description The operation; the undo handle. */
+                    "ActiveDIQ-Operation-Id": string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationRef"];
+                };
+            };
+            /** @description Held for approval by the gate or a kernel hold (ADR-0005 rule 8); holdReason says which. Nothing changed yet */
+            202: {
+                headers: {
+                    /** @description The held operation. */
+                    "ActiveDIQ-Operation-Id": string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationRef"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            412: components["responses"]["PreconditionFailed"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            422: components["responses"]["DirectoryConstraint"];
+            428: components["responses"]["PreconditionRequired"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    renameGroup: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Makes a retry safe. The same key with the same body answers the first answer; the same key with a different body is refused. */
+                "Idempotency-Key": components["parameters"]["ObjectWriteKey"];
+                /** @description The ETag of the object version being changed, as read. A stale value answers precondition-failed; an absent one precondition-required. */
+                "If-Match": components["parameters"]["ObjectIfMatch"];
+            };
+            path: {
+                /** @description The object's objectGUID. A DN is never a key. */
+                objectGuid: components["parameters"]["ObjectGuid"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ObjectRenameBody"];
+            };
+        };
+        responses: {
+            /** @description The operation, finished (inline), or planned as a no-change */
+            200: {
+                headers: {
+                    /** @description The operation; the undo handle. */
+                    "ActiveDIQ-Operation-Id": string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationRef"];
+                };
+            };
+            /** @description Held for approval by the gate or a kernel hold (ADR-0005 rule 8); holdReason says which. Nothing changed yet */
+            202: {
+                headers: {
+                    /** @description The held operation. */
+                    "ActiveDIQ-Operation-Id": string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationRef"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            412: components["responses"]["PreconditionFailed"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            422: components["responses"]["DirectoryConstraint"];
+            428: components["responses"]["PreconditionRequired"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    restoreGroup: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Makes a retry safe. The same key with the same body answers the first answer; the same key with a different body is refused. */
+                "Idempotency-Key": components["parameters"]["ObjectWriteKey"];
+                /** @description The ETag of the object version being changed, as read. A stale value answers precondition-failed; an absent one precondition-required. */
+                "If-Match": components["parameters"]["ObjectIfMatch"];
+            };
+            path: {
+                /** @description The object's objectGUID. A DN is never a key. */
+                objectGuid: components["parameters"]["ObjectGuid"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ObjectRestoreBody"];
+            };
+        };
+        responses: {
+            /** @description The operation, finished (inline), or planned as a no-change */
+            200: {
+                headers: {
+                    /** @description The operation; the undo handle. */
+                    "ActiveDIQ-Operation-Id": string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationRef"];
+                };
+            };
+            /** @description Held for approval by the gate or a kernel hold (ADR-0005 rule 8); holdReason says which. Nothing changed yet */
+            202: {
+                headers: {
+                    /** @description The held operation. */
+                    "ActiveDIQ-Operation-Id": string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationRef"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            412: components["responses"]["PreconditionFailed"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            422: components["responses"]["DirectoryConstraint"];
+            428: components["responses"]["PreconditionRequired"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    updateGroup: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Makes a retry safe. The same key with the same body answers the first answer; the same key with a different body is refused. */
+                "Idempotency-Key": components["parameters"]["ObjectWriteKey"];
+                /** @description The ETag of the object version being changed, as read. A stale value answers precondition-failed; an absent one precondition-required. */
+                "If-Match": components["parameters"]["ObjectIfMatch"];
+            };
+            path: {
+                /** @description The object's objectGUID. A DN is never a key. */
+                objectGuid: components["parameters"]["ObjectGuid"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ObjectUpdateBody"];
+            };
+        };
+        responses: {
+            /** @description The operation, finished (inline), or planned as a no-change */
+            200: {
+                headers: {
+                    /** @description The operation; the undo handle. */
+                    "ActiveDIQ-Operation-Id": string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationRef"];
+                };
+            };
+            /** @description Held for approval by the gate or a kernel hold (ADR-0005 rule 8); holdReason says which. Nothing changed yet */
+            202: {
+                headers: {
+                    /** @description The held operation. */
+                    "ActiveDIQ-Operation-Id": string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationRef"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            412: components["responses"]["PreconditionFailed"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            422: components["responses"]["DirectoryConstraint"];
+            428: components["responses"]["PreconditionRequired"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    previewUndoGroupOperation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The operation to undo: the value of the ActiveDIQ-Operation-Id header that the Action-backed write answered. */
+                operationId: components["parameters"]["OperationId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The preview */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationPreview"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    undoGroupOperation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The operation to undo: the value of the ActiveDIQ-Operation-Id header that the Action-backed write answered. */
+                operationId: components["parameters"]["OperationId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OperationUndoRequest"];
+            };
+        };
+        responses: {
+            /** @description The undo operation; undoes names the operation it undid */
+            200: {
+                headers: {
+                    /** @description The undo operation. Undoing it re-applies the original change. */
+                    "ActiveDIQ-Operation-Id": string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationRef"];
+                };
+            };
+            /** @description Held for approval by the gate or a kernel hold (ADR-0005 rule 8); holdReason says which. Nothing changed yet */
+            202: {
+                headers: {
+                    /** @description The held operation. */
+                    "ActiveDIQ-Operation-Id": string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationRef"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    previewCreateGroup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GroupCreate"];
+            };
+        };
+        responses: {
+            /** @description The preview */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationPreview"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    createOU: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Makes a retry safe. The same key with the same body answers the first answer; the same key with a different body is refused. */
+                "Idempotency-Key": components["parameters"]["ObjectWriteKey"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OUCreate"];
+            };
+        };
+        responses: {
+            /** @description The operation, finished (inline), or planned as a no-change */
+            200: {
+                headers: {
+                    /** @description The operation; the undo handle. */
+                    "ActiveDIQ-Operation-Id": string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationRef"];
+                };
+            };
+            /** @description Held for approval by the gate or a kernel hold (ADR-0005 rule 8); holdReason says which. Nothing changed yet */
+            202: {
+                headers: {
+                    /** @description The held operation. */
+                    "ActiveDIQ-Operation-Id": string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationRef"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            422: components["responses"]["DirectoryConstraint"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    deleteOU: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Makes a retry safe. The same key with the same body answers the first answer; the same key with a different body is refused. */
+                "Idempotency-Key": components["parameters"]["ObjectWriteKey"];
+                /** @description The ETag of the object version being changed, as read. A stale value answers precondition-failed; an absent one precondition-required. */
+                "If-Match": components["parameters"]["ObjectIfMatch"];
+            };
+            path: {
+                /** @description The object's objectGUID. A DN is never a key. */
+                objectGuid: components["parameters"]["ObjectGuid"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ObjectDeleteBody"];
+            };
+        };
+        responses: {
+            /** @description The operation, finished (inline), or planned as a no-change */
+            200: {
+                headers: {
+                    /** @description The operation; the undo handle. */
+                    "ActiveDIQ-Operation-Id": string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationRef"];
+                };
+            };
+            /** @description Held for approval by the gate or a kernel hold (ADR-0005 rule 8); holdReason says which. Nothing changed yet */
+            202: {
+                headers: {
+                    /** @description The held operation. */
+                    "ActiveDIQ-Operation-Id": string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationRef"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            412: components["responses"]["PreconditionFailed"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            422: components["responses"]["DirectoryConstraint"];
+            428: components["responses"]["PreconditionRequired"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    moveOU: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Makes a retry safe. The same key with the same body answers the first answer; the same key with a different body is refused. */
+                "Idempotency-Key": components["parameters"]["ObjectWriteKey"];
+                /** @description The ETag of the object version being changed, as read. A stale value answers precondition-failed; an absent one precondition-required. */
+                "If-Match": components["parameters"]["ObjectIfMatch"];
+            };
+            path: {
+                /** @description The object's objectGUID. A DN is never a key. */
+                objectGuid: components["parameters"]["ObjectGuid"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ObjectMoveBody"];
+            };
+        };
+        responses: {
+            /** @description The operation, finished (inline), or planned as a no-change */
+            200: {
+                headers: {
+                    /** @description The operation; the undo handle. */
+                    "ActiveDIQ-Operation-Id": string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationRef"];
+                };
+            };
+            /** @description Held for approval by the gate or a kernel hold (ADR-0005 rule 8); holdReason says which. Nothing changed yet */
+            202: {
+                headers: {
+                    /** @description The held operation. */
+                    "ActiveDIQ-Operation-Id": string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationRef"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            412: components["responses"]["PreconditionFailed"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            422: components["responses"]["DirectoryConstraint"];
+            428: components["responses"]["PreconditionRequired"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    previewDeleteOU: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The ETag of the object version being changed, as read. A stale value answers precondition-failed; an absent one precondition-required. */
+                "If-Match": components["parameters"]["ObjectIfMatch"];
+            };
+            path: {
+                /** @description The object's objectGUID. A DN is never a key. */
+                objectGuid: components["parameters"]["ObjectGuid"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ObjectDeleteBody"];
+            };
+        };
+        responses: {
+            /** @description The preview */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationPreview"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            412: components["responses"]["PreconditionFailed"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            428: components["responses"]["PreconditionRequired"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    previewMoveOU: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The ETag of the object version being changed, as read. A stale value answers precondition-failed; an absent one precondition-required. */
+                "If-Match": components["parameters"]["ObjectIfMatch"];
+            };
+            path: {
+                /** @description The object's objectGUID. A DN is never a key. */
+                objectGuid: components["parameters"]["ObjectGuid"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ObjectMoveBody"];
+            };
+        };
+        responses: {
+            /** @description The preview */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationPreview"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            412: components["responses"]["PreconditionFailed"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            428: components["responses"]["PreconditionRequired"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    previewRenameOU: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The ETag of the object version being changed, as read. A stale value answers precondition-failed; an absent one precondition-required. */
+                "If-Match": components["parameters"]["ObjectIfMatch"];
+            };
+            path: {
+                /** @description The object's objectGUID. A DN is never a key. */
+                objectGuid: components["parameters"]["ObjectGuid"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ObjectRenameBody"];
+            };
+        };
+        responses: {
+            /** @description The preview */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationPreview"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            412: components["responses"]["PreconditionFailed"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            428: components["responses"]["PreconditionRequired"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    previewRestoreOU: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The ETag of the object version being changed, as read. A stale value answers precondition-failed; an absent one precondition-required. */
+                "If-Match": components["parameters"]["ObjectIfMatch"];
+            };
+            path: {
+                /** @description The object's objectGUID. A DN is never a key. */
+                objectGuid: components["parameters"]["ObjectGuid"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ObjectRestoreBody"];
+            };
+        };
+        responses: {
+            /** @description The preview */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationPreview"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            412: components["responses"]["PreconditionFailed"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            428: components["responses"]["PreconditionRequired"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    previewUpdateOU: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The ETag of the object version being changed, as read. A stale value answers precondition-failed; an absent one precondition-required. */
+                "If-Match": components["parameters"]["ObjectIfMatch"];
+            };
+            path: {
+                /** @description The object's objectGUID. A DN is never a key. */
+                objectGuid: components["parameters"]["ObjectGuid"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ObjectUpdateBody"];
+            };
+        };
+        responses: {
+            /** @description The preview */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationPreview"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            412: components["responses"]["PreconditionFailed"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            428: components["responses"]["PreconditionRequired"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    renameOU: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Makes a retry safe. The same key with the same body answers the first answer; the same key with a different body is refused. */
+                "Idempotency-Key": components["parameters"]["ObjectWriteKey"];
+                /** @description The ETag of the object version being changed, as read. A stale value answers precondition-failed; an absent one precondition-required. */
+                "If-Match": components["parameters"]["ObjectIfMatch"];
+            };
+            path: {
+                /** @description The object's objectGUID. A DN is never a key. */
+                objectGuid: components["parameters"]["ObjectGuid"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ObjectRenameBody"];
+            };
+        };
+        responses: {
+            /** @description The operation, finished (inline), or planned as a no-change */
+            200: {
+                headers: {
+                    /** @description The operation; the undo handle. */
+                    "ActiveDIQ-Operation-Id": string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationRef"];
+                };
+            };
+            /** @description Held for approval by the gate or a kernel hold (ADR-0005 rule 8); holdReason says which. Nothing changed yet */
+            202: {
+                headers: {
+                    /** @description The held operation. */
+                    "ActiveDIQ-Operation-Id": string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationRef"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            412: components["responses"]["PreconditionFailed"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            422: components["responses"]["DirectoryConstraint"];
+            428: components["responses"]["PreconditionRequired"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    restoreOU: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Makes a retry safe. The same key with the same body answers the first answer; the same key with a different body is refused. */
+                "Idempotency-Key": components["parameters"]["ObjectWriteKey"];
+                /** @description The ETag of the object version being changed, as read. A stale value answers precondition-failed; an absent one precondition-required. */
+                "If-Match": components["parameters"]["ObjectIfMatch"];
+            };
+            path: {
+                /** @description The object's objectGUID. A DN is never a key. */
+                objectGuid: components["parameters"]["ObjectGuid"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ObjectRestoreBody"];
+            };
+        };
+        responses: {
+            /** @description The operation, finished (inline), or planned as a no-change */
+            200: {
+                headers: {
+                    /** @description The operation; the undo handle. */
+                    "ActiveDIQ-Operation-Id": string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationRef"];
+                };
+            };
+            /** @description Held for approval by the gate or a kernel hold (ADR-0005 rule 8); holdReason says which. Nothing changed yet */
+            202: {
+                headers: {
+                    /** @description The held operation. */
+                    "ActiveDIQ-Operation-Id": string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationRef"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            412: components["responses"]["PreconditionFailed"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            422: components["responses"]["DirectoryConstraint"];
+            428: components["responses"]["PreconditionRequired"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    updateOU: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Makes a retry safe. The same key with the same body answers the first answer; the same key with a different body is refused. */
+                "Idempotency-Key": components["parameters"]["ObjectWriteKey"];
+                /** @description The ETag of the object version being changed, as read. A stale value answers precondition-failed; an absent one precondition-required. */
+                "If-Match": components["parameters"]["ObjectIfMatch"];
+            };
+            path: {
+                /** @description The object's objectGUID. A DN is never a key. */
+                objectGuid: components["parameters"]["ObjectGuid"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ObjectUpdateBody"];
+            };
+        };
+        responses: {
+            /** @description The operation, finished (inline), or planned as a no-change */
+            200: {
+                headers: {
+                    /** @description The operation; the undo handle. */
+                    "ActiveDIQ-Operation-Id": string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationRef"];
+                };
+            };
+            /** @description Held for approval by the gate or a kernel hold (ADR-0005 rule 8); holdReason says which. Nothing changed yet */
+            202: {
+                headers: {
+                    /** @description The held operation. */
+                    "ActiveDIQ-Operation-Id": string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationRef"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            412: components["responses"]["PreconditionFailed"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            422: components["responses"]["DirectoryConstraint"];
+            428: components["responses"]["PreconditionRequired"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    previewUndoOUOperation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The operation to undo: the value of the ActiveDIQ-Operation-Id header that the Action-backed write answered. */
+                operationId: components["parameters"]["OperationId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The preview */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationPreview"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    undoOUOperation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The operation to undo: the value of the ActiveDIQ-Operation-Id header that the Action-backed write answered. */
+                operationId: components["parameters"]["OperationId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OperationUndoRequest"];
+            };
+        };
+        responses: {
+            /** @description The undo operation; undoes names the operation it undid */
+            200: {
+                headers: {
+                    /** @description The undo operation. Undoing it re-applies the original change. */
+                    "ActiveDIQ-Operation-Id": string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationRef"];
+                };
+            };
+            /** @description Held for approval by the gate or a kernel hold (ADR-0005 rule 8); holdReason says which. Nothing changed yet */
+            202: {
+                headers: {
+                    /** @description The held operation. */
+                    "ActiveDIQ-Operation-Id": string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationRef"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    previewCreateOU: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OUCreate"];
+            };
+        };
+        responses: {
+            /** @description The preview */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationPreview"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    createUser: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Makes a retry safe. The same key with the same body answers the first answer; the same key with a different body is refused. */
+                "Idempotency-Key": components["parameters"]["ObjectWriteKey"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UserCreate"];
+            };
+        };
+        responses: {
+            /** @description The operation, finished (inline), or planned as a no-change */
+            200: {
+                headers: {
+                    /** @description The operation; the undo handle. */
+                    "ActiveDIQ-Operation-Id": string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationRef"];
+                };
+            };
+            /** @description Held for approval by the gate or a kernel hold (ADR-0005 rule 8); holdReason says which. Nothing changed yet */
+            202: {
+                headers: {
+                    /** @description The held operation. */
+                    "ActiveDIQ-Operation-Id": string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationRef"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            422: components["responses"]["DirectoryConstraint"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    deleteUser: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Makes a retry safe. The same key with the same body answers the first answer; the same key with a different body is refused. */
+                "Idempotency-Key": components["parameters"]["ObjectWriteKey"];
+                /** @description The ETag of the object version being changed, as read. A stale value answers precondition-failed; an absent one precondition-required. */
+                "If-Match": components["parameters"]["ObjectIfMatch"];
+            };
+            path: {
+                /** @description The object's objectGUID. A DN is never a key. */
+                objectGuid: components["parameters"]["ObjectGuid"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ObjectDeleteBody"];
+            };
+        };
+        responses: {
+            /** @description The operation, finished (inline), or planned as a no-change */
+            200: {
+                headers: {
+                    /** @description The operation; the undo handle. */
+                    "ActiveDIQ-Operation-Id": string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationRef"];
+                };
+            };
+            /** @description Held for approval by the gate or a kernel hold (ADR-0005 rule 8); holdReason says which. Nothing changed yet */
+            202: {
+                headers: {
+                    /** @description The held operation. */
+                    "ActiveDIQ-Operation-Id": string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationRef"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            412: components["responses"]["PreconditionFailed"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            422: components["responses"]["DirectoryConstraint"];
+            428: components["responses"]["PreconditionRequired"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    disableUser: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Makes a retry safe. The same key with the same body answers the first answer; the same key with a different body is refused. */
+                "Idempotency-Key": components["parameters"]["ObjectWriteKey"];
+                /** @description The ETag of the object version being changed, as read. A stale value answers precondition-failed; an absent one precondition-required. */
+                "If-Match": components["parameters"]["ObjectIfMatch"];
+            };
+            path: {
+                /** @description The object's objectGUID. A DN is never a key. */
+                objectGuid: components["parameters"]["ObjectGuid"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ObjectTargetBody"];
+            };
+        };
+        responses: {
+            /** @description The operation, finished (inline), or planned as a no-change */
+            200: {
+                headers: {
+                    /** @description The operation; the undo handle. */
+                    "ActiveDIQ-Operation-Id": string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationRef"];
+                };
+            };
+            /** @description Held for approval by the gate or a kernel hold (ADR-0005 rule 8); holdReason says which. Nothing changed yet */
+            202: {
+                headers: {
+                    /** @description The held operation. */
+                    "ActiveDIQ-Operation-Id": string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationRef"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            412: components["responses"]["PreconditionFailed"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            422: components["responses"]["DirectoryConstraint"];
+            428: components["responses"]["PreconditionRequired"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    enableUser: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Makes a retry safe. The same key with the same body answers the first answer; the same key with a different body is refused. */
+                "Idempotency-Key": components["parameters"]["ObjectWriteKey"];
+                /** @description The ETag of the object version being changed, as read. A stale value answers precondition-failed; an absent one precondition-required. */
+                "If-Match": components["parameters"]["ObjectIfMatch"];
+            };
+            path: {
+                /** @description The object's objectGUID. A DN is never a key. */
+                objectGuid: components["parameters"]["ObjectGuid"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ObjectTargetBody"];
+            };
+        };
+        responses: {
+            /** @description The operation, finished (inline), or planned as a no-change */
+            200: {
+                headers: {
+                    /** @description The operation; the undo handle. */
+                    "ActiveDIQ-Operation-Id": string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationRef"];
+                };
+            };
+            /** @description Held for approval by the gate or a kernel hold (ADR-0005 rule 8); holdReason says which. Nothing changed yet */
+            202: {
+                headers: {
+                    /** @description The held operation. */
+                    "ActiveDIQ-Operation-Id": string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationRef"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            412: components["responses"]["PreconditionFailed"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            422: components["responses"]["DirectoryConstraint"];
+            428: components["responses"]["PreconditionRequired"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    moveUser: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Makes a retry safe. The same key with the same body answers the first answer; the same key with a different body is refused. */
+                "Idempotency-Key": components["parameters"]["ObjectWriteKey"];
+                /** @description The ETag of the object version being changed, as read. A stale value answers precondition-failed; an absent one precondition-required. */
+                "If-Match": components["parameters"]["ObjectIfMatch"];
+            };
+            path: {
+                /** @description The object's objectGUID. A DN is never a key. */
+                objectGuid: components["parameters"]["ObjectGuid"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ObjectMoveBody"];
+            };
+        };
+        responses: {
+            /** @description The operation, finished (inline), or planned as a no-change */
+            200: {
+                headers: {
+                    /** @description The operation; the undo handle. */
+                    "ActiveDIQ-Operation-Id": string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationRef"];
+                };
+            };
+            /** @description Held for approval by the gate or a kernel hold (ADR-0005 rule 8); holdReason says which. Nothing changed yet */
+            202: {
+                headers: {
+                    /** @description The held operation. */
+                    "ActiveDIQ-Operation-Id": string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationRef"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            412: components["responses"]["PreconditionFailed"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            422: components["responses"]["DirectoryConstraint"];
+            428: components["responses"]["PreconditionRequired"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    previewDeleteUser: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The ETag of the object version being changed, as read. A stale value answers precondition-failed; an absent one precondition-required. */
+                "If-Match": components["parameters"]["ObjectIfMatch"];
+            };
+            path: {
+                /** @description The object's objectGUID. A DN is never a key. */
+                objectGuid: components["parameters"]["ObjectGuid"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ObjectDeleteBody"];
+            };
+        };
+        responses: {
+            /** @description The preview */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationPreview"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            412: components["responses"]["PreconditionFailed"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            428: components["responses"]["PreconditionRequired"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    previewDisableUser: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The ETag of the object version being changed, as read. A stale value answers precondition-failed; an absent one precondition-required. */
+                "If-Match": components["parameters"]["ObjectIfMatch"];
+            };
+            path: {
+                /** @description The object's objectGUID. A DN is never a key. */
+                objectGuid: components["parameters"]["ObjectGuid"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ObjectTargetBody"];
+            };
+        };
+        responses: {
+            /** @description The preview */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationPreview"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            412: components["responses"]["PreconditionFailed"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            428: components["responses"]["PreconditionRequired"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    previewEnableUser: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The ETag of the object version being changed, as read. A stale value answers precondition-failed; an absent one precondition-required. */
+                "If-Match": components["parameters"]["ObjectIfMatch"];
+            };
+            path: {
+                /** @description The object's objectGUID. A DN is never a key. */
+                objectGuid: components["parameters"]["ObjectGuid"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ObjectTargetBody"];
+            };
+        };
+        responses: {
+            /** @description The preview */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationPreview"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            412: components["responses"]["PreconditionFailed"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            428: components["responses"]["PreconditionRequired"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    previewMoveUser: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The ETag of the object version being changed, as read. A stale value answers precondition-failed; an absent one precondition-required. */
+                "If-Match": components["parameters"]["ObjectIfMatch"];
+            };
+            path: {
+                /** @description The object's objectGUID. A DN is never a key. */
+                objectGuid: components["parameters"]["ObjectGuid"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ObjectMoveBody"];
+            };
+        };
+        responses: {
+            /** @description The preview */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationPreview"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            412: components["responses"]["PreconditionFailed"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            428: components["responses"]["PreconditionRequired"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    previewRenameUser: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The ETag of the object version being changed, as read. A stale value answers precondition-failed; an absent one precondition-required. */
+                "If-Match": components["parameters"]["ObjectIfMatch"];
+            };
+            path: {
+                /** @description The object's objectGUID. A DN is never a key. */
+                objectGuid: components["parameters"]["ObjectGuid"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ObjectRenameBody"];
+            };
+        };
+        responses: {
+            /** @description The preview */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationPreview"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            412: components["responses"]["PreconditionFailed"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            428: components["responses"]["PreconditionRequired"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    previewResetPasswordUser: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The ETag of the object version being changed, as read. A stale value answers precondition-failed; an absent one precondition-required. */
+                "If-Match": components["parameters"]["ObjectIfMatch"];
+            };
+            path: {
+                /** @description The object's objectGUID. A DN is never a key. */
+                objectGuid: components["parameters"]["ObjectGuid"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UserResetPasswordBody"];
+            };
+        };
+        responses: {
+            /** @description The preview */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationPreview"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            412: components["responses"]["PreconditionFailed"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            428: components["responses"]["PreconditionRequired"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    previewRestoreUser: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The ETag of the object version being changed, as read. A stale value answers precondition-failed; an absent one precondition-required. */
+                "If-Match": components["parameters"]["ObjectIfMatch"];
+            };
+            path: {
+                /** @description The object's objectGUID. A DN is never a key. */
+                objectGuid: components["parameters"]["ObjectGuid"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ObjectRestoreBody"];
+            };
+        };
+        responses: {
+            /** @description The preview */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationPreview"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            412: components["responses"]["PreconditionFailed"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            428: components["responses"]["PreconditionRequired"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    previewUnlockUser: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The ETag of the object version being changed, as read. A stale value answers precondition-failed; an absent one precondition-required. */
+                "If-Match": components["parameters"]["ObjectIfMatch"];
+            };
+            path: {
+                /** @description The object's objectGUID. A DN is never a key. */
+                objectGuid: components["parameters"]["ObjectGuid"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ObjectTargetBody"];
+            };
+        };
+        responses: {
+            /** @description The preview */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationPreview"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            412: components["responses"]["PreconditionFailed"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            428: components["responses"]["PreconditionRequired"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    previewUpdateUser: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The ETag of the object version being changed, as read. A stale value answers precondition-failed; an absent one precondition-required. */
+                "If-Match": components["parameters"]["ObjectIfMatch"];
+            };
+            path: {
+                /** @description The object's objectGUID. A DN is never a key. */
+                objectGuid: components["parameters"]["ObjectGuid"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ObjectUpdateBody"];
+            };
+        };
+        responses: {
+            /** @description The preview */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationPreview"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            412: components["responses"]["PreconditionFailed"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            428: components["responses"]["PreconditionRequired"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    renameUser: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Makes a retry safe. The same key with the same body answers the first answer; the same key with a different body is refused. */
+                "Idempotency-Key": components["parameters"]["ObjectWriteKey"];
+                /** @description The ETag of the object version being changed, as read. A stale value answers precondition-failed; an absent one precondition-required. */
+                "If-Match": components["parameters"]["ObjectIfMatch"];
+            };
+            path: {
+                /** @description The object's objectGUID. A DN is never a key. */
+                objectGuid: components["parameters"]["ObjectGuid"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ObjectRenameBody"];
+            };
+        };
+        responses: {
+            /** @description The operation, finished (inline), or planned as a no-change */
+            200: {
+                headers: {
+                    /** @description The operation; the undo handle. */
+                    "ActiveDIQ-Operation-Id": string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationRef"];
+                };
+            };
+            /** @description Held for approval by the gate or a kernel hold (ADR-0005 rule 8); holdReason says which. Nothing changed yet */
+            202: {
+                headers: {
+                    /** @description The held operation. */
+                    "ActiveDIQ-Operation-Id": string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationRef"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            412: components["responses"]["PreconditionFailed"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            422: components["responses"]["DirectoryConstraint"];
+            428: components["responses"]["PreconditionRequired"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    resetPasswordUser: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Makes a retry safe. The same key with the same body answers the first answer; the same key with a different body is refused. */
+                "Idempotency-Key": components["parameters"]["ObjectWriteKey"];
+                /** @description The ETag of the object version being changed, as read. A stale value answers precondition-failed; an absent one precondition-required. */
+                "If-Match": components["parameters"]["ObjectIfMatch"];
+            };
+            path: {
+                /** @description The object's objectGUID. A DN is never a key. */
+                objectGuid: components["parameters"]["ObjectGuid"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UserResetPasswordBody"];
+            };
+        };
+        responses: {
+            /** @description The operation, finished (inline), or planned as a no-change */
+            200: {
+                headers: {
+                    /** @description The operation; the undo handle. */
+                    "ActiveDIQ-Operation-Id": string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationRef"];
+                };
+            };
+            /** @description Held for approval by the gate or a kernel hold (ADR-0005 rule 8); holdReason says which. Nothing changed yet */
+            202: {
+                headers: {
+                    /** @description The held operation. */
+                    "ActiveDIQ-Operation-Id": string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationRef"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            412: components["responses"]["PreconditionFailed"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            422: components["responses"]["DirectoryConstraint"];
+            428: components["responses"]["PreconditionRequired"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    restoreUser: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Makes a retry safe. The same key with the same body answers the first answer; the same key with a different body is refused. */
+                "Idempotency-Key": components["parameters"]["ObjectWriteKey"];
+                /** @description The ETag of the object version being changed, as read. A stale value answers precondition-failed; an absent one precondition-required. */
+                "If-Match": components["parameters"]["ObjectIfMatch"];
+            };
+            path: {
+                /** @description The object's objectGUID. A DN is never a key. */
+                objectGuid: components["parameters"]["ObjectGuid"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ObjectRestoreBody"];
+            };
+        };
+        responses: {
+            /** @description The operation, finished (inline), or planned as a no-change */
+            200: {
+                headers: {
+                    /** @description The operation; the undo handle. */
+                    "ActiveDIQ-Operation-Id": string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationRef"];
+                };
+            };
+            /** @description Held for approval by the gate or a kernel hold (ADR-0005 rule 8); holdReason says which. Nothing changed yet */
+            202: {
+                headers: {
+                    /** @description The held operation. */
+                    "ActiveDIQ-Operation-Id": string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationRef"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            412: components["responses"]["PreconditionFailed"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            422: components["responses"]["DirectoryConstraint"];
+            428: components["responses"]["PreconditionRequired"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    unlockUser: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Makes a retry safe. The same key with the same body answers the first answer; the same key with a different body is refused. */
+                "Idempotency-Key": components["parameters"]["ObjectWriteKey"];
+                /** @description The ETag of the object version being changed, as read. A stale value answers precondition-failed; an absent one precondition-required. */
+                "If-Match": components["parameters"]["ObjectIfMatch"];
+            };
+            path: {
+                /** @description The object's objectGUID. A DN is never a key. */
+                objectGuid: components["parameters"]["ObjectGuid"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ObjectTargetBody"];
+            };
+        };
+        responses: {
+            /** @description The operation, finished (inline), or planned as a no-change */
+            200: {
+                headers: {
+                    /** @description The operation; the undo handle. */
+                    "ActiveDIQ-Operation-Id": string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationRef"];
+                };
+            };
+            /** @description Held for approval by the gate or a kernel hold (ADR-0005 rule 8); holdReason says which. Nothing changed yet */
+            202: {
+                headers: {
+                    /** @description The held operation. */
+                    "ActiveDIQ-Operation-Id": string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationRef"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            412: components["responses"]["PreconditionFailed"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            422: components["responses"]["DirectoryConstraint"];
+            428: components["responses"]["PreconditionRequired"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    updateUser: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Makes a retry safe. The same key with the same body answers the first answer; the same key with a different body is refused. */
+                "Idempotency-Key": components["parameters"]["ObjectWriteKey"];
+                /** @description The ETag of the object version being changed, as read. A stale value answers precondition-failed; an absent one precondition-required. */
+                "If-Match": components["parameters"]["ObjectIfMatch"];
+            };
+            path: {
+                /** @description The object's objectGUID. A DN is never a key. */
+                objectGuid: components["parameters"]["ObjectGuid"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ObjectUpdateBody"];
+            };
+        };
+        responses: {
+            /** @description The operation, finished (inline), or planned as a no-change */
+            200: {
+                headers: {
+                    /** @description The operation; the undo handle. */
+                    "ActiveDIQ-Operation-Id": string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationRef"];
+                };
+            };
+            /** @description Held for approval by the gate or a kernel hold (ADR-0005 rule 8); holdReason says which. Nothing changed yet */
+            202: {
+                headers: {
+                    /** @description The held operation. */
+                    "ActiveDIQ-Operation-Id": string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationRef"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            412: components["responses"]["PreconditionFailed"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            422: components["responses"]["DirectoryConstraint"];
+            428: components["responses"]["PreconditionRequired"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    previewUndoUserOperation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The operation to undo: the value of the ActiveDIQ-Operation-Id header that the Action-backed write answered. */
+                operationId: components["parameters"]["OperationId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The preview */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationPreview"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    undoUserOperation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The operation to undo: the value of the ActiveDIQ-Operation-Id header that the Action-backed write answered. */
+                operationId: components["parameters"]["OperationId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OperationUndoRequest"];
+            };
+        };
+        responses: {
+            /** @description The undo operation; undoes names the operation it undid */
+            200: {
+                headers: {
+                    /** @description The undo operation. Undoing it re-applies the original change. */
+                    "ActiveDIQ-Operation-Id": string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationRef"];
+                };
+            };
+            /** @description Held for approval by the gate or a kernel hold (ADR-0005 rule 8); holdReason says which. Nothing changed yet */
+            202: {
+                headers: {
+                    /** @description The held operation. */
+                    "ActiveDIQ-Operation-Id": string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationRef"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    previewCreateUser: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UserCreate"];
+            };
+        };
+        responses: {
+            /** @description The preview */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationPreview"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    listOperationCatalogue: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The Actions */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationCatalogue"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
             429: components["responses"]["RateLimited"];
             500: components["responses"]["Internal"];
         };
@@ -4259,6 +10951,227 @@ export interface operations {
             404: components["responses"]["NotFound"];
             409: components["responses"]["Conflict"];
             410: components["responses"]["ReportResultExpired"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    listReportManagers: {
+        parameters: {
+            query?: {
+                /** @description The nextCursor of the previous page. */
+                cursor?: components["parameters"]["PageCursor"];
+                /** @description The page size. */
+                limit?: components["parameters"]["PageLimit"];
+                /** @description Literal text to match in the display name or logon name. Up to 256 characters; control characters are refused. */
+                q?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A page of managers */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReportManagerList"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    getReportReplicationThresholds: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The thresholds */
+            200: {
+                headers: {
+                    ETag: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReportReplicationThresholds"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    updateReportReplicationThresholds: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The ETag of the version being changed (a schedule, or the replication thresholds). A stale value answers precondition-failed; an absent one precondition-required. */
+                "If-Match": components["parameters"]["RequiredIfMatch"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReportReplicationThresholdsWrite"];
+            };
+        };
+        responses: {
+            /** @description The thresholds as stored */
+            200: {
+                headers: {
+                    /** @description The operation that made this change; the undo handle. */
+                    "ActiveDIQ-Operation-Id": string;
+                    ETag: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReportReplicationThresholds"];
+                };
+            };
+            /** @description Held for approval by the gate or a kernel hold (ADR-0005 rule 8); holdReason says which. Nothing changed yet; it applies when approved */
+            202: {
+                headers: {
+                    /** @description The held operation. */
+                    "ActiveDIQ-Operation-Id": string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationRef"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            412: components["responses"]["PreconditionFailed"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            428: components["responses"]["PreconditionRequired"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    previewUndoReportReplicationThresholdsOperation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The operation to undo: the value of the ActiveDIQ-Operation-Id header that the Action-backed write answered. */
+                operationId: components["parameters"]["OperationId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The preview of the undo */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationPreview"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["OperationNotUndoable"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    undoReportReplicationThresholdsOperation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The operation to undo: the value of the ActiveDIQ-Operation-Id header that the Action-backed write answered. */
+                operationId: components["parameters"]["OperationId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OperationUndoRequest"];
+            };
+        };
+        responses: {
+            /** @description The undo operation; undoes names the operation it undid */
+            200: {
+                headers: {
+                    /** @description The undo operation. Undoing it re-applies the original change. */
+                    "ActiveDIQ-Operation-Id": string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationRef"];
+                };
+            };
+            /** @description The undo is held for approval by the gate or a kernel hold (ADR-0005 rule 8); holdReason says which. Nothing changed yet */
+            202: {
+                headers: {
+                    /** @description The held undo operation. */
+                    "ActiveDIQ-Operation-Id": string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationRef"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["OperationNotUndoable"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    previewUpdateReportReplicationThresholds: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The ETag of the version being changed (a schedule, or the replication thresholds). A stale value answers precondition-failed; an absent one precondition-required. */
+                "If-Match": components["parameters"]["RequiredIfMatch"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReportReplicationThresholdsWrite"];
+            };
+        };
+        responses: {
+            /** @description The preview */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationPreview"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            412: components["responses"]["PreconditionFailed"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            428: components["responses"]["PreconditionRequired"];
             429: components["responses"]["RateLimited"];
             500: components["responses"]["Internal"];
         };
@@ -4533,6 +11446,78 @@ export interface operations {
             500: components["responses"]["Internal"];
         };
     };
+    getReportRunRowDetail: {
+        parameters: {
+            query?: {
+                /** @description The nextCursor of the previous page. */
+                cursor?: components["parameters"]["PageCursor"];
+                /** @description The page size. */
+                limit?: components["parameters"]["PageLimit"];
+                /** @description Which side of a membership change the names are paged from. Absent is added. Ignored for a row that is not a membership change. */
+                side?: components["parameters"]["MembershipSide"];
+            };
+            header?: never;
+            path: {
+                /** @description The rowKey of a row of the run; for a change-history run, the object's GUID. */
+                rowKey: components["parameters"]["RowKey"];
+                /** @description The run. */
+                runId: components["parameters"]["RunId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The detail of the row */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReportRowDetail"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            410: components["responses"]["ReportResultExpired"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    getLatestReportRun: {
+        parameters: {
+            query: {
+                /** @description The report definition. */
+                definitionId: string;
+                /** @description The preset; absent means the definition's default preset. */
+                presetId?: string;
+                /** @description 0 (the default) answers the header only; 10 adds the first 10 rows of the widget table. */
+                rows?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The latest run state for the widget */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReportLatestRun"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
     listReportSchedules: {
         parameters: {
             query?: {
@@ -4647,7 +11632,7 @@ export interface operations {
         parameters: {
             query?: never;
             header: {
-                /** @description The ETag of the schedule version being changed. A stale value answers precondition-failed; an absent one precondition-required. */
+                /** @description The ETag of the version being changed (a schedule, or the replication thresholds). A stale value answers precondition-failed; an absent one precondition-required. */
                 "If-Match": components["parameters"]["RequiredIfMatch"];
             };
             path: {
@@ -4703,7 +11688,7 @@ export interface operations {
         parameters: {
             query?: never;
             header: {
-                /** @description The ETag of the schedule version being changed. A stale value answers precondition-failed; an absent one precondition-required. */
+                /** @description The ETag of the version being changed (a schedule, or the replication thresholds). A stale value answers precondition-failed; an absent one precondition-required. */
                 "If-Match": components["parameters"]["RequiredIfMatch"];
             };
             path: {
@@ -4747,7 +11732,7 @@ export interface operations {
         parameters: {
             query?: never;
             header: {
-                /** @description The ETag of the schedule version being changed. A stale value answers precondition-failed; an absent one precondition-required. */
+                /** @description The ETag of the version being changed (a schedule, or the replication thresholds). A stale value answers precondition-failed; an absent one precondition-required. */
                 "If-Match": components["parameters"]["RequiredIfMatch"];
             };
             path: {
@@ -4843,7 +11828,7 @@ export interface operations {
         parameters: {
             query?: never;
             header: {
-                /** @description The ETag of the schedule version being changed. A stale value answers precondition-failed; an absent one precondition-required. */
+                /** @description The ETag of the version being changed (a schedule, or the replication thresholds). A stale value answers precondition-failed; an absent one precondition-required. */
                 "If-Match": components["parameters"]["RequiredIfMatch"];
             };
             path: {
@@ -4904,7 +11889,7 @@ export interface operations {
         parameters: {
             query?: never;
             header: {
-                /** @description The ETag of the schedule version being changed. A stale value answers precondition-failed; an absent one precondition-required. */
+                /** @description The ETag of the version being changed (a schedule, or the replication thresholds). A stale value answers precondition-failed; an absent one precondition-required. */
                 "If-Match": components["parameters"]["RequiredIfMatch"];
             };
             path: {
@@ -4979,7 +11964,7 @@ export interface operations {
         parameters: {
             query?: never;
             header: {
-                /** @description The ETag of the schedule version being changed. A stale value answers precondition-failed; an absent one precondition-required. */
+                /** @description The ETag of the version being changed (a schedule, or the replication thresholds). A stale value answers precondition-failed; an absent one precondition-required. */
                 "If-Match": components["parameters"]["RequiredIfMatch"];
             };
             path: {

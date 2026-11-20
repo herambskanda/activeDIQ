@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	auditread "github.com/skenzeriq/activediq/internal/platform/audit/read"
+	"github.com/skenzeriq/activediq/internal/platform/notify/delivery"
 	"github.com/skenzeriq/activediq/internal/platform/notify/syslog"
 	"log/slog"
 	"net"
@@ -149,10 +150,23 @@ func Run(ctx context.Context, cfg config.Config, getenv func(string) string) err
 	// requires one yet. Modules build their services from these kernel ports in Register (ADR-0013); the
 	// read-scope producer is made from what they contribute, so it is bound after Boot.
 	jreg := jobs.NewRegistry()
+	deliveries, err := delivery.New(ok.Chainer)
+	if err != nil {
+		return err
+	}
 	lateScopes := &rbac.LateReadScopes{}
 	deps := platform.Deps{DB: db, Jobs: jreg, Audit: ok.Chainer, Authz: authzr, ReadScopes: lateScopes, BlobDir: cfg.BlobDir,
-		StepUp: console.StepUp, Attestation: attest}
+		StepUp: console.StepUp, Attestation: attest,
+		Runner: ok.Runner, OwnerStatus: accountOwnerStatus{}, Deliveries: deliveries, Accounts: accountMail{}}
 	dirSvc := directoryServices(db)
+	dirSvc.Source, dirSvc.Reads = csrc, reads // the connector transport the directory module's user search reads over
+	perDCTr, err := client.NewGRPCPerDCTransport(csrc)
+	if err != nil {
+		return fmt.Errorf("server: per-DC transport: %w", err)
+	}
+	if dirSvc.PerDC, err = client.NewConnectorPerDC(conns, perDCTr, client.PerDCConfig{Describe: csrc}); err != nil {
+		return fmt.Errorf("server: per-DC reader: %w", err)
+	}
 	contrib, _, err := bootModules(ctx, deps, capability.NewSet(), dirSvc, owners.Lookup)
 	if err != nil {
 		return fmt.Errorf("server: boot modules: %w", err)
@@ -200,11 +214,6 @@ func Run(ctx context.Context, cfg config.Config, getenv func(string) string) err
 	if err != nil {
 		return err
 	}
-	dirTag, err := buildDirectory(ctx, db, conns, csrc, reads, txReadScopes{db: db, rs: readScopes})
-	if err != nil {
-		return err
-	}
-	tags = append(tags, dirTag)
 	if err := lateScopes.Bind(readScopes); err != nil {
 		return err
 	}

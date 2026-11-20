@@ -158,6 +158,8 @@ test('a ticket that fails the gate twice in a row is held for a CEO decision ins
   } finally { f.cleanup(); }
 });
 
+// Since merge plan 4.3 the clash is found while the train forms (a ticket that does not fit on top of the ones already chosen is skipped),
+// so the gate run never sees it; the older path, where the run itself leaves the later member out, is covered in conflictfill.test.mjs.
 test('a text conflict between two train members: the later one stays done and waits for the next train, the others are gated and merge', async () => {
   const f = setup();
   try {
@@ -168,13 +170,12 @@ test('a text conflict between two train members: the later one stays done and wa
     const notesBefore = byId(f)[b.id].notes.length;
     await pass(d);
 
-    assert.deepEqual(f.runs(), [`cand-train-${a.id}+${b.id}+${c.id}`]);
-    assert.deepEqual(f.trees(), [[a.id, c.id]], 'the gate saw a and c only: b was left out of the combined result');
+    assert.deepEqual(f.runs(), [`cand-train-${a.id}+${c.id}`], 'b did not fit on top of a, so the train was a and c');
+    assert.deepEqual(f.trees(), [[a.id, c.id]], 'the gate saw a and c only');
     let out = byId(f);
     assert.ok(out[a.id].links.merged && out[c.id].links.merged);
     assert.deepEqual([out[b.id].status, out[b.id].links.merged, Boolean(out[b.id].links.worktree)], ['done', undefined, true], 'b is not reopened');
     assert.equal(out[b.id].notes.length, notesBefore, 'b was not annotated');
-    assert.match(readRecentEvents(f.ctx, 50).map((e) => e.text).join('\n'), new RegExp(`${b.id} conflicts with an earlier ticket in its merge train .*waits for the next train`));
     assert.deepEqual(mergedOrder(f), [a.id, c.id]);
 
     // next train: b alone now conflicts with main itself, so it is reopened for its owner as before

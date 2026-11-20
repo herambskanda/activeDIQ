@@ -1,0 +1,30 @@
+/* The /search page. Tokens only; controls are design-system components. */
+.sr-filter {
+  margin: var(--diq-space-4) 0 0;
+}
+/* The match: heavier as well as coloured. A DS Highlight component replaces this (T-1255). */
+.sr-mark {
+  color: var(--diq-signal-text);
+  background: transparent;
+  font-weight: var(--diq-weight-semibold);
+}
+.sr-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--diq-space-1);
+}
+.sr-pages {
+  display: flex;
+  gap: var(--diq-space-2);
+  align-items: center;
+  margin: var(--diq-space-3) 0;
+}
+.sr-more {
+  margin: var(--diq-space-3) 0;
+  padding-inline-start: var(--diq-space-4);
+}
+.sr-foot {
+  margin: var(--diq-space-4) 0 0;
+  color: var(--diq-text-2);
+  font-size: var(--diq-text-cap);
+}

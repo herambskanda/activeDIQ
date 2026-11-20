@@ -184,6 +184,9 @@ type CreateInput struct {
 	Preset       string
 	Params       jsontext.Value // API-shape parameters; nil is "none"
 	RerunOf      *ID
+	// ScheduleID is the schedule a fire runs for (DM-73). A scheduled run is never a reuse of an earlier one:
+	// a fire reads the data as of now.
+	ScheduleID *string
 	// Zone is the runner's IANA time zone for PDF and HTML exports; empty is UTC.
 	Zone string
 }
@@ -234,7 +237,11 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (run Run, reused b
 			return err
 		}
 		var existing string
-		switch err := tx.QueryRow(ctx, findReusable, string(in.Chain.Requester.ID), qh[:], fp[:], ReuseWindow.Seconds(), zone).Scan(&existing); {
+		reuseWindow := ReuseWindow.Seconds()
+		if in.ScheduleID != nil {
+			reuseWindow = 0
+		}
+		switch err := tx.QueryRow(ctx, findReusable, string(in.Chain.Requester.ID), qh[:], fp[:], reuseWindow, zone).Scan(&existing); {
 		case err == nil:
 			id, err := ParseID(existing)
 			if err != nil {
@@ -258,7 +265,7 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (run Run, reused b
 			rerun = &x
 		}
 		if _, err := tx.Exec(ctx, insertRun, id.String(), in.DefinitionID, def.Def.Version, def.SHA256[:], preset, string(raw),
-			qh[:], fp[:], string(in.Chain.Requester.ID), string(chainJSON), rerun, string(cols), zone); err != nil {
+			qh[:], fp[:], string(in.Chain.Requester.ID), string(chainJSON), rerun, string(cols), zone, in.ScheduleID); err != nil {
 			return err
 		}
 		if _, err := s.Jobs.Enqueue(ctx, tx, jobs.Job{Kind: JobKind, Tenant: in.Tenant, Args: jobArgs{RunID: id.String()}, UniqueKey: id.String()}); err != nil {

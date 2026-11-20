@@ -11,8 +11,8 @@ import (
 
 	"github.com/skenzeriq/activediq/internal/directory/accountkind"
 	"github.com/skenzeriq/activediq/internal/directory/client"
+	"github.com/skenzeriq/activediq/internal/directory/objectdef"
 	"github.com/skenzeriq/activediq/internal/directory/writechange"
-	"github.com/skenzeriq/activediq/internal/modules/objects"
 	"github.com/skenzeriq/activediq/internal/platform/audit"
 	"github.com/skenzeriq/activediq/internal/platform/authority"
 	"github.com/skenzeriq/activediq/internal/platform/authz"
@@ -71,32 +71,6 @@ var createOnlyAttrs = []string{"sAMAccountName", "userPrincipalName"}
 
 const maxValueLen = 1024
 
-func allowedAttr(name string, create bool) bool {
-	for _, a := range profileAttrs {
-		if strings.EqualFold(a, name) {
-			return true
-		}
-	}
-	if create {
-		for _, a := range createOnlyAttrs {
-			if strings.EqualFold(a, name) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-// canonicalAttr returns the list spelling of an allowed attribute.
-func canonicalAttr(name string, create bool) (string, bool) {
-	for _, a := range append(slices.Clone(profileAttrs), createOnlyAttrs...) {
-		if strings.EqualFold(a, name) && allowedAttr(a, create) {
-			return a, true
-		}
-	}
-	return "", false
-}
-
 // TemplateRef pins the Template a create uses. Version 0 means the newest published version.
 type TemplateRef struct {
 	ID      string `json:"id"`
@@ -137,8 +111,12 @@ type RenameInput struct {
 	NewName string `json:"newName"`
 }
 
-// DeleteInput deletes a user.
-type DeleteInput struct{ Target }
+// DeleteInput deletes an object. Cascade asks for the subtree to go with an OU; no write kind does that
+// (connector contract §5.3a), so it is refused at Plan with cascade_not_supported rather than ignored.
+type DeleteInput struct {
+	Target
+	Cascade bool `json:"cascade,omitempty"`
+}
 
 // RestoreInput restores a deleted user. NewParentGuid and Name default to the last known parent and
 // RDN the directory kept.
@@ -171,32 +149,34 @@ type lifePayload struct {
 type LifecyclePorts struct {
 	Reader client.ObjectReader
 	Writer client.AccountWriter
-	// Definitions reads Templates and NamingFormats (OBJ4); nil reads the objects store.
+	// Definitions reads Templates and NamingFormats (OBJ4); nil refuses.
 	Definitions Definitions
 }
 
-// Definitions is the read half of the objects store a create consumes at Plan.
+// Definitions is the read half of the definition store a create consumes at Plan.
 type Definitions interface {
-	Template(ctx context.Context, tx store.Tx, ref TemplateRef) (objects.Stored[objects.Template], error)
-	NamingFormat(ctx context.Context, tx store.Tx, pin objects.Pin) (objects.Stored[objects.NamingFormat], error)
+	Template(ctx context.Context, tx store.Tx, ref TemplateRef) (objectdef.Stored[objectdef.Template], error)
+	NamingFormat(ctx context.Context, tx store.Tx, pin objectdef.Pin) (objectdef.Stored[objectdef.NamingFormat], error)
 }
 
-type storeDefs struct{}
+// errNoDefinitions is what a Plan that consumes a Template returns while no Definitions port is bound.
+var errNoDefinitions = errors.New("ad: no Template/NamingFormat definitions port is bound")
 
-func (storeDefs) Template(ctx context.Context, tx store.Tx, ref TemplateRef) (objects.Stored[objects.Template], error) {
-	if ref.Version == 0 {
-		return objects.Templates{}.Latest(ctx, tx, ref.ID)
-	}
-	return objects.Templates{}.Get(ctx, tx, ref.ID, ref.Version)
+// noDefs refuses every read. The production source is the objects module's store; modules cooperate
+// through kernel registries, not imports (blueprint §2.4), so it arrives through the port.
+type noDefs struct{}
+
+func (noDefs) Template(context.Context, store.Tx, TemplateRef) (objectdef.Stored[objectdef.Template], error) {
+	return objectdef.Stored[objectdef.Template]{}, errNoDefinitions
 }
 
-func (storeDefs) NamingFormat(ctx context.Context, tx store.Tx, pin objects.Pin) (objects.Stored[objects.NamingFormat], error) {
-	return objects.NamingFormats{}.Get(ctx, tx, pin.ID, pin.Version)
+func (noDefs) NamingFormat(context.Context, store.Tx, objectdef.Pin) (objectdef.Stored[objectdef.NamingFormat], error) {
+	return objectdef.Stored[objectdef.NamingFormat]{}, errNoDefinitions
 }
 
 func (p LifecyclePorts) defs() Definitions {
 	if p.Definitions == nil {
-		return storeDefs{}
+		return noDefs{}
 	}
 	return p.Definitions
 }
@@ -230,22 +210,40 @@ type lifePlan struct {
 	touched []authority.TargetRef
 }
 
-// LifecycleActions builds the six user lifecycle Actions.
+// LifecycleActions builds the lifecycle Actions of every class in lifecycleClasses: create, update,
+// delete, move, rename and restore for a user, group, computer, contact and OU. The user create is the
+// Template-driven one (T-1585); the other classes take plain attributes.
 func LifecycleActions(p LifecyclePorts) ([]operation.Action, error) {
 	var out []operation.Action
-	for _, f := range []func(LifecyclePorts) (operation.Action, error){
-		func(p LifecyclePorts) (operation.Action, error) { return buildLife(p, createSpec) },
-		func(p LifecyclePorts) (operation.Action, error) { return buildLife(p, updateSpec) },
-		func(p LifecyclePorts) (operation.Action, error) { return buildLife(p, deleteSpec) },
-		func(p LifecyclePorts) (operation.Action, error) { return buildLife(p, moveSpec) },
-		func(p LifecyclePorts) (operation.Action, error) { return buildLife(p, renameSpec) },
-		func(p LifecyclePorts) (operation.Action, error) { return buildLife(p, restoreSpec) },
-	} {
-		a, err := f(p)
+	add := func(a operation.Action, err error) error {
+		if err != nil {
+			return err
+		}
+		out = append(out, a)
+		return nil
+	}
+	for _, c := range lifecycleClasses {
+		var err error
+		if c.Seg == "user" {
+			err = add(buildLife(p, createSpec))
+		} else {
+			err = add(buildLife(p, createObjectSpec(c)))
+		}
+		for _, f := range []func() (operation.Action, error){
+			func() (operation.Action, error) { return buildLife(p, updateSpec(c)) },
+			func() (operation.Action, error) { return buildLife(p, deleteSpec(c)) },
+			func() (operation.Action, error) { return buildLife(p, moveSpec(c)) },
+			func() (operation.Action, error) { return buildLife(p, renameSpec(c)) },
+			func() (operation.Action, error) { return buildLife(p, restoreSpec(c)) },
+		} {
+			if err != nil {
+				return nil, err
+			}
+			err = add(f())
+		}
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, a)
 	}
 	return out, nil
 }
@@ -434,8 +432,9 @@ func (t Target) objTarget() authority.TargetRef {
 	return authority.TargetRef{Connection: t.ConnectionID, GUID: t.ObjectGUID, NC: authority.NamingContextID(t.NamingContext)}
 }
 
-// readUser reads the target live and refuses what no lifecycle Action may touch.
-func readUser(ctx context.Context, p LifecyclePorts, pc operation.PlanContext, t Target, attrs []string, deleted bool) (client.ObjectState, error) {
+// readObject reads the target live and refuses what no lifecycle Action may touch: a missing object, one
+// of another class, a Tier-0 object, or one whose deleted state is not the verb's.
+func readObject(ctx context.Context, c objClass, p LifecyclePorts, pc operation.PlanContext, t Target, attrs []string, deleted bool) (client.ObjectState, error) {
 	if err := t.validate(); err != nil {
 		return client.ObjectState{}, err
 	}
@@ -443,11 +442,16 @@ func readUser(ctx context.Context, p LifecyclePorts, pc operation.PlanContext, t
 	if err != nil {
 		return st, readError(err)
 	}
+	return checkObject(c, st, deleted)
+}
+
+// checkObject applies readObject's refusals to a state already read.
+func checkObject(c objClass, st client.ObjectState, deleted bool) (client.ObjectState, error) {
 	switch {
 	case !st.Exists:
 		return st, fmt.Errorf("%w: %s", operation.ErrInvalid, ReasonNotFound)
-	case st.Class != ClassUser:
-		return st, fmt.Errorf("%w: %s", operation.ErrInvalid, ReasonNotUser)
+	case !strings.EqualFold(st.Class, c.Live):
+		return st, fmt.Errorf("%w: %s", operation.ErrInvalid, c.notReason())
 	case st.Tier0:
 		return st, fmt.Errorf("%w: %s", operation.ErrDenied, ReasonTier0)
 	case st.Deleted != deleted:
@@ -526,9 +530,9 @@ func planCreate(ctx context.Context, p LifecyclePorts, pc operation.PlanContext,
 	if err := t.validate(); err != nil {
 		return nil, err
 	}
-	attrs := objects.Input{}
+	attrs := objectdef.Input{}
 	for k, v := range in.Attributes {
-		c, ok := canonicalAttr(k, true)
+		c, ok := userClass.canon(k, true)
 		if !ok {
 			if strings.EqualFold(k, "cn") {
 				attrs["cn"] = v
@@ -541,7 +545,7 @@ func planCreate(ctx context.Context, p LifecyclePorts, pc operation.PlanContext,
 		}
 		attrs[c] = v
 	}
-	var tpl *objects.Stored[objects.Template]
+	var tpl *objectdef.Stored[objectdef.Template]
 	if in.Template != nil {
 		var err error
 		if tpl, err = loadTemplate(ctx, p.defs(), pc, *in.Template, in.ParentGuid); err != nil {
@@ -555,9 +559,9 @@ func planCreate(ctx context.Context, p LifecyclePorts, pc operation.PlanContext,
 			return nil, err
 		}
 		// Template defaults and derived names get the same allowlist as technician input.
-		clean := objects.Input{}
+		clean := objectdef.Input{}
 		for k, v := range attrs {
-			c, ok := canonicalAttr(k, true)
+			c, ok := userClass.canon(k, true)
 			if !ok && strings.EqualFold(k, "cn") {
 				c, ok = "cn", true
 			}
@@ -612,22 +616,22 @@ func planCreate(ctx context.Context, p LifecyclePorts, pc operation.PlanContext,
 	}, nil
 }
 
-func loadTemplate(ctx context.Context, defs Definitions, pc operation.PlanContext, ref TemplateRef, parent string) (*objects.Stored[objects.Template], error) {
+func loadTemplate(ctx context.Context, defs Definitions, pc operation.PlanContext, ref TemplateRef, parent string) (*objectdef.Stored[objectdef.Template], error) {
 	if pc.Tx == nil {
 		return nil, fmt.Errorf("%w: %s", operation.ErrInvalid, ReasonTemplate)
 	}
 	tpl, err := defs.Template(ctx, pc.Tx, ref)
 	if err != nil {
-		if errors.Is(err, objects.ErrNotFound) {
+		if errors.Is(err, objectdef.ErrNotFound) {
 			return nil, fmt.Errorf("%w: %s: not found", operation.ErrInvalid, ReasonTemplate)
 		}
 		return nil, fmt.Errorf("%w: reading the template failed", operation.ErrTransient)
 	}
 	d := tpl.Def
 	switch {
-	case tpl.State != objects.StatePublished:
+	case tpl.State != objectdef.StatePublished:
 		return nil, fmt.Errorf("%w: %s: the version is not published", operation.ErrInvalid, ReasonTemplate)
-	case d.Kind != objects.KindUser || d.Purpose != objects.PurposeCreate || d.Provider == objects.ProviderEntra:
+	case d.Kind != objectdef.KindUser || d.Purpose != objectdef.PurposeCreate || d.Provider == objectdef.ProviderEntra:
 		return nil, fmt.Errorf("%w: %s: not a user create template for AD", operation.ErrInvalid, ReasonTemplate)
 	case !d.ContainerAllowed(parent):
 		return nil, fmt.Errorf("%w: %s: the container is not allowed by the template", operation.ErrInvalid, ReasonTemplate)
@@ -635,14 +639,14 @@ func loadTemplate(ctx context.Context, defs Definitions, pc operation.PlanContex
 	return &tpl, nil
 }
 
-func templateViolation(v *objects.ViolationError) error {
+func templateViolation(v *objectdef.ViolationError) error {
 	return fmt.Errorf("%w: %s: %s", operation.ErrInvalid, ReasonTemplate, v.Error())
 }
 
 // deriveNames renders the Template's pinned naming formats into attrs. A format that cannot render
 // blocks the plan and names the field.
-func deriveNames(ctx context.Context, defs Definitions, pc operation.PlanContext, d objects.Template, attrs objects.Input, upnSuffix string) error {
-	for _, purpose := range objects.Purposes() {
+func deriveNames(ctx context.Context, defs Definitions, pc operation.PlanContext, d objectdef.Template, attrs objectdef.Input, upnSuffix string) error {
+	for _, purpose := range objectdef.Purposes() {
 		pin, ok := d.NamingFormats[purpose]
 		if !ok {
 			continue
@@ -651,22 +655,22 @@ func deriveNames(ctx context.Context, defs Definitions, pc operation.PlanContext
 		if err != nil {
 			return fmt.Errorf("%w: %s: naming format %s not readable", operation.ErrInvalid, ReasonTemplate, purpose)
 		}
-		name, err := f.Def.Render(attrs, objects.DefaultLimits)
+		name, err := f.Def.Render(attrs, objectdef.DefaultLimits)
 		if err != nil {
-			var v *objects.ViolationError
+			var v *objectdef.ViolationError
 			if errors.As(err, &v) {
 				return templateViolation(v)
 			}
 			return fmt.Errorf("%w: %s: %s", operation.ErrInvalid, ReasonTemplate, purpose)
 		}
 		switch purpose {
-		case objects.PurposeSAMAccountName:
+		case objectdef.PurposeSAMAccountName:
 			attrs["sAMAccountName"] = name
-		case objects.PurposeCN:
+		case objectdef.PurposeCN:
 			attrs["cn"] = name
-		case objects.PurposeDisplayName:
+		case objectdef.PurposeDisplayName:
 			attrs["displayName"] = name
-		case objects.PurposeUPNPrefix:
+		case objectdef.PurposeUPNPrefix:
 			if upnSuffix == "" || strings.ContainsAny(upnSuffix, "@ \\") {
 				return fmt.Errorf("%w: %s: upnSuffix is required by the template's UPN format", operation.ErrInvalid, ReasonTemplate)
 			}
@@ -687,250 +691,322 @@ func sortedKeys(m map[string]string) []string {
 
 // ---- update ----
 
-var updateSpec = lifeSpec[UpdateInput]{
-	id: UpdateID, perm: PermUpdate, schema: "#/components/schemas/AdUserUpdate", audit: AuditUpdated,
-	reversibility: operation.Reversible,
-	plan:          planUpdate,
-	satisfied:     func(lifePayload, client.ObjectState) bool { return true }, // refined by updateVerify below
-	before:        func(lifePayload, client.ObjectState) bool { return false },
+func updateSpec(c objClass) lifeSpec[UpdateInput] {
+	return lifeSpec[UpdateInput]{
+		id: c.id("update"), perm: c.perm("update"), schema: c.schema("Update"), audit: c.audit("updated"),
+		reversibility: operation.Reversible,
+		plan:          planUpdate(c),
+		satisfied:     func(lifePayload, client.ObjectState) bool { return true }, // refined by updateVerify below
+		before:        func(lifePayload, client.ObjectState) bool { return false },
+	}
 }
 
-func planUpdate(ctx context.Context, p LifecyclePorts, pc operation.PlanContext, in UpdateInput) (*lifePlan, error) {
-	if len(in.Set)+len(in.Clear) == 0 {
-		return nil, fmt.Errorf("%w: nothing to change", operation.ErrInvalid)
-	}
-	var edits []writechange.Edit
-	var names []string
-	seen := map[string]bool{}
-	for _, k := range sortedKeys(in.Set) {
-		c, ok := canonicalAttr(k, false)
-		if !ok || !allowedAttr(c, false) || seen[c] || !validValue(in.Set[k]) || in.Set[k] == "" {
-			return nil, fmt.Errorf("%w: %s: %s", operation.ErrInvalid, ReasonAttributeDenied, k)
+func planUpdate(c objClass) planFn[UpdateInput] {
+	return func(ctx context.Context, p LifecyclePorts, pc operation.PlanContext, in UpdateInput) (*lifePlan, error) {
+		if len(in.Set)+len(in.Clear) == 0 {
+			return nil, fmt.Errorf("%w: nothing to change", operation.ErrInvalid)
 		}
-		seen[c] = true
-		names = append(names, c)
-		edits = append(edits, writechange.Edit{Op: "set", Attribute: c, Values: []string{in.Set[k]}})
-	}
-	for _, k := range in.Clear {
-		c, ok := canonicalAttr(k, false)
-		if !ok || !allowedAttr(c, false) || seen[c] {
-			return nil, fmt.Errorf("%w: %s: %s", operation.ErrInvalid, ReasonAttributeDenied, k)
+		var edits []writechange.Edit
+		var names []string
+		seen := map[string]bool{}
+		for _, k := range sortedKeys(in.Set) {
+			a, ok := c.canon(k, false)
+			if !ok || seen[a] || !validValue(in.Set[k]) || in.Set[k] == "" {
+				return nil, fmt.Errorf("%w: %s: %s", operation.ErrInvalid, ReasonAttributeDenied, k)
+			}
+			seen[a] = true
+			names = append(names, a)
+			edits = append(edits, writechange.Edit{Op: "set", Attribute: a, Values: []string{in.Set[k]}})
 		}
-		seen[c] = true
-		names = append(names, c)
-		edits = append(edits, writechange.Edit{Op: "clear", Attribute: c})
-	}
-	st, err := readUser(ctx, p, pc, in.Target, names, false)
-	if err != nil {
-		return nil, err
-	}
-	// Only attributes whose value really changes are planned: an update that changes nothing is no step.
-	var real []writechange.Edit
-	before := map[string][]string{}
-	var keys []string
-	for _, e := range edits {
-		cur := st.Attrs[e.Attribute]
-		if e.Op == "set" && slices.Equal(cur, e.Values) || e.Op == "clear" && len(cur) == 0 {
-			continue
+		for _, k := range in.Clear {
+			a, ok := c.canon(k, false)
+			if !ok || seen[a] {
+				return nil, fmt.Errorf("%w: %s: %s", operation.ErrInvalid, ReasonAttributeDenied, k)
+			}
+			seen[a] = true
+			names = append(names, a)
+			edits = append(edits, writechange.Edit{Op: "clear", Attribute: a})
 		}
-		real = append(real, e)
-		keys = append(keys, e.Attribute)
-		before[e.Op+":"+e.Attribute] = cur
+		st, err := readObject(ctx, c, p, pc, in.Target, names, false)
+		if err != nil {
+			return nil, err
+		}
+		// Only attributes whose value really changes are planned: an update that changes nothing is no step.
+		var real []writechange.Edit
+		before := map[string][]string{}
+		var keys []string
+		for _, e := range edits {
+			cur := st.Attrs[e.Attribute]
+			if e.Op == "set" && slices.Equal(cur, e.Values) || e.Op == "clear" && len(cur) == 0 {
+				continue
+			}
+			real = append(real, e)
+			keys = append(keys, e.Attribute)
+			before[e.Op+":"+e.Attribute] = cur
+		}
+		if len(real) == 0 {
+			return nil, nil
+		}
+		wa, err := writechange.UpdateAttrs(real)
+		if err != nil {
+			return nil, fmt.Errorf("%w: the update does not encode", operation.ErrInvalid)
+		}
+		return &lifePlan{
+			sp: operation.StepPlan{
+				Target: in.Target.objTarget(), Kind: writechange.KeyObjectUpdate, Diff: diffOfAttrs(wa, before),
+				Reversibility:       operation.Reversible,
+				ReversibilityReason: "the previous values are recorded in the diff; setting them again undoes the update",
+			},
+			pl: lifePayload{Target: in.Target, Keys: keys},
+		}, nil
 	}
-	if len(real) == 0 {
-		return nil, nil
-	}
-	wa, err := writechange.UpdateAttrs(real)
-	if err != nil {
-		return nil, fmt.Errorf("%w: the update does not encode", operation.ErrInvalid)
-	}
-	return &lifePlan{
-		sp: operation.StepPlan{
-			Target: in.Target.objTarget(), Kind: writechange.KeyObjectUpdate, Diff: diffOfAttrs(wa, before),
-			Reversibility:       operation.Reversible,
-			ReversibilityReason: "the previous values are recorded in the diff; setting them again undoes the update",
-		},
-		pl: lifePayload{Target: in.Target, Keys: keys},
-	}, nil
 }
+
+// planFn is one verb's Plan, closed over its class.
+type planFn[In any] func(ctx context.Context, p LifecyclePorts, pc operation.PlanContext, in In) (*lifePlan, error)
 
 // ---- delete ----
 
-var deleteSpec = lifeSpec[DeleteInput]{
-	id: DeleteID, perm: PermDelete, schema: "#/components/schemas/AdUserAccount", audit: AuditDeleted,
-	reversibility: operation.Irreversible, gone: true,
-	plan:      planDelete,
-	satisfied: func(lifePayload, client.ObjectState) bool { return false },
-	before:    func(lifePayload, client.ObjectState) bool { return true },
+func deleteSpec(c objClass) lifeSpec[DeleteInput] {
+	schema := c.schema("Delete")
+	if c.Seg == "user" {
+		schema = "#/components/schemas/AdUserAccount"
+	}
+	return lifeSpec[DeleteInput]{
+		id: c.id("delete"), perm: c.perm("delete"), schema: schema, audit: c.audit("deleted"),
+		reversibility: operation.Irreversible, gone: true,
+		plan:      planDelete(c),
+		satisfied: func(lifePayload, client.ObjectState) bool { return false },
+		before:    func(lifePayload, client.ObjectState) bool { return true },
+	}
 }
 
-func planDelete(ctx context.Context, p LifecyclePorts, pc operation.PlanContext, in DeleteInput) (*lifePlan, error) {
-	st, err := readUser(ctx, p, pc, in.Target, []string{"memberOf"}, false)
-	if err != nil {
-		return nil, err
+func planDelete(c objClass) planFn[DeleteInput] {
+	return func(ctx context.Context, p LifecyclePorts, pc operation.PlanContext, in DeleteInput) (*lifePlan, error) {
+		var st client.ObjectState
+		var err error
+		if c.container {
+			// Contract §5.3a: the OU delete preview reads the child count; a delete is leaf-only (§8.10.3 kind 3).
+			if err = in.Target.validate(); err != nil {
+				return nil, err
+			}
+			if st, err = p.Reader.ObjectWithChildCount(ctx, pc.Pins, in.Target.objTarget()); err != nil {
+				return nil, readError(err)
+			}
+			if st, err = checkObject(c, st, false); err != nil {
+				return nil, err
+			}
+			if in.Cascade {
+				// No kind deletes a subtree (every descendant would be a touched object, §5.3a): an explicit
+				// cascade is refused, never quietly ignored.
+				return nil, &operation.PlanRefusal{Code: "cascade_not_supported", Target: in.Target.objTarget()}
+			}
+			if cc := st.ChildCount; cc == nil {
+				return nil, fmt.Errorf("%w: the directory gave no child count", operation.ErrTransient)
+			} else if cc.Count > 0 {
+				return nil, &operation.PlanRefusal{Code: childrenReason(cc), Target: in.Target.objTarget()}
+			}
+		} else {
+			if st, err = readObject(ctx, c, p, pc, in.Target, []string{"memberOf"}, false); err != nil {
+				return nil, err
+			}
+		}
+		bin, err := p.Reader.RecycleBin(ctx, pc.Pins, authority.NamingContextID(in.NamingContext))
+		if err != nil {
+			return nil, readError(err)
+		}
+		groups := len(st.Attrs["memberOf"])
+		sp := operation.StepPlan{Target: in.Target.objTarget(), Kind: writechange.KeyObjectDelete}
+		if bin {
+			sp.Reversibility = operation.Lossy
+			sp.ReversibilityReason = "the AD Recycle Bin keeps the object until its deleted-object lifetime ends; restore is Lossy (see " + string(c.id("restore")) + ")"
+			sp.Preconditions = []string{"the AD Recycle Bin is enabled: the object moves to Deleted Objects and can be restored until its lifetime ends"}
+		} else {
+			sp.Reversibility = operation.Irreversible
+			sp.ReversibilityReason = "the AD Recycle Bin is not enabled: the object becomes a tombstone, its link values and most attributes are gone, and this product does not restore it"
+			sp.Preconditions = []string{"the AD Recycle Bin is not enabled: the delete cannot be undone"}
+		}
+		if groups > 0 {
+			sp.Preconditions = append(sp.Preconditions, fmt.Sprintf("the %s is a member of %d group(s); the memberships end with the delete", c.Noun, groups))
+		}
+		if c.container {
+			sp.Preconditions = append(sp.Preconditions, "the organizational unit has no children that this identity can read; the directory still refuses the delete if it has any")
+		}
+		return &lifePlan{sp: sp, pl: lifePayload{Target: in.Target}}, nil
 	}
-	bin, err := p.Reader.RecycleBin(ctx, pc.Pins, authority.NamingContextID(in.NamingContext))
-	if err != nil {
-		return nil, readError(err)
+}
+
+// childrenReason is the refusal code of an OU delete that has children. It names the count, so the
+// technician sees how much is inside ("ou_not_empty_3"; a capped count reads "ou_not_empty_1000_or_more").
+func childrenReason(cc *client.ChildCount) string {
+	if cc.Capped {
+		return fmt.Sprintf("ou_not_empty_%d_or_more", cc.Count)
 	}
-	groups := len(st.Attrs["memberOf"])
-	sp := operation.StepPlan{Target: in.Target.objTarget(), Kind: writechange.KeyObjectDelete}
-	if bin {
-		sp.Reversibility = operation.Lossy
-		sp.ReversibilityReason = "the AD Recycle Bin keeps the object until its deleted-object lifetime ends; restore is Lossy (see ad.user.restore)"
-		sp.Preconditions = []string{"the AD Recycle Bin is enabled: the object moves to Deleted Objects and can be restored until its lifetime ends"}
-	} else {
-		sp.Reversibility = operation.Irreversible
-		sp.ReversibilityReason = "the AD Recycle Bin is not enabled: the object becomes a tombstone, its link values and most attributes are gone, and this product does not restore it"
-		sp.Preconditions = []string{"the AD Recycle Bin is not enabled: the delete cannot be undone"}
-	}
-	if groups > 0 {
-		sp.Preconditions = append(sp.Preconditions, fmt.Sprintf("the account is a member of %d group(s); the memberships end with the delete", groups))
-	}
-	return &lifePlan{sp: sp, pl: lifePayload{Target: in.Target}}, nil
+	return fmt.Sprintf("ou_not_empty_%d", cc.Count)
 }
 
 // ---- move ----
 
-var moveSpec = lifeSpec[MoveInput]{
-	id: MoveID, perm: PermMove, schema: "#/components/schemas/AdUserMove", audit: AuditMoved,
-	reversibility: operation.Reversible,
-	plan:          planMove,
-	satisfied:     func(pl lifePayload, st client.ObjectState) bool { return st.Parent == pl.Parent },
-	before:        func(pl lifePayload, st client.ObjectState) bool { return st.Parent == pl.OldParent },
-	inverse: func(pl lifePayload, _ LifeOutcome) (MoveInput, error) {
-		return MoveInput{Target: pl.Target, NewParentGuid: pl.OldParent}, nil
-	},
+func moveSpec(c objClass) lifeSpec[MoveInput] {
+	return lifeSpec[MoveInput]{
+		id: c.id("move"), perm: c.perm("move"), schema: c.schema("Move"), audit: c.audit("moved"),
+		reversibility: operation.Reversible,
+		plan:          planMove(c),
+		satisfied:     func(pl lifePayload, st client.ObjectState) bool { return st.Parent == pl.Parent },
+		before:        func(pl lifePayload, st client.ObjectState) bool { return st.Parent == pl.OldParent },
+		inverse: func(pl lifePayload, _ LifeOutcome) (MoveInput, error) {
+			return MoveInput{Target: pl.Target, NewParentGuid: pl.OldParent}, nil
+		},
+	}
 }
 
-func planMove(ctx context.Context, p LifecyclePorts, pc operation.PlanContext, in MoveInput) (*lifePlan, error) {
-	st, err := readUser(ctx, p, pc, in.Target, nil, false)
-	if err != nil {
-		return nil, err
-	}
-	if err := readParent(ctx, p, pc, in.ConnectionID, in.NewParentGuid, authority.NamingContextID(in.NamingContext)); err != nil {
-		return nil, err
-	}
-	if st.Parent == in.NewParentGuid {
-		return nil, nil
-	}
-	attrs := []step.Attr{
-		{Name: client.AttrNewParent, Values: []string{in.NewParentGuid}},
-		{Name: client.AttrNewParentNC, Values: []string{in.NamingContext}},
-	}
-	return &lifePlan{
-		sp: operation.StepPlan{
-			Target: in.Target.objTarget(), Kind: client.DigestObjectMove,
-			Diff: diffOfAttrs(attrs, map[string][]string{client.AttrNewParent: {st.Parent}, client.AttrNewParentNC: {in.NamingContext}}),
-			Preconditions: []string{
-				"source and destination container are re-checked live against the actor's scope immediately before the write",
-				"a move can change which GPOs and delegated permissions apply to the account",
+func planMove(c objClass) planFn[MoveInput] {
+	return func(ctx context.Context, p LifecyclePorts, pc operation.PlanContext, in MoveInput) (*lifePlan, error) {
+		st, err := readObject(ctx, c, p, pc, in.Target, nil, false)
+		if err != nil {
+			return nil, err
+		}
+		if err := readParent(ctx, p, pc, in.ConnectionID, in.NewParentGuid, authority.NamingContextID(in.NamingContext)); err != nil {
+			return nil, err
+		}
+		if st.Parent == in.NewParentGuid {
+			return nil, nil
+		}
+		attrs := []step.Attr{
+			{Name: client.AttrNewParent, Values: []string{in.NewParentGuid}},
+			{Name: client.AttrNewParentNC, Values: []string{in.NamingContext}},
+		}
+		return &lifePlan{
+			sp: operation.StepPlan{
+				Target: in.Target.objTarget(), Kind: client.DigestObjectMove,
+				Diff: diffOfAttrs(attrs, map[string][]string{client.AttrNewParent: {st.Parent}, client.AttrNewParentNC: {in.NamingContext}}),
+				Preconditions: []string{
+					"source and destination container are re-checked live against the actor's scope immediately before the write",
+					"a move can change which GPOs and delegated permissions apply to the " + c.Noun,
+				},
+				Reversibility:       operation.Reversible,
+				ReversibilityReason: "moving the " + c.Noun + " back to its previous container undoes the move",
 			},
-			Reversibility:       operation.Reversible,
-			ReversibilityReason: "moving the account back to its previous container undoes the move",
-		},
-		pl: lifePayload{Target: in.Target, Parent: in.NewParentGuid, OldParent: st.Parent},
-	}, nil
+			pl: lifePayload{Target: in.Target, Parent: in.NewParentGuid, OldParent: st.Parent},
+		}, nil
+	}
 }
 
 // ---- rename ----
 
-var renameSpec = lifeSpec[RenameInput]{
-	id: RenameID, perm: PermMove, schema: "#/components/schemas/AdUserRename", audit: AuditRenamed,
-	reversibility: operation.Reversible,
-	plan:          planRename,
-	satisfied:     func(pl lifePayload, st client.ObjectState) bool { return strings.EqualFold(st.RDN, pl.RDN) },
-	before:        func(pl lifePayload, st client.ObjectState) bool { return strings.EqualFold(st.RDN, pl.OldRDN) },
-	inverse: func(pl lifePayload, _ LifeOutcome) (RenameInput, error) {
-		return RenameInput{Target: pl.Target, NewName: pl.OldRDN}, nil
-	},
+func renameSpec(c objClass) lifeSpec[RenameInput] {
+	return lifeSpec[RenameInput]{
+		id: c.id("rename"), perm: c.perm("move"), schema: c.schema("Rename"), audit: c.audit("renamed"),
+		reversibility: operation.Reversible,
+		plan:          planRename(c),
+		satisfied:     func(pl lifePayload, st client.ObjectState) bool { return strings.EqualFold(st.RDN, pl.RDN) },
+		before:        func(pl lifePayload, st client.ObjectState) bool { return strings.EqualFold(st.RDN, pl.OldRDN) },
+		inverse: func(pl lifePayload, _ LifeOutcome) (RenameInput, error) {
+			return RenameInput{Target: pl.Target, NewName: pl.OldRDN}, nil
+		},
+	}
 }
 
-func planRename(ctx context.Context, p LifecyclePorts, pc operation.PlanContext, in RenameInput) (*lifePlan, error) {
-	if err := validName(in.NewName); err != nil {
-		return nil, err
+func planRename(c objClass) planFn[RenameInput] {
+	return func(ctx context.Context, p LifecyclePorts, pc operation.PlanContext, in RenameInput) (*lifePlan, error) {
+		if err := validName(in.NewName); err != nil {
+			return nil, err
+		}
+		st, err := readObject(ctx, c, p, pc, in.Target, nil, false)
+		if err != nil {
+			return nil, err
+		}
+		if st.RDN == in.NewName {
+			return nil, nil
+		}
+		attrs := []step.Attr{{Name: client.AttrNewRDN, Values: []string{in.NewName}}}
+		pre := "the name changes; sAMAccountName does not"
+		switch c.Seg {
+		case "user":
+			pre = "the common name changes; sAMAccountName and userPrincipalName do not"
+		case "ou":
+			pre = "the OU name changes; the distinguished name of every object inside it changes with it"
+		case "contact":
+			pre = "the common name changes"
+		}
+		return &lifePlan{
+			sp: operation.StepPlan{
+				Target: in.Target.objTarget(), Kind: client.DigestObjectRename,
+				Diff:                diffOfAttrs(attrs, map[string][]string{client.AttrNewRDN: {st.RDN}}),
+				Preconditions:       []string{pre},
+				Reversibility:       operation.Reversible,
+				ReversibilityReason: "renaming the " + c.Noun + " back to its previous name undoes the rename",
+			},
+			pl: lifePayload{Target: in.Target, RDN: in.NewName, OldRDN: st.RDN},
+		}, nil
 	}
-	st, err := readUser(ctx, p, pc, in.Target, nil, false)
-	if err != nil {
-		return nil, err
-	}
-	if st.RDN == in.NewName {
-		return nil, nil
-	}
-	attrs := []step.Attr{{Name: client.AttrNewRDN, Values: []string{in.NewName}}}
-	return &lifePlan{
-		sp: operation.StepPlan{
-			Target: in.Target.objTarget(), Kind: client.DigestObjectRename,
-			Diff:                diffOfAttrs(attrs, map[string][]string{client.AttrNewRDN: {st.RDN}}),
-			Preconditions:       []string{"the common name changes; sAMAccountName and userPrincipalName do not"},
-			Reversibility:       operation.Reversible,
-			ReversibilityReason: "renaming the account back to its previous name undoes the rename",
-		},
-		pl: lifePayload{Target: in.Target, RDN: in.NewName, OldRDN: st.RDN},
-	}, nil
 }
 
 // ---- restore ----
 
-var restoreSpec = lifeSpec[RestoreInput]{
-	id: RestoreID, perm: PermRestore, schema: "#/components/schemas/AdUserRestore", audit: AuditRestored,
-	reversibility: operation.Lossy, showDeleted: true,
-	plan:      planRestore,
-	satisfied: func(pl lifePayload, st client.ObjectState) bool { return !st.Deleted && st.Parent == pl.Parent },
-	before:    func(_ lifePayload, st client.ObjectState) bool { return st.Deleted },
+func restoreSpec(c objClass) lifeSpec[RestoreInput] {
+	return lifeSpec[RestoreInput]{
+		id: c.id("restore"), perm: c.perm("restore"), schema: c.schema("Restore"), audit: c.audit("restored"),
+		reversibility: operation.Lossy, showDeleted: true,
+		plan:      planRestore(c),
+		satisfied: func(pl lifePayload, st client.ObjectState) bool { return !st.Deleted && st.Parent == pl.Parent },
+		before:    func(_ lifePayload, st client.ObjectState) bool { return st.Deleted },
+	}
 }
 
-func planRestore(ctx context.Context, p LifecyclePorts, pc operation.PlanContext, in RestoreInput) (*lifePlan, error) {
-	bin, err := p.Reader.RecycleBin(ctx, pc.Pins, authority.NamingContextID(in.NamingContext))
-	if err != nil {
-		return nil, readError(err)
+func planRestore(c objClass) planFn[RestoreInput] {
+	return func(ctx context.Context, p LifecyclePorts, pc operation.PlanContext, in RestoreInput) (*lifePlan, error) {
+		bin, err := p.Reader.RecycleBin(ctx, pc.Pins, authority.NamingContextID(in.NamingContext))
+		if err != nil {
+			return nil, readError(err)
+		}
+		if !bin {
+			return nil, fmt.Errorf("%w: %s", operation.ErrInvalid, ReasonNoRecycleBin)
+		}
+		st, err := readObject(ctx, c, p, pc, in.Target, nil, true)
+		if err != nil {
+			return nil, err
+		}
+		parent, name := in.NewParentGuid, in.Name
+		if parent == "" {
+			parent = st.LastKnownParent
+		}
+		if name == "" {
+			name = st.LastKnownRDN
+		}
+		if parent == "" || name == "" {
+			return nil, fmt.Errorf("%w: the directory kept no last known parent or name; give newParentGuid and name", operation.ErrInvalid)
+		}
+		if err := validName(name); err != nil {
+			return nil, err
+		}
+		if err := readParent(ctx, p, pc, in.ConnectionID, parent, authority.NamingContextID(in.NamingContext)); err != nil {
+			return nil, err
+		}
+		attrs := []step.Attr{
+			{Name: client.AttrNewParent, Values: []string{parent}},
+			{Name: client.AttrNewParentNC, Values: []string{in.NamingContext}},
+			{Name: client.AttrRDN, Values: []string{name}},
+		}
+		pre, reason, class := lossNotes(c, st.Links)
+		return &lifePlan{
+			sp: operation.StepPlan{
+				Target: in.Target.objTarget(), Kind: client.DigestObjectRestore,
+				Diff:                diffOfAttrs(attrs, nil),
+				Preconditions:       pre,
+				Reversibility:       class,
+				ReversibilityReason: reason,
+			},
+			pl: lifePayload{Target: in.Target, Parent: parent, RDN: name},
+		}, nil
 	}
-	if !bin {
-		return nil, fmt.Errorf("%w: %s", operation.ErrInvalid, ReasonNoRecycleBin)
-	}
-	st, err := readUser(ctx, p, pc, in.Target, nil, true)
-	if err != nil {
-		return nil, err
-	}
-	parent, name := in.NewParentGuid, in.Name
-	if parent == "" {
-		parent = st.LastKnownParent
-	}
-	if name == "" {
-		name = st.LastKnownRDN
-	}
-	if parent == "" || name == "" {
-		return nil, fmt.Errorf("%w: the directory kept no last known parent or name; give newParentGuid and name", operation.ErrInvalid)
-	}
-	if err := validName(name); err != nil {
-		return nil, err
-	}
-	if err := readParent(ctx, p, pc, in.ConnectionID, parent, authority.NamingContextID(in.NamingContext)); err != nil {
-		return nil, err
-	}
-	attrs := []step.Attr{
-		{Name: client.AttrNewParent, Values: []string{parent}},
-		{Name: client.AttrNewParentNC, Values: []string{in.NamingContext}},
-		{Name: client.AttrRDN, Values: []string{name}},
-	}
-	pre, reason, class := lossNotes(st.Links)
-	return &lifePlan{
-		sp: operation.StepPlan{
-			Target: in.Target.objTarget(), Kind: client.DigestObjectRestore,
-			Diff:                diffOfAttrs(attrs, nil),
-			Preconditions:       pre,
-			Reversibility:       class,
-			ReversibilityReason: reason,
-		},
-		pl: lifePayload{Target: in.Target, Parent: parent, RDN: name},
-	}, nil
 }
 
 // lossNotes lists what a restore re-grants and what stays dormant. The class is Lossy exactly when a
 // retained link value cannot return now (its other end is still deleted); with the Recycle Bin on
 // every other retained link is re-granted (connector contract §8.10.3 kind 6, ad-expert T-1585).
-func lossNotes(links []client.LinkValue) ([]string, string, operation.Reversibility) {
-	pre := []string{"restores the deleted account into the planned container under the planned name"}
+func lossNotes(c objClass, links []client.LinkValue) ([]string, string, operation.Reversibility) {
+	pre := []string{"restores the deleted " + c.Noun + " into the planned container under the planned name"}
 	dormant := 0
 	for _, l := range links {
 		if l.Dormant {
