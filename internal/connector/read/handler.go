@@ -12,14 +12,11 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/skenzeriq/activediq/internal/connector/ad"
+	"github.com/skenzeriq/activediq/internal/connector/wirevalue"
 	"github.com/skenzeriq/activediq/internal/connector/write"
-	"github.com/skenzeriq/activediq/internal/directory/attr/codec"
-	"github.com/skenzeriq/activediq/internal/directory/attr/filetime"
-	"github.com/skenzeriq/activediq/internal/directory/attr/gentime"
 	"github.com/skenzeriq/activediq/internal/directory/attr/guid"
-	"github.com/skenzeriq/activediq/internal/directory/attr/sid"
-	"github.com/skenzeriq/activediq/internal/directory/dn"
 	"github.com/skenzeriq/activediq/internal/directory/ldapfilter"
+	"github.com/skenzeriq/activediq/internal/directory/sd"
 	connectorv1 "github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1"
 )
 
@@ -28,6 +25,8 @@ const (
 	rangeWindow = 1500
 	// maxAttributes bounds one request (the contract asks for explicit names; this is a sanity cap).
 	maxAttributes = 64
+	// childCountCap is the most children Read counts (§5.3a): a huge OU costs a bounded read.
+	childCountCap = 1000
 )
 
 // Source is what the handler needs from one AD directory binding. Every method works on the one
@@ -54,9 +53,10 @@ type Source interface {
 
 // Handler serves Read.
 type Handler struct {
-	src Source
-	now func() time.Time
-	log *slog.Logger
+	src  Source
+	now  func() time.Time
+	log  *slog.Logger
+	feed feedLimits
 }
 
 // Option configures a Handler.
@@ -70,7 +70,7 @@ func New(src Source, opts ...Option) (*Handler, error) {
 	if src == nil {
 		return nil, errors.New("read: a source is required")
 	}
-	h := &Handler{src: src, now: time.Now, log: slog.Default()}
+	h := &Handler{src: src, now: time.Now, log: slog.Default(), feed: feedLimits{maxPages: defaultFeedPages, deadline: defaultFeedDeadline}}
 	for _, o := range opts {
 		o(h)
 	}
@@ -131,7 +131,18 @@ func (h *Handler) Read(ctx context.Context, req *connectorv1.ReadRequest, out Se
 	if err != nil {
 		return err
 	}
-	e, err := h.src.Read(ctx, id, withInstanceType(attrs), int(req.GetMaxValuesPerAttribute()))
+	var counter ChildCounter
+	if req.GetIncludeChildCount() {
+		var ok bool
+		if counter, ok = h.src.(ChildCounter); !ok {
+			return refuse(connectorv1.ErrorCode_ERROR_CODE_CAPABILITY_UNSUPPORTED, connectorv1.RetryAdvice_RETRY_ADVICE_NEVER, "child count not supported")
+		}
+	}
+	wire := withInstanceType(attrs)
+	if counter != nil {
+		wire = withAttr(wire, "objectClass") // the class gate below; build drops it unless asked
+	}
+	e, err := h.src.Read(ctx, id, wire, int(req.GetMaxValuesPerAttribute()))
 	if err != nil {
 		return mapAD(err, before)
 	}
@@ -148,6 +159,17 @@ func (h *Handler) Read(ctx context.Context, req *connectorv1.ReadRequest, out Se
 	} else if ok {
 		parent = write.GUIDToWire(pg)
 	}
+	var count *connectorv1.ChildCount
+	if counter != nil {
+		if !containerClass(e) {
+			return classNotAllowed()
+		}
+		n, capped, err := counter.CountChildren(ctx, id, childCountCap)
+		if err != nil {
+			return mapAD(err, before)
+		}
+		count = &connectorv1.ChildCount{Count: n, Capped: capped}
+	}
 	var verdict *connectorv1.Tier0Verdict
 	if req.GetIncludeTier0() {
 		v, err := h.src.Classify(ctx, id)
@@ -159,6 +181,10 @@ func (h *Handler) Read(ctx context.Context, req *connectorv1.ReadRequest, out Se
 		if !v.Tier0 {
 			verdict.Basis = nil
 		}
+	}
+	var pcv *connectorv1.PasswordChangeVerdict
+	if req.GetIncludePasswordChange() {
+		pcv = h.passwordChange(ctx, id)
 	}
 	// The DC after the read and the classification must be the DC before them (and the pin).
 	after, err := h.bound(ctx, pin)
@@ -175,7 +201,7 @@ func (h *Handler) Read(ctx context.Context, req *connectorv1.ReadRequest, out Se
 	}
 	obs := &connectorv1.Observation{Dc: after, ReceivedAt: timestamppb.New(h.now())}
 	if err := out.Send(&connectorv1.ReadResponse{Event: &connectorv1.ReadResponse_Header{
-		Header: &connectorv1.ReadHeader{Entry: entry, Observed: obs, Tier0: verdict}}}); err != nil {
+		Header: &connectorv1.ReadHeader{Entry: entry, Observed: obs, Tier0: verdict, ChildCount: count, PasswordChange: pcv}}}); err != nil {
 		return err
 	}
 	for _, c := range tails {
@@ -201,14 +227,27 @@ func (h *Handler) bound(ctx context.Context, pin *connectorv1.Guid) (*connectorv
 
 // withInstanceType adds instanceType to the requested names: the parent decision needs it, and
 // build drops it again unless the caller asked for it.
-func withInstanceType(attrs []string) []string {
+func withInstanceType(attrs []string) []string { return withAttr(attrs, "instanceType") }
+
+func withAttr(attrs []string, name string) []string {
 	out := append([]string(nil), attrs...)
 	for _, a := range out {
-		if strings.EqualFold(a, "instanceType") {
+		if strings.EqualFold(a, name) {
 			return out
 		}
 	}
-	return append(out, "instanceType")
+	return append(out, name)
+}
+
+// containerClass reports whether the object's most specific class (the last objectClass value) is
+// one whose children Read may count: organizationalUnit or container (§5.3a).
+func containerClass(e *ad.Entry) bool {
+	vals := e.Strings("objectClass")
+	if len(vals) == 0 {
+		return false
+	}
+	c := vals[len(vals)-1]
+	return strings.EqualFold(c, "organizationalUnit") || strings.EqualFold(c, "container")
 }
 
 func sortedBasis(in []connectorv1.Tier0Basis) []connectorv1.Tier0Basis {
@@ -299,76 +338,42 @@ func (h *Handler) build(e *ad.Entry, id guid.GUID, parent *connectorv1.Guid, ask
 	return out, tails, nil
 }
 
-// value decodes one raw value by the attribute's schema syntax. An unknown syntax stays octets.
+// value decodes one raw value by the attribute's schema syntax (wirevalue.Of).
 func (h *Handler) value(name string, raw []byte) (*connectorv1.AttributeValue, error) {
 	syn, _ := h.src.Syntax(name)
-	switch syn {
-	case ldapfilter.SynString:
-		return &connectorv1.AttributeValue{Value: &connectorv1.AttributeValue_Text{Text: string(raw)}}, nil
-	case ldapfilter.SynDN:
-		lv, err := dn.ParseLinkValue(string(raw))
-		if err != nil {
-			return nil, err
-		}
-		v := &connectorv1.DnValue{DisplayDn: lv.DN}
-		if lv.HasGUID { // only what the DC sent: a plain DN stays without identity
-			v.Guid = write.GUIDToWire(lv.GUID)
-		}
-		if lv.HasSID {
-			v.Sid = &connectorv1.Sid{Value: lv.SID.Bytes()}
-		}
-		return &connectorv1.AttributeValue{Value: &connectorv1.AttributeValue_Dn{Dn: v}}, nil
-	case ldapfilter.SynBool:
-		return &connectorv1.AttributeValue{Value: &connectorv1.AttributeValue_Boolean{Boolean: string(raw) == "TRUE"}}, nil
-	case ldapfilter.SynInt32:
-		n, err := codec.ParseInteger(string(raw), 32)
-		if err != nil {
-			return nil, err
-		}
-		return &connectorv1.AttributeValue{Value: &connectorv1.AttributeValue_Int32Value{Int32Value: int32(n)}}, nil
-	case ldapfilter.SynInt64:
-		n, err := codec.ParseInteger(string(raw), 64)
-		if err != nil {
-			return nil, err
-		}
-		if _, ferr := filetime.FieldFor(name); ferr == nil {
-			return &connectorv1.AttributeValue{Value: &connectorv1.AttributeValue_Time{Time: timeOf(n)}}, nil
-		}
-		return &connectorv1.AttributeValue{Value: &connectorv1.AttributeValue_Int64Value{Int64Value: n}}, nil
-	case ldapfilter.SynGenTime:
-		t, err := gentime.Parse(string(raw))
-		if err != nil {
-			return nil, err
-		}
-		return &connectorv1.AttributeValue{Value: &connectorv1.AttributeValue_Time{Time: &connectorv1.TimeValue{
-			Kind: &connectorv1.TimeValue_At{At: timestamppb.New(t)}}}}, nil
-	case ldapfilter.SynSID:
-		if _, err := sid.FromBytes(raw); err != nil {
-			return nil, err
-		}
-		return &connectorv1.AttributeValue{Value: &connectorv1.AttributeValue_Sid{Sid: &connectorv1.Sid{Value: append([]byte(nil), raw...)}}}, nil
-	case ldapfilter.SynGUID:
-		g, err := guid.FromBytes(raw)
-		if err != nil {
-			return nil, err
-		}
-		return &connectorv1.AttributeValue{Value: &connectorv1.AttributeValue_Guid{Guid: write.GUIDToWire(g)}}, nil
-	}
-	return &connectorv1.AttributeValue{Value: &connectorv1.AttributeValue_Octets{Octets: append([]byte(nil), raw...)}}, nil
+	return wirevalue.Of(name, syn, raw)
 }
 
-// timeOf maps the Integer8 form of a FILETIME attribute: 0 and max stay the two "never" sentinels,
-// a beyond-range value keeps its ticks.
-func timeOf(n int64) *connectorv1.TimeValue {
-	switch {
-	case n == 0:
-		return &connectorv1.TimeValue{Kind: &connectorv1.TimeValue_Sentinel{Sentinel: connectorv1.TimeSentinel_TIME_SENTINEL_ZERO}}
-	case n == 1<<63-1:
-		return &connectorv1.TimeValue{Kind: &connectorv1.TimeValue_Sentinel{Sentinel: connectorv1.TimeSentinel_TIME_SENTINEL_MAX}}
-	case n < 0 || n > filetime.MaxInstantTicks:
-		return &connectorv1.TimeValue{Kind: &connectorv1.TimeValue_FiletimeTicksOutOfRange{FiletimeTicksOutOfRange: n}}
+// passwordChange is the Cannot Change Password verdict of one object. A failed, withheld, malformed
+// or mismatched read is NOT_CONFIRMED with a fixed error code, never an error of the call: one bad
+// descriptor must not fail the object's read (T-1551). Neither the descriptor nor the directory's
+// message is kept or logged.
+func (h *Handler) passwordChange(ctx context.Context, id guid.GUID) *connectorv1.PasswordChangeVerdict {
+	notConfirmed := func(code connectorv1.ErrorCode) *connectorv1.PasswordChangeVerdict {
+		return &connectorv1.PasswordChangeVerdict{State: connectorv1.PasswordChangeState_PASSWORD_CHANGE_STATE_NOT_CONFIRMED, ErrorCode: code}
 	}
-	const unixEpoch = 116_444_736_000_000_000
-	ticks := n - unixEpoch
-	return &connectorv1.TimeValue{Kind: &connectorv1.TimeValue_At{At: timestamppb.New(time.Unix(ticks/10_000_000, (ticks%10_000_000)*100).UTC())}}
+	pc, ok := h.src.(PasswordChanger)
+	if !ok {
+		return notConfirmed(connectorv1.ErrorCode_ERROR_CODE_CAPABILITY_UNSUPPORTED)
+	}
+	got, state, err := pc.ReadPasswordChange(ctx, id)
+	if err != nil {
+		code, _, _ := classifyAD(err)
+		return notConfirmed(code)
+	}
+	if got != id {
+		return notConfirmed(connectorv1.ErrorCode_ERROR_CODE_PROVIDER_FAILURE)
+	}
+	var st connectorv1.PasswordChangeState
+	switch state {
+	case sd.PasswordChangeBlocked:
+		st = connectorv1.PasswordChangeState_PASSWORD_CHANGE_STATE_BLOCKED
+	case sd.PasswordChangeBlockedOneACE:
+		st = connectorv1.PasswordChangeState_PASSWORD_CHANGE_STATE_BLOCKED_ONE_ACE
+	case sd.PasswordChangeNoDenyACE:
+		st = connectorv1.PasswordChangeState_PASSWORD_CHANGE_STATE_NO_DENY_ACE
+	default:
+		return notConfirmed(connectorv1.ErrorCode_ERROR_CODE_PROVIDER_FAILURE)
+	}
+	return &connectorv1.PasswordChangeVerdict{State: st, ObjectGuid: write.GUIDToWire(got)}
 }

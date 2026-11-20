@@ -24,7 +24,7 @@ const (
 	reportsqlDir  = "internal/platform/store/reportsql"
 	storeDir      = "internal/platform/store"
 	inventoryDir  = "internal/directory/inventory"
-	searchDir     = "internal/modules/search"
+	searchDir     = "internal/directory/search"
 	reportsRunDir = "internal/modules/reports/run"
 
 	templateFile    = reportsqlDir + "/search.go"

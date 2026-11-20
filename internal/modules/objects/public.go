@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/skenzeriq/activediq/internal/directory/objectdef"
 	"github.com/skenzeriq/activediq/internal/platform/operation/step"
 	"github.com/skenzeriq/activediq/internal/platform/store"
 )
@@ -54,7 +55,7 @@ func publishTemplateTx(ctx context.Context, tx store.Tx, id string, version int)
 	for p, pin := range cur.Def.NamingFormats {
 		f, err := namings.get(ctx, tx, pin.ID, pin.Version)
 		if err != nil || f.State == StateDraft || f.Def.Purpose != p {
-			return violation("namingFormats."+string(p), "pins a naming format version that is not released")
+			return objectdef.Violation("namingFormats."+string(p), "pins a naming format version that is not released")
 		}
 	}
 	return templates.transitionTx(ctx, tx, id, version, StateDraft, StatePublished)

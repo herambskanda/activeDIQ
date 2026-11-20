@@ -79,6 +79,8 @@ type Run struct {
 	StartedAt        *time.Time
 	FinishedAt       *time.Time
 	ExpiresAt        *time.Time
+	// Zone is the IANA time zone the runner asked for (empty: UTC). PDF and HTML exports show Time cells in it.
+	Zone string
 }
 
 // ScopeApplied is the scope_applied document: what trimmed the rows, in words and reason codes.
@@ -150,7 +152,7 @@ type scanner interface{ Scan(dest ...any) error }
 const selectRun = `SELECT id::text, definition_id, definition_version, definition_sha256, preset, params, query_hash,
   scope_fingerprint, runner_account::text, chain, schedule_id::text, rerun_of::text, state, failure_reason, attempt,
   scope_applied, freshness, per_dc, as_of, row_count, objects_checked, hidden_counts, digest, columns,
-  created_at, started_at, finished_at, expires_at FROM public.report_runs WHERE id = $1::uuid`
+  created_at, started_at, finished_at, expires_at, runner_zone FROM public.report_runs WHERE id = $1::uuid`
 
 const lockRun = `SELECT id FROM public.report_runs WHERE id = $1::uuid FOR UPDATE`
 
@@ -163,10 +165,11 @@ func scanRun(row scanner) (Run, error) {
 		sha, qh, fp                              []byte
 		chain, scope, fresh, perDC, hidden, cols []byte
 		digest                                   []byte
+		zone                                     *string
 	)
 	err := row.Scan(&id, &r.DefinitionID, &r.DefinitionVer, &sha, &r.Preset, &r.Params, &qh, &fp, &runner, &chain,
 		&sched, &rerun, &state, &failure, &r.Attempt, &scope, &fresh, &perDC, &r.AsOf, &r.RowCount, &r.ObjectsChecked,
-		&hidden, &digest, &cols, &r.CreatedAt, &r.StartedAt, &r.FinishedAt, &r.ExpiresAt)
+		&hidden, &digest, &cols, &r.CreatedAt, &r.StartedAt, &r.FinishedAt, &r.ExpiresAt, &zone)
 	if err != nil {
 		return Run{}, err
 	}
@@ -177,6 +180,9 @@ func scanRun(row scanner) (Run, error) {
 	copy(r.QueryHash[:], qh)
 	copy(r.ScopeFingerprint[:], fp)
 	r.Runner, r.State, r.Digest = runner, State(state), digest
+	if zone != nil {
+		r.Zone = *zone
+	}
 	if failure != nil {
 		r.Failure = FailureReason(*failure)
 	}
@@ -243,14 +249,14 @@ func load(ctx context.Context, tx store.Tx, id ID, lock bool) (Run, error) {
 
 const insertRun = `INSERT INTO public.report_runs
   (tenant_id, id, definition_id, definition_version, definition_sha256, preset, params, query_hash, scope_fingerprint,
-   runner_account, chain, rerun_of, state, columns)
+   runner_account, chain, rerun_of, state, columns, runner_zone, schedule_id)
 VALUES (NULLIF(current_setting('app.tenant_id', true), '')::uuid, $1::uuid, $2, $3, $4, $5, $6::jsonb, $7, $8,
-   $9::uuid, $10::jsonb, $11::uuid, 'queued', $12::jsonb)`
+   $9::uuid, $10::jsonb, $11::uuid, 'queued', $12::jsonb, $13, $14::uuid)`
 
 // findReusable returns a run of the same runner, query and scope created in the last window and still
 // queued, running or succeeded (ADR-0010 reuse window, §6.1 step 3).
 const findReusable = `SELECT id::text FROM public.report_runs
-WHERE runner_account = $1::uuid AND query_hash = $2 AND scope_fingerprint = $3
+WHERE runner_account = $1::uuid AND query_hash = $2 AND scope_fingerprint = $3 AND runner_zone IS NOT DISTINCT FROM $5::text
   AND created_at > now() - make_interval(secs => $4::double precision) AND state IN ('queued', 'running', 'succeeded')
   AND (state <> 'succeeded' OR expires_at > now())
 ORDER BY created_at DESC, id DESC LIMIT 1`

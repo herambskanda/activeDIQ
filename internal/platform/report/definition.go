@@ -51,6 +51,36 @@ type Definition struct {
 	Params      []ParamSpec
 	PerDC       *PerDCSpec // USR-04 and PWD-03 only
 	Caveats     []CaveatID
+	Widget      *WidgetProfile // nil: the definition supports the count view only (home-report-widgets §3.1)
+}
+
+// WidgetView is a view a Home widget may render over one run.
+type WidgetView string
+
+// The widget views. Count is allowed for every definition and need not be listed.
+const (
+	WidgetCount WidgetView = "count"
+	WidgetTable WidgetView = "table"
+	WidgetTrend WidgetView = "trend"
+)
+
+// MaxWidgetColumns is the most columns a table widget shows.
+const MaxWidgetColumns = 5
+
+// WidgetProfile declares which views a definition supports on Home and the columns of the table view.
+// The trend measure is always the run's row count. It is data in the definition, never guessed from
+// column types.
+type WidgetProfile struct {
+	Views        []WidgetView
+	TableColumns []ColumnID // at most MaxWidgetColumns, each one of the definition's columns
+}
+
+// SupportsWidget reports whether the definition offers v on a widget. Count is always supported.
+func (d Definition) SupportsWidget(v WidgetView) bool {
+	if v == WidgetCount {
+		return true
+	}
+	return d.Widget != nil && slices.Contains(d.Widget.Views, v)
 }
 
 // Preset is a named variant of a definition.
@@ -246,6 +276,11 @@ func (d Definition) Validate() error {
 			}
 		}
 	}
+	if w := d.Widget; w != nil {
+		if err := w.validate(d); err != nil {
+			return err
+		}
+	}
 	if d.PerDC != nil && (d.PerDC.Scope <= perDCScopeInvalid || d.PerDC.Scope > ScopeAll) {
 		return bad("perDC", "no per-DC scope")
 	}
@@ -338,4 +373,38 @@ func sampleParam(s ParamSpec) ParamValue {
 		return EnumP(s.Choices[0])
 	}
 	return GUIDsP(authz.ObjectID{1})
+}
+
+func (w WidgetProfile) validate(d Definition) error {
+	bad := func(format string, a ...any) error { return verrf(CodeInvalidDefinition, "widget", format, a...) }
+	if len(w.Views) == 0 {
+		return bad("a widget profile lists at least one view")
+	}
+	seen := map[WidgetView]bool{}
+	for _, v := range w.Views {
+		if (v != WidgetCount && v != WidgetTable && v != WidgetTrend) || seen[v] {
+			return bad("view %q is unknown or duplicated", v)
+		}
+		seen[v] = true
+	}
+	if seen[WidgetTable] != (len(w.TableColumns) > 0) {
+		return bad("the table view and its columns go together")
+	}
+	if len(w.TableColumns) > MaxWidgetColumns {
+		return bad("a table widget shows at most %d columns", MaxWidgetColumns)
+	}
+	cols := map[ColumnID]bool{}
+	for _, c := range w.TableColumns {
+		// a column a run may not store would make the page read fail, so only columns every preset keeps
+		if !slices.Contains(d.Columns, c) || cols[c] {
+			return bad("table column %q is not one of the definition's columns, or is repeated", c)
+		}
+		cols[c] = true
+		for _, p := range d.Presets {
+			if p.Columns != nil && !slices.Contains(p.Columns, c) {
+				return bad("table column %q is not shown by preset %q", c, p.ID)
+			}
+		}
+	}
+	return nil
 }
