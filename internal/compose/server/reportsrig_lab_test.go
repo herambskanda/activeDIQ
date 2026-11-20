@@ -22,6 +22,7 @@ import (
 	"github.com/skenzeriq/activediq/internal/directory/inventory"
 	dsync "github.com/skenzeriq/activediq/internal/directory/sync"
 	"github.com/skenzeriq/activediq/internal/platform/apihost"
+	"github.com/skenzeriq/activediq/internal/platform/apihost/apitest"
 	"github.com/skenzeriq/activediq/internal/platform/audit"
 	"github.com/skenzeriq/activediq/internal/platform/authz"
 	"github.com/skenzeriq/activediq/internal/platform/authz/authztest"
@@ -114,9 +115,7 @@ func newReportsRig(t *testing.T, s *storetest.Server) *reportsRig {
 		t.Fatal(err)
 	}
 	door := rptDoor{}
-	r.srv, err = apihost.Build(doc, []apihost.TagHandlers{tag}, pol, apihost.Permissions{"reports.run", "reports.export", "reports.schedule",
-		"reports.schedule.manage_all", "reports.deliver.external", "directory.read", "connections.takeover.attest", "siem.destination.manage",
-		"siem.destination.read", "helpdesk.caller.verify", "connections.read"}, apihost.Ports{Authn: door, Authz: door, Limits: door, StepUp: door})
+	r.srv, err = apihost.Build(doc, []apihost.TagHandlers{tag}, pol, apitest.Catalogue(doc), apihost.Ports{Authn: door, Authz: door, Limits: door, StepUp: door})
 	if err != nil {
 		t.Fatal(err)
 	}

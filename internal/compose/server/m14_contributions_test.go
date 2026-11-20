@@ -63,6 +63,7 @@ var m14Pending = map[string]string{
 	"connections": "T-1867",
 	"reports":     "T-1866",
 	"helpdesk":    "T-2336",
+	"objects":     "T-2337",
 }
 
 func Test_M14_registrar_contributions_cover_the_contract(t *testing.T) {
