@@ -1,0 +1,141 @@
+---
+title: "Module: ad — account-state Actions (reset password, unlock, enable, disable)"
+date: 2026-11-07
+updated: 2026-11-15
+status: draft
+owner: heramb
+author: backend-engineer
+ticket: T-1584
+tier: server
+binding_sources: connector-contract.md §8.10; ADR-0003; ADR-0005 rules 1, 2, 6, 7, 9; TM-D16, TM-D28
+---
+
+# Module `ad`
+
+**Purpose.** The help-desk-critical account Actions on an AD connection, parameterised by one `spec` row
+each (`actions.go`): they differ in digest key, permission, class and after-state, not in shape.
+**Owner:** backend-engineer. **Epic:** E-003. **Ticket:** T-1584. **Parity:** ADM-034, ADM-136.
+**Capabilities required (`Requires()`):** `directory.ad`. **Platform matrix:** same on every platform;
+Entra is not an `AccountProvider` (connector contract §8.10.10).
+
+## Owned tables
+
+None. The module writes nothing itself: Apply gives the connector kind and the runner's Step to
+`directory/client.Client.Write`.
+
+## Registered Actions
+
+| Action | Permission | Class | StepUp | Secret | Kind (digest key) |
+| --- | --- | --- | --- | --- | --- |
+| `ad.user.resetPassword` | `objects.user.reset_password` | Irreversible | yes | yes | `ad.user.resetPassword` |
+| `ad.user.unlock` | `objects.user.unlock` | Irreversible | no | no | `ad.user.unlock` |
+| `ad.user.enable` | `objects.user.enable` | Reversible (inverse: disable) | no | no | `ad.account.enable` |
+| `ad.user.disable` | `objects.user.disable` | Reversible (inverse: enable) | no | no | `ad.account.disable` |
+
+Input: the account's `connectionId`, `objectGuid` and `namingContext` (canonical lower-case UUID text,
+digest-bound); reset adds `mustChangeAtNextLogon`. The password is a transient secret input of the
+submission (rule 9), never an input member: an unknown member is refused at Plan.
+
+## Behaviour
+
+- **Plan** reads the live account on the operation's pins through `client.AccountReader` and refuses
+  a missing target, a non-user and a Tier-0 target (`tier0_target`, denied). The diff of reset is the
+  must-change flag plus the *presence* of a secret. The other three kinds' digest binds no attribute
+  (`accountkind.AttrsOf`), so their before and after are in `Preconditions`, not `Diff`.
+- **Apply** calls `client.Write`, whose Step re-check is the TOCTOU guard (a target that left the
+  technician's scope fails denied with a denial event). Errors map to the pipeline's typed errors with
+  fixed texts; a credential step whose connector call fails mid-flight is `ErrOutcomeUnknown`.
+- **Verify** re-reads the account, re-runs the Tier-0 check (`tier0_after_write` outranks every other
+  reason) and compares with the kind's after-state.
+- **Observe** reads the account on the pins for reconciliation; a must-change reset cannot be told from
+  its before-state and reports `other`.
+- **Inverse.** Unlock is Irreversible per connector contract §8.10.1 row 8 (the DC owns `lockoutTime`;
+  no kind can set it non-zero), which differs from the ticket text that listed it as Reversible. Enable
+  and disable return an input of their shared `AccountInput` shape; `ad.InverseAction` names the paired
+  Action the undo layer applies it to. A step that changed nothing returns `ErrNothingToUndo`.
+
+## Dependencies
+
+`directory.Services.AccountReader` and `.AccountWriter` (`directory/client`). Nil until the composition
+root wires a connector transport and a live account reader; the Actions then refuse every Plan and
+Apply (`directory_unavailable`) rather than run without the directory.
+
+## User lifecycle Actions (T-1585)
+
+`lifecycle.go`: six Actions from one generic builder (`buildLife`) and a spec row each, over
+`LifecyclePorts{Reader client.ObjectReader, Writer, Definitions}`. Parity: ADM-008 create, ADM-033 modify,
+ADM-038 restore.
+
+| Action | Permission | Descriptor class | Step class | Digest kind |
+| --- | --- | --- | --- | --- |
+| `ad.user.create` (secret input: the initial password) | `objects.user.create` | Lossy | Reversible (delete undoes it until the account joins a group) | `ad.object.create` |
+| `ad.user.update` | `objects.user.update` | Reversible | Reversible | `ad.object.update` |
+| `ad.user.delete` | `objects.user.delete` | Irreversible | Lossy with the Recycle Bin, else Irreversible | `ad.object.delete` |
+| `ad.user.move` | `objects.user.move` | Reversible | Reversible (inverse: move back) | `ad.object.move` |
+| `ad.user.rename` | `objects.user.move` (a modifyDN, TM-D19) | Reversible | Reversible (inverse: rename back) | `ad.object.rename` |
+| `ad.user.restore` | `objects.user.restore` | Lossy | Lossy iff a retained link value stays dormant, else Reversible | `ad.object.restore` |
+
+- **Ownership (ADR-0015 D2).** `ad` owns the create/modify Actions because it owns their target; `objects` owns
+  only the Template/NamingFormat definitions they consume and no directory-writing Action. Action IDs stay
+  `ad.<noun>.<verb>` (stable, in audit history).
+- **Plan order (ADR-0015 D1), fixed:** `pc.Templates.CheckTemplate` (TemplateGate, a kernel port bound to the
+  requester's chain by the Runner; refusal `template_not_permitted`), then `Template.CheckInput`, then
+  `NamingFormat.Render`, then the first directory read. `ad` never imports `rbac`; `planCreate` and the modify Plan
+  call the gate before `loadTemplate`.
+- **Create** validates the pinned Template (published, user, create, AD/hybrid, container allowed), applies
+  `CheckInput`/`Effective`, renders the pinned NamingFormats (sAMAccountName, cn, displayName, UPN prefix +
+  `upnSuffix`), reads the parent (a container, not Tier-0) and builds the digest attributes with
+  `writechange.CreateAttrs`. Diff names are the digest names (`set:givenName`, `~rdn`, ...).
+- **Update/create attributes** are an allow-list (`profileAttrs`); sign-in attributes (UAC, UPN/sAM on update,
+  passwords, group links, SDs) are refused.
+- **Move/restore** declare the destination parent through the kernel's new `Typed.AlsoAuthorize`
+  (`operation.AlsoAuthorizer`): the runner authorises it live at Plan and again immediately before Apply, with
+  the step's permission (ADR-0005 rule 7: source parent via the target's own ancestry, destination via this).
+  Source and destination parents are also `Touched` for the Tier-0 re-read.
+- **Restore class.** The ticket said Lossy because link values are not restorable; ad-expert (T-1585) and
+  connector contract §8.10.3 kind 6 say a Recycle-Bin restore re-grants retained links, except links whose other
+  end is itself still deleted. Plan lists each ("re-granted" / "will not return") from the show-deactivated-link
+  read, and is Lossy exactly when one is dormant. Without the Recycle Bin restore is refused.
+- **Inverse.** Move and rename return their own shape. Create/delete/restore pair with other Actions
+  (delete/restore/delete) and return `ErrIrreversible` from `Inverse` until the undo layer exists.
+- `directory.Services.ObjectReader` has no connector-backed implementation yet (see the follow-up ticket):
+  nil makes every lifecycle Plan refuse `directory_unavailable`.
+
+## Other classes, membership and computer reset (T-1586, connector contract v1.6)
+
+`classes.go` holds one row per class (`user`, `group`, `computer`, `contact`, `ou`) with its LDAP class
+label, permission segment (`objects.<seg>.<verb>`; the OU segment is `ou`, the class label is
+`organizationalUnit`) and verb set. The lifecycle verbs of T-1585 are parameterised by class
+(`ad.<class>.update|delete|move|rename|restore`, `VerbID(class, verb)`); each refuses a target of another
+class with `not_a_<class>`. `createobject.go` adds the non-user create (`ObjectCreateInput`; no Template:
+Templates define user creation). Group create carries `GroupScope` and `GroupSecurity`
+(`writechange.CreateSpec`).
+
+| Action | Permission | Digest kind | Target of the step |
+| --- | --- | --- | --- |
+| `ad.group.addMember` (member is a user, computer or contact) | `objects.group.add_member` | kind 11 `ad.group.addMember` | the **group** |
+| `ad.group.nestGroup` (member is a group) | `objects.group.nest` | kind 11 | the group |
+| `ad.group.removeMember` | `objects.group.remove_member` | kind 12 `ad.group.removeMember` | the group |
+| `ad.computer.resetAccount` | `objects.computer.reset` (step-up, Irreversible, no secret) | kind 13 | the computer |
+
+- Add and nest are two Actions because a Descriptor carries one permission; the contract's "the Action
+  declares `add_member` or `nest` by member class" cannot be one Action. A group through the add Action is
+  refused `use_nest`. `MemberInverse(id, memberClass)` names the opposite Action (the Action's `Inverse`
+  returns the same input).
+- Plan reads group and member (`ObjectReader.Object`), refuses Tier-0 on either, a self-member, a class
+  mismatch, and plans nothing when `ObjectReader.DirectMember` already shows the requested state. Verify reads
+  `DirectMember` back. `rbac.GroupReach` covers the three membership permissions (AC1;
+  `Test_group_membership_actions_are_in_the_catalogue`).
+- **OU delete** reads `ObjectWithChildCount` (connector `ReadRequest.include_child_count`, §5.3a, one-level
+  count capped at `ChildCountCap` 1,000). Children present: Plan refuses with `operation.PlanRefusal` code
+  `ou_not_empty_<n>` (`ou_not_empty_<n>_or_more` when capped), so the reason names the count. `Cascade: true`
+  is refused `cascade_not_supported`: a subtree delete needs its own kind (follow-up).
+- **Computer reset** sends no attribute (`Diff` empty; the connector generates the machine password and sends
+  only `unicodePwd` over LDAPS). BitLocker recovery objects and LAPS attributes are never in the write. Verify:
+  `pwdLastSet` moved (no `ALREADY_APPLIED`; a reset is never already done).
+- `client.ObjectReader` gained `ObjectWithChildCount` and `DirectMember`. Still no production implementation
+  (nil port refuses `directory_unavailable`); follow-up ticket.
+
+**Not built (as-built deviations from contract v1.6):** the Plan-time `member` write-property probe, the C20
+refusals, cluster-object detection for kind 13 beyond the connector's SPN check (Windows only), and
+cascade. Kind 13 and OU delete have an empty `Diff`, so the async Submit skips them (T-1823).

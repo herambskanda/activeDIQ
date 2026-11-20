@@ -3,15 +3,13 @@ package server
 import (
 	"context"
 	"errors"
+	"fmt"
+	"slices"
 	"testing"
 
 	"github.com/skenzeriq/activediq/internal/directory"
-	"github.com/skenzeriq/activediq/internal/modules/compliance"
-	"github.com/skenzeriq/activediq/internal/modules/connections"
-	"github.com/skenzeriq/activediq/internal/modules/delegation"
-	"github.com/skenzeriq/activediq/internal/modules/inventory"
-	"github.com/skenzeriq/activediq/internal/modules/notify"
 	"github.com/skenzeriq/activediq/internal/platform"
+	"github.com/skenzeriq/activediq/internal/platform/apihost"
 	"github.com/skenzeriq/activediq/internal/platform/authz"
 	"github.com/skenzeriq/activediq/internal/platform/module/moduletest"
 	"github.com/skenzeriq/activediq/internal/platform/operation"
@@ -22,28 +20,35 @@ import (
 // table joins here in the change that adds it, with the row it implements. Rows with no operation yet
 // (LAPS/BitLocker reveal, RBAC changes, API token and enrollment-token creation, directory credential
 // and connection changes, IdP configuration, audit export and retention, break-glass use, authority
-// factor approval) are not listed, and each of those tickets adds its row and sets Descriptor.StepUp.
+// factor approval) are not listed, and each of those tickets adds its row and sets Descriptor.StepUp (or StepUpWhen when the row applies only to some inputs).
 var stepUpTable = map[operation.ActionID]string{
-	connections.Tier0OverrideActionID:     "The Tier-0 override acknowledgement (TM-D1)",
-	connections.HybridLinkConfirmActionID: "HybridLink confirmation (connections.hybrid_link.confirm)",
+	"connections.tier0_override.acknowledge": "The Tier-0 override acknowledgement (TM-D1)",
+	"connections.hybrid_link.confirm":        "HybridLink confirmation (connections.hybrid_link.confirm)",
 	// Declare writes a confirmed link directly, skipping proposed: the same cross-directory authority
 	// path as confirm, so it carries the same flag.
-	connections.HybridLinkDeclareActionID: "HybridLink declaration confirms without a proposal; same path as confirm",
+	"connections.hybrid_link.declare": "HybridLink declaration confirms without a proposal; same path as confirm",
 	// Re-confirming a correlation held for reconfirm_required (TM-D17 rule 4 (g)) is an irreversible
 	// cross-directory authority decision; it also requires a current tenant-owner.
-	connections.ReconfirmActionID:    "Correlation re-confirmation (TM-D17 rule 4 (g))",
-	inventory.SetDesignationActionID: "Designating or un-designating tier0 objects (§6.4)",
+	"connections.correlation.reconfirm": "Correlation re-confirmation (TM-D17 rule 4 (g))",
+	"inventory.tier0_designation.set":   "Designating or un-designating tier0 objects (§6.4)",
 	// Legal holds (T-0605): lifting one lets the next retention purge destroy evidence, and placing one
 	// withholds data from erasure; both are a compliance officer's act and need a fresh MFA.
-	compliance.SetHoldActionID:     "Placing a legal hold on a personal subject",
-	compliance.ReleaseHoldActionID: "Releasing a legal hold (lets the retention purge destroy evidence)",
+	"compliance.hold.set":     "Placing a legal hold on a personal subject",
+	"compliance.hold.release": "Releasing a legal hold (lets the retention purge destroy evidence)",
 	// notify.settings.update widens the allowed recipient domains and re-points the SMTP relay (TM-D30 SX-7).
-	notify.UpdateSettingsActionID: "Widening allowed recipient domains / re-pointing the SMTP relay (TM-D30 SX-7)",
+	"notify.settings.update": "Widening allowed recipient domains / re-pointing the SMTP relay (TM-D30 SX-7)",
 	// RBAC changes (§7.4): every role or assignment change is a step-up operation.
-	delegation.RoleCreateID: "RBAC change: creating a custom role",
-	delegation.RoleUpdateID: "RBAC change: editing a custom role's permissions",
-	delegation.GrantID:      "RBAC change: granting an assignment",
-	delegation.RevokeID:     "RBAC change: revoking an assignment",
+	// Resetting a password is a credential change and needs the OTP-before-reset rule of ENH-09 (TM-D16).
+	"ad.user.resetPassword": "Password reset (TM-D16; ENH-09 OTP-before-reset)",
+	// A computer account reset takes the machine off the domain and cannot be undone (TM-D28 class reset_computer, §7.4).
+	"ad.computer.resetAccount":     "Computer account reset (TM-D28 reset_computer; no default grant)",
+	"delegation.role.create":       "RBAC change: creating a custom role",
+	"delegation.role.update":       "RBAC change: editing a custom role's permissions",
+	"delegation.assignment.grant":  "RBAC change: granting an assignment",
+	"delegation.assignment.revoke": "RBAC change: revoking an assignment",
+	// Host-agent policy (T-0599, ADR-0007): the policy every DC agent enforces and the key that signs it.
+	"agentfleet.policy.edit":   "Editing the addc password and event policy every DC agent enforces",
+	"agentfleet.keyset.rotate": "Rotating the agent policy signing key (suspected exposure)",
 }
 
 func catalogue(t *testing.T) []operation.Descriptor {
@@ -63,28 +68,59 @@ func catalogue(t *testing.T) []operation.Descriptor {
 	return reg.Catalogue()
 }
 
-// Every table operation that exists carries the flag, and no operation carries it unlisted, so the
+// Every table operation that exists carries the flag (static StepUp, or the input-conditional
+// StepUpWhen of TM-D30), and no operation carries it unlisted, so the
 // table and the catalogue cannot drift in either direction.
 func Test_stepup_flag_catalogue_matches_table(t *testing.T) {
-	cat := catalogue(t)
+	for _, v := range stepUpViolations(catalogue(t), stepUpTable) {
+		t.Error(v)
+	}
+}
+
+// stepUpViolations compares a catalogue with a §7.4 table in both directions.
+func stepUpViolations(cat []operation.Descriptor, table map[operation.ActionID]string) []string {
+	var bad []string
 	byID := map[operation.ActionID]operation.Descriptor{}
 	for _, d := range cat {
 		byID[d.ID] = d
 	}
-	for id, why := range stepUpTable {
+	for id, why := range table {
 		d, ok := byID[id]
-		if !ok {
-			t.Errorf("table operation %s (%s) is not in the catalogue: remove it from the table or register it", id, why)
-			continue
-		}
-		if !d.StepUp {
-			t.Errorf("%s (%s) is in the §7.4 table but its Descriptor lacks StepUp", id, why)
+		switch {
+		case !ok:
+			bad = append(bad, fmt.Sprintf("table operation %s (%s) is not in the catalogue: remove it from the table or register it", id, why))
+		case !d.StepUp && d.StepUpWhen == nil:
+			bad = append(bad, fmt.Sprintf("%s (%s) is in the §7.4 table but its Descriptor has neither StepUp nor StepUpWhen", id, why))
 		}
 	}
 	for _, d := range cat {
-		if _, listed := stepUpTable[d.ID]; d.StepUp && !listed {
-			t.Errorf("%s carries StepUp but is not in stepUpTable: add its §7.4 row", d.ID)
+		if _, listed := table[d.ID]; (d.StepUp || d.StepUpWhen != nil) && !listed {
+			bad = append(bad, fmt.Sprintf("%s carries StepUp or StepUpWhen but is not in stepUpTable: add its §7.4 row", d.ID))
 		}
+		if d.StepUp && d.StepUpWhen != nil {
+			bad = append(bad, fmt.Sprintf("%s carries both StepUp and StepUpWhen; they are mutually exclusive (TM-D30)", d.ID))
+		}
+	}
+	return bad
+}
+
+// The check bites on the predicate in both directions (TM-D30).
+func Test_stepup_check_covers_predicate_descriptors(t *testing.T) {
+	pred := func(operation.Input) (bool, error) { return true, nil }
+	cond := operation.Descriptor{ID: "x.sched.create", StepUpWhen: pred}
+	plain := operation.Descriptor{ID: "x.sched.delete"}
+	if bad := stepUpViolations([]operation.Descriptor{cond}, map[operation.ActionID]string{}); len(bad) != 1 {
+		t.Errorf("predicate without a row: %v", bad)
+	}
+	if bad := stepUpViolations([]operation.Descriptor{plain}, map[operation.ActionID]string{plain.ID: "row"}); len(bad) != 1 {
+		t.Errorf("row without a flag or predicate: %v", bad)
+	}
+	if bad := stepUpViolations([]operation.Descriptor{cond}, map[operation.ActionID]string{cond.ID: "row"}); len(bad) != 0 {
+		t.Errorf("predicate with its row: %v", bad)
+	}
+	both := operation.Descriptor{ID: "x.sched.update", StepUp: true, StepUpWhen: pred}
+	if bad := stepUpViolations([]operation.Descriptor{both}, map[operation.ActionID]string{both.ID: "row"}); len(bad) != 1 {
+		t.Errorf("both: %v", bad)
 	}
 }
 
@@ -110,6 +146,27 @@ func groupTargetViolations(cat []operation.Descriptor) []string {
 func Test_group_membership_actions_target_the_group(t *testing.T) {
 	if bad := groupTargetViolations(catalogue(t)); len(bad) > 0 {
 		t.Errorf("group-membership Actions without TargetClass \"group\": %v", bad)
+	}
+}
+
+// T-1586 AC1: the membership Actions are in the catalogue, so the fitness check above covers them, and
+// the permission each declares is the one the connector contract §8.10.3 fixes (GM1).
+func Test_group_membership_actions_are_in_the_catalogue(t *testing.T) {
+	want := map[operation.ActionID]authz.Permission{
+		"ad.group.addMember":    "objects.group.add_member",
+		"ad.group.nestGroup":    "objects.group.nest",
+		"ad.group.removeMember": "objects.group.remove_member",
+	}
+	for _, d := range catalogue(t) {
+		if p, ok := want[d.ID]; ok {
+			if d.Permission != p || d.TargetClass != "group" {
+				t.Errorf("%s: permission %s class %q", d.ID, d.Permission, d.TargetClass)
+			}
+			delete(want, d.ID)
+		}
+	}
+	for id := range want {
+		t.Errorf("%s is not registered", id)
 	}
 }
 
@@ -142,7 +199,7 @@ func Test_control_plane_flag_catalogue_matches_never_crosses(t *testing.T) {
 			flagged++
 		}
 	}
-	for _, id := range []operation.ActionID{delegation.RoleCreateID, delegation.RoleUpdateID, delegation.GrantID, delegation.RevokeID} {
+	for _, id := range []operation.ActionID{"delegation.role.create", "delegation.role.update", "delegation.assignment.grant", "delegation.assignment.revoke"} {
 		found := false
 		for _, d := range cat {
 			found = found || (d.ID == id && d.ControlPlane)
@@ -177,5 +234,70 @@ func Test_every_action_plan_refuses_unknown_input_member(t *testing.T) {
 		if !errors.Is(err, operation.ErrInvalid) {
 			t.Errorf("%s: Plan with an unknown input member returned %v, want ErrInvalid", id, err)
 		}
+	}
+}
+
+// stepUpPolicyGaps lists the StepUp Actions whose permission is declared (x-permission) by an operation
+// of the contract document but has no stepUp row. The routed set comes from the document itself, never
+// from a hand-kept list: a route may declare any built-in role permission. An Action whose permission no
+// operation declares yet cannot have a row (fitness-api A13 fails a row naming nothing); its row enters
+// with its route.
+func stepUpPolicyGaps(cat []operation.Descriptor, rows []string, doc apihost.Document) []string {
+	var routed []string
+	for _, op := range doc.Operations() {
+		routed = append(routed, op.Permission)
+	}
+	var bad []string
+	for _, d := range cat {
+		p := string(d.Permission)
+		if d.StepUp && slices.Contains(routed, p) && !slices.Contains(rows, p) {
+			bad = append(bad, string(d.ID))
+		}
+	}
+	return bad
+}
+
+// A permission of a StepUp Action that has an HTTP route must be a stepUp row of policy.yaml: apihost
+// asks that list, and a route whose permission is missing from it would run on a stale session
+// (T-0199 carried requirement; test step_up_permissions_all_in_policy).
+func Test_step_up_permissions_all_in_policy(t *testing.T) {
+	pol, err := apihost.LoadPolicy()
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, err := apihost.LoadDocument()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bad := stepUpPolicyGaps(catalogue(t), pol.StepUp, doc); len(bad) > 0 {
+		t.Errorf("StepUp Actions with a routed permission and no stepUp row in api/openapi/policy.yaml: %v", bad)
+	}
+}
+
+// The check bites on a fixture document: a routed StepUp permission without a row is reported, including
+// one that is a built-in role permission rather than a module contribution; an unrouted one is not.
+func Test_step_up_policy_gap_check_bites(t *testing.T) {
+	const fixture = `{"paths":{
+	 "/a":{"post":{"operationId":"a","tags":["t"],"x-permission":"a.do"}},
+	 "/c":{"post":{"operationId":"c","tags":["t"],"x-permission":"c.do"}},
+	 "/d":{"get":{"operationId":"d","tags":["t"],"x-permission":"d.do"}},
+	 "/t0":{"post":{"operationId":"t0","tags":["t"],"x-permission":"inventory.tier0_designation.manage"}}}}`
+	doc, err := apihost.ParseDocument([]byte(fixture))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(kernelPermissions(), "inventory.tier0_designation.manage") {
+		t.Fatal("fixture premise broken: the Tier-0 permission is no longer a built-in role permission")
+	}
+	cat := []operation.Descriptor{
+		{ID: "a.routed", Permission: "a.do", StepUp: true},
+		{ID: "b.unrouted", Permission: "b.do", StepUp: true},
+		{ID: "c.rowed", Permission: "c.do", StepUp: true},
+		{ID: "d.plain", Permission: "d.do"},
+		{ID: "t0.routed", Permission: "inventory.tier0_designation.manage", StepUp: true},
+	}
+	got := stepUpPolicyGaps(cat, []string{"c.do"}, doc)
+	if len(got) != 2 || got[0] != "a.routed" || got[1] != "t0.routed" {
+		t.Fatalf("got %v", got)
 	}
 }

@@ -17,7 +17,7 @@ import (
 // Homes of the primitives (blueprint §1.1 and §7.4).
 const (
 	Connector   = "internal/connector"                   // the only importer of directory protocol libraries
-	Scope       = "internal/connector/ad/scope"          // escape controls and the Global Catalog port
+	Scope       = "internal/connector/ad/scope"          // escape-control named-operation table only (LF-30)
 	Psx         = "internal/connector/psx"               // typed PowerShell sidecar client
 	LDAPFilter  = "internal/directory/ldapfilter"        // P1
 	DN          = "internal/directory/dn"                // P2
@@ -175,6 +175,7 @@ var TestSupport = []string{
 	"internal/platform/jobs/jobstest",           // fleet-wide claim lapse: a product import could double-run jobs
 	"internal/testlab",                          // lab environment discovery (.lab.env, LDAPS dial to the lab DC); imported by *_test.go and storetest only (T-0800)
 	"internal/testlab/harnessdocker",            // docker run/rm/reap of harness Postgres containers, fixed argv (T-0377, T-0800)
+	"internal/directory/inventory/invtest",      // exported inventory test kit: starts storetest databases and seeds tenants; tests only (ADR-0013 §4, T-2233)
 	"internal/connector/labadmin",               // lab-only LDAP admin that builds hostile DNs by hand in lab tests (T-0800)
 }
 

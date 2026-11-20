@@ -92,6 +92,16 @@ message ReadRequest {
   bool include_tier0 = 7;
   // nTSecurityDescriptor and the SD-flags control come with T-0118; held for them.
   reserved 8 to 15;
+  // Also compute ReadHeader.child_count: the number of immediate children of this object
+  // (connector-contract.md §5.3a, T-1899). Only for a container class (organizationalUnit,
+  // container); any other class is INVALID_ARGUMENT. For the blocked-with-count preview of an
+  // OBJECT_DELETE of an OU and for nothing else (no screen shows it as a statistic, LF-39).
+  bool include_child_count = 16;
+  // Also classify the object's Cannot Change Password state from its DACL (ReadHeader.password_change,
+  // T-1551). The connector reads the descriptor with the DACL-only SD-flags control (never the SACL)
+  // and classifies it itself: no descriptor byte ever crosses this contract. The caller asks only for
+  // users; the connector does not decide the class.
+  bool include_password_change = 17;
 }
 
 // The object with every attribute that fit in one DC response. A ranged attribute carries its
@@ -103,6 +113,40 @@ message ReadHeader {
   // the DC named in `observed`; a classification that cannot be decided fails the call rather than
   // arriving as tier0 = false (true or error).
   Tier0Verdict tier0 = 3;
+  // Present exactly when the request set include_child_count (§5.3a).
+  ChildCount child_count = 4;
+  // Present exactly when the request set include_password_change. A read that failed does NOT fail
+  // the call: it is state = NOT_CONFIRMED with error_code set.
+  PasswordChangeVerdict password_change = 5;
+}
+
+// The Cannot Change Password state of one user (sd.PasswordChange). UNSPECIFIED is never sent; a
+// receiver treats it as NOT_CONFIRMED. NOT_CONFIRMED is the only state that may accompany an
+// error_code, and the only state a failed, withheld, malformed or out-of-order descriptor yields.
+enum PasswordChangeState {
+  PASSWORD_CHANGE_STATE_UNSPECIFIED = 0;
+  PASSWORD_CHANGE_STATE_NOT_CONFIRMED = 1;
+  PASSWORD_CHANGE_STATE_BLOCKED = 2;
+  PASSWORD_CHANGE_STATE_BLOCKED_ONE_ACE = 3;
+  PASSWORD_CHANGE_STATE_NO_DENY_ACE = 4;
+}
+
+message PasswordChangeVerdict {
+  PasswordChangeState state = 1;
+  // The objectGUID the descriptor was read from. The caller rejects the verdict when it is not the
+  // object it asked about. Unset when the read failed before a GUID was known.
+  Guid object_guid = 2;
+  // Why the state is NOT_CONFIRMED, as a fixed code. Never a descriptor byte or a directory message.
+  ErrorCode error_code = 3;
+}
+
+// Immediate children of one container, counted by the connector with a one-level search that asks
+// for no attribute but the GUID. `count` stops at the connector's cap (1,000); `capped` says so.
+// It counts what the connector's identity can see; the DC alone decides whether the object is a
+// leaf (OBJECT_DELETE answers NotLeaf from the DC, not from this number).
+message ChildCount {
+  uint32 count = 1;
+  bool capped = 2;
 }
 
 // The connector's own Tier-0 answer for one object (threat-model §6.4), without the server-held

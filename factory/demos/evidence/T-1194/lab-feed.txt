@@ -1,0 +1,15 @@
+=== RUN   TestLabFeedPrimeAndTheCookiePreChecks
+    feed_lab_test.go:206: deletion lifetime 4320h0m0s, boundary 3888h0m0s
+--- PASS: TestLabFeedPrimeAndTheCookiePreChecks (2.63s)
+=== RUN   TestLabFeedRefusalsAndTheMandatorySet
+    feed_lab_test.go:312: live change attributes: map[name:true objectclass:true samaccountname:true] (cn sent: false)
+    feed_lab_test.go:312: deleted change attributes: map[lastknownparent:true name:true objectclass:true samaccountname:true] (cn sent: false)
+    feed_lab_test.go:333: tombstone state OBJECT_STATE_RECYCLED, lastKnownParent present: true
+--- PASS: TestLabFeedRefusalsAndTheMandatorySet (2.47s)
+=== RUN   TestLabFeedIssuerDownIsUnreachableNeverStale
+--- PASS: TestLabFeedIssuerDownIsUnreachableNeverStale (2.78s)
+=== RUN   TestLabFeedStuckDCIsBounded
+    feed_lab_test.go:529: stopped after 25 responses in 229.724363ms
+--- PASS: TestLabFeedStuckDCIsBounded (4.73s)
+PASS
+ok  	github.com/skenzeriq/activediq/internal/connector/read	12.649s

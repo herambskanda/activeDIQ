@@ -1,0 +1,26 @@
+#!/usr/bin/env node
+// Where did a gate run's time go? Usage: factory/bin/gate-timing <gate log> [--repo DIR] [--top N]
+// Needs the `<log>.timing` note the gate writes next to every run's log (runs before it was added have none).
+// Lists the commands of `make -n -k ci` in DIR (default: the repository this script is in) and reads their times
+// from the log. Read-only.
+import { execFileSync } from 'node:child_process';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { formatStepTable, locateSteps, parsePlan, readRun, stepTable } from '../lib/gatetiming.mjs';
+
+const args = process.argv.slice(2);
+const opt = (name, fallback) => { const i = args.indexOf(name); return i >= 0 ? args.splice(i, 2)[1] : fallback; };
+const repo = path.resolve(opt('--repo', path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..')));
+const top = Number(opt('--top', 5));
+const logFile = args[0];
+if (!logFile) { console.error('usage: factory/bin/gate-timing <gate log> [--repo DIR] [--top N]'); process.exit(2); }
+if (!fs.existsSync(`${logFile}.timing`)) { console.error(`no ${logFile}.timing: the gate only writes it for runs started after the timing note was added`); process.exit(1); }
+
+const { log, timing } = readRun(logFile);
+let plan = '';
+try { plan = execFileSync('make', ['-n', '-k', 'ci'], { cwd: repo, encoding: 'utf8', maxBuffer: 1 << 26, stdio: ['ignore', 'pipe', 'ignore'] }); } catch (err) { plan = err.stdout ?? ''; }
+const commands = parsePlan(plan);
+if (!commands.length) { console.error(`could not list the commands of "make -n -k ci" in ${repo}`); process.exit(1); }
+const { found, missing } = locateSteps(log, commands);
+console.log(formatStepTable(stepTable(timing, found), missing, top));

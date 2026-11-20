@@ -1,0 +1,40 @@
+    --- PASS: Test_parallel_guesses_are_bounded/pg16 (3.14s)
+    --- PASS: Test_parallel_guesses_are_bounded/pg18 (1.57s)
+=== RUN   Test_lifetime
+=== RUN   Test_lifetime/pg16
+=== RUN   Test_lifetime/pg18
+--- PASS: Test_lifetime (4.58s)
+    --- PASS: Test_lifetime/pg16 (3.28s)
+    --- PASS: Test_lifetime/pg18 (1.31s)
+=== RUN   Test_verified_window
+=== RUN   Test_verified_window/pg16
+=== RUN   Test_verified_window/pg18
+--- PASS: Test_verified_window (3.69s)
+    --- PASS: Test_verified_window/pg16 (2.03s)
+    --- PASS: Test_verified_window/pg18 (1.66s)
+=== RUN   Test_quota
+=== RUN   Test_quota/pg16
+=== RUN   Test_quota/pg18
+--- PASS: Test_quota (4.19s)
+    --- PASS: Test_quota/pg16 (2.99s)
+    --- PASS: Test_quota/pg18 (1.20s)
+=== RUN   Test_technician_pause
+=== RUN   Test_technician_pause/pg16
+=== RUN   Test_technician_pause/pg18
+--- PASS: Test_technician_pause (3.33s)
+    --- PASS: Test_technician_pause/pg16 (1.95s)
+    --- PASS: Test_technician_pause/pg18 (1.38s)
+=== RUN   Test_refusals_send_nothing
+=== RUN   Test_refusals_send_nothing/pg16
+=== RUN   Test_refusals_send_nothing/pg18
+--- PASS: Test_refusals_send_nothing (4.86s)
+    --- PASS: Test_refusals_send_nothing/pg16 (3.94s)
+    --- PASS: Test_refusals_send_nothing/pg18 (0.92s)
+=== RUN   Test_code_never_stored_or_audited
+=== RUN   Test_code_never_stored_or_audited/pg16
+=== RUN   Test_code_never_stored_or_audited/pg18
+--- PASS: Test_code_never_stored_or_audited (3.16s)
+    --- PASS: Test_code_never_stored_or_audited/pg16 (1.84s)
+    --- PASS: Test_code_never_stored_or_audited/pg18 (1.32s)
+PASS
+ok  	github.com/skenzeriq/activediq/internal/modules/helpdesk	245.354s

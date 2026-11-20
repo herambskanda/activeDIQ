@@ -1,0 +1,134 @@
+#!/usr/bin/env python3
+"""T-1341 lab gap check (T-2215 ruling: main's ForAccount mechanism): an elevated administrator enrols and
+repins the state directory of a service identity on dc1, the service's own Load then succeeds, and a non-administrator is refused.
+
+Builds the dial package's test binary for Windows, copies it to C:\\lab\\t1341 on the DC over WinRM
+(HTTP/5985, NTLM, lab network only), registers it as a throw-away service running as its virtual
+account (NT SERVICE\\diqT1341; it plays the agent service), runs the lab tests of
+internal/platform/fleet/dial/identity_windows_test.go, and writes the evidence (service-side results with
+icacls dumps before and after each step) to --log. It removes the service and the directories at the
+end. The non-administrator case runs as a restricted copy of the administrator's token (the lab DC has no
+local users). Lab DC only. Credentials come from the gitignored lab env file
+(WIN_LAB_ENV) and are never printed. Needs: pip install pywinrm requests-ntlm.
+The whole run holds the dc1 lock (lab/windows/bin/with-dc1-lock, runbook section 10).
+"""
+import argparse, os, subprocess, sys, tempfile
+
+REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+if not os.environ.get("DIQ_DC1_LOCK_HELD"):
+    os.execv(os.path.join(REPO, "lab", "windows", "bin", "with-dc1-lock"),
+             ["with-dc1-lock", "--", sys.executable, os.path.abspath(__file__), *sys.argv[1:]])
+sys.path.insert(0, os.path.join(REPO, "lab", "windows", "lib"))
+from dc1winrm import DC, load_env  # noqa: E402
+
+
+SETUP = r"""
+$ErrorActionPreference='Stop'
+$R='C:\lab\t1341'; $ACCT='NT SERVICE\diqT1341'
+sc.exe stop diqT1341 2>&1 | Out-Null; sc.exe delete diqT1341 2>&1 | Out-Null
+Remove-Item -Recurse -Force "$R\parent","$R\out" -ErrorAction SilentlyContinue
+New-Item -ItemType Directory -Force "$R\parent","$R\out" | Out-Null
+sc.exe create diqT1341 binPath= "$R\dial.test.exe -test.run=NONE" start= demand obj= "$ACCT" | Out-Null
+sc.exe sidtype diqT1341 unrestricted | Out-Null
+# the trusted parent, as the installer makes it: protected, owner Administrators, service + SYSTEM + Administrators only
+icacls "$R\parent" /inheritance:r /grant:r "*S-1-5-18:(OI)(CI)F" "*S-1-5-32-544:(OI)(CI)F" "${ACCT}:(OI)(CI)F" | Out-Null
+icacls "$R\out" /inheritance:r /grant:r "*S-1-5-18:(OI)(CI)F" "*S-1-5-32-544:(OI)(CI)F" "${ACCT}:(OI)(CI)M" | Out-Null
+icacls "$R" /grant "${ACCT}:(RX)" | Out-Null
+icacls "$R\dial.test.exe" /grant "${ACCT}:(RX)" | Out-Null
+'setup ok'
+"""
+
+RUNSVC = r"""
+$R='C:\lab\t1341'; $name='%(name)s'
+Remove-Item "$R\out\$name.txt" -ErrorAction SilentlyContinue
+sc.exe config diqT1341 binPath= "$R\dial.test.exe -test.run=^TestWindowsLabServiceSide$ -test.v -diq.out=$R\out\$name.txt -diq.dir=$R\parent\enrol" | Out-Null
+sc.exe start diqT1341 | Out-Null
+for($i=0;$i -lt 60;$i++){ Start-Sleep 1; if((sc.exe query diqT1341) -match 'STOPPED'){break} }
+if(Test-Path "$R\out\$name.txt"){ Get-Content "$R\out\$name.txt" } else { 'NO SERVICE OUTPUT'; sc.exe query diqT1341 }
+"""
+
+ELEVATED = r"""
+$id=[Security.Principal.WindowsIdentity]::GetCurrent(); $p=New-Object Security.Principal.WindowsPrincipal($id)
+"caller: $($id.Name)  elevated-admin: $($p.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator))"
+whoami /groups | Select-String 'Mandatory Label'
+"""
+
+GOTEST = r"""
+$R='C:\lab\t1341'
+& "$R\dial.test.exe" "-test.run=^%(test)s$" "-test.v" "-diq.account=NT SERVICE\diqT1341" "-diq.parent=$R\parent" 2>&1 | % { "$_" }
+"EXIT $LASTEXITCODE"
+"""
+
+REGRESSION = r"""
+# TestNoStoreOrSQL shells out to `go list`, and the DC has no Go toolchain: skipped here, run by `go test` on the build host.
+$R='C:\lab\t1341'
+foreach($t in 'ownerfile','dial'){ Push-Location $env:TEMP; & "$R\$t.test.exe" "-test.v" "-test.skip=^TestNoStoreOrSQL$" 2>&1 | % { "$_" } | Select-String -Pattern '^(--- FAIL|FAIL|PASS|ok)' | % { "${t}: $_" }; "$t EXIT $LASTEXITCODE"; Pop-Location }
+"""
+
+CLEAN = r"""
+$R='C:\lab\t1341'
+sc.exe stop diqT1341 2>&1 | Out-Null; sc.exe delete diqT1341 2>&1 | Out-Null
+Remove-Item -Recurse -Force $R -ErrorAction SilentlyContinue
+'cleaned'
+"""
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--log", required=True)
+    a = ap.parse_args()
+    env, _path, addr = load_env("identity-verify")
+    dc = DC(env, addr)
+    work = tempfile.mkdtemp(prefix="identity-verify-")
+    exe = os.path.join(work, "dial.test.exe")
+    subprocess.check_call(["go", "test", "-c", "-o", exe, "./internal/platform/fleet/dial"], cwd=REPO,
+                          env=dict(os.environ, GOOS="windows", GOARCH="amd64", CGO_ENABLED="0"))
+    oexe = os.path.join(work, "ownerfile.test.exe")
+    subprocess.check_call(["go", "test", "-c", "-o", oexe, "./internal/platform/ownerfile"], cwd=REPO,
+                          env=dict(os.environ, GOOS="windows", GOARCH="amd64", CGO_ENABLED="0"))
+    log = open(a.log, "w")
+
+    def step(title, script):
+        rc, out = dc.ps("$ProgressPreference='SilentlyContinue'\n" + script)
+        log.write(f"=== {title} (rc={rc})\n{out}\n")
+        log.flush()
+        print(f"identity-verify: {title}: rc={rc}", file=sys.stderr)
+        return out
+
+    try:
+        dc.ps(r"New-Item -ItemType Directory -Force C:\lab\t1341 | Out-Null")
+        dc.put(exe, r"C:\lab\t1341\dial.test.exe")
+        dc.put(oexe, r"C:\lab\t1341\ownerfile.test.exe")
+        reg = step("0 regression: the package's own Windows tests (T-1315 behaviour unchanged)", REGRESSION)
+        step("setup", SETUP)
+        step("caller token", ELEVATED)
+        out1 = step("1 elevated admin enrols for the service identity (Enroll ForAccount)", GOTEST.replace("%(test)s", "TestWindowsLabEnrolAsServiceIdentity"))
+        s1 = step("1b service-side Load + icacls after enrol", RUNSVC.replace("%(name)s", "after-enrol"))
+        out2 = step("2 non-admin (restricted token: Administrators deny-only, no privileges) is refused (Repin, Enroll)", GOTEST.replace("%(test)s", "TestWindowsLabNonAdminRefused"))
+        s2 = step("2b service-side listing + icacls after the refusal (must equal 1b)", RUNSVC.replace("%(name)s", "after-refusal"))
+        out3 = step("3 elevated admin repins (Repin ForAccount)", GOTEST.replace("%(test)s", "TestWindowsLabRepinAsServiceIdentity"))
+        s3 = step("3b service-side Load + icacls after repin", RUNSVC.replace("%(name)s", "after-repin"))
+        newpin = step("new pin", r"Get-Content C:\lab\t1341\parent\newpin.txt").strip()
+        step("owners", r"Get-Item C:\lab\t1341\parent\enrol -Force | % { '{0}  owner={1}' -f $_.Name, ($_ | Get-Acl).Owner }; Get-ChildItem C:\lab\t1341\parent\enrol -Force | % { '{0}  owner={1}' -f $_.Name, ($_ | Get-Acl).Owner }")
+    finally:
+        step("cleanup", CLEAN)
+
+    fails = []
+    if "ownerfile EXIT 0" not in reg or "dial EXIT 0" not in reg: fails.append("the packages' own Windows tests failed")
+    if "load: ok" not in s1: fails.append("service Load after enrol failed")
+    if "load: ok" not in s3 or newpin not in s3: fails.append("service Load after repin did not see the new pin")
+    if "EXIT 0" not in out1 or "EXIT 0" not in out3: fails.append("elevated enrol/repin test failed")
+    if "EXIT 0" not in out2 or "--- PASS: TestWindowsLabNonAdminRefused" not in out2: fails.append("the non-admin refusal test did not pass")
+    if s1.split("icacls:")[1].split("entry:")[0] != s2.split("icacls:")[1].split("entry:")[0] or \
+            sorted(l for l in s1.splitlines() if l.startswith("entry:")) != sorted(l for l in s2.splitlines() if l.startswith("entry:")):
+        fails.append("the refused non-admin run changed the state directory")
+    for name, s in (("after-enrol", s1), ("after-refusal", s2), ("after-repin", s3)):
+        if "\\Administrator:" in s or "-500:" in s:
+            fails.append(f"{name}: the invoking administrator's user SID is in a DACL")
+    log.write("RESULT: " + ("FAIL: " + "; ".join(fails) if fails else "PASS") + "\n")
+    log.close()
+    print("identity-verify:", "FAIL: " + "; ".join(fails) if fails else "PASS", file=sys.stderr)
+    sys.exit(1 if fails else 0)
+
+
+main()

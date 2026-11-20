@@ -19,14 +19,17 @@ import (
 	"github.com/skenzeriq/activediq/internal/platform/operation"
 )
 
-const wantOperations = 29 // 21 on main (T-0866, T-0891) + 6 preview twins + the undo pair (T-0892, ADR-0004 rule 14)
+const wantOperations = 38 // 21 on main (T-0866, T-0891) + 6 preview twins + the undo pair (T-0892, ADR-0004 rule 14) + listReportRunPolicyTargets (T-1718) + getLatestReportRun (T-2083) + the manager picker, the SYS-03 thresholds (read, update, preview) and their undo pair (T-1720) + getReportRunRowDetail (T-1717)
 
+// fivePermissions are the five permissions of spec 8.5 and, since T-1720, the two of SYS-03 (reports-2 second slice 13).
 var fivePermissions = map[string]bool{
-	string(reports.RunPermission):               true,
-	string(reports.ExportPermission):            true,
-	string(reports.SchedulePermission):          true,
-	string(reports.ScheduleManageAllPermission): true,
-	string(reports.DeliverExternalPermission):   true,
+	string(reports.ReplicationReadPermission):      true,
+	string(reports.ReplicationConfigurePermission): true,
+	string(reports.RunPermission):                  true,
+	string(reports.ExportPermission):               true,
+	string(reports.SchedulePermission):             true,
+	string(reports.ScheduleManageAllPermission):    true,
+	string(reports.DeliverExternalPermission):      true,
 }
 
 // Acceptance 1 and 3: every reports operation binds exactly one of the five permissions of spec 8.5 and
@@ -418,12 +421,13 @@ func TestScheduleActionsHavePreviewTwinsAndAnUndoPair(t *testing.T) {
 		header  = "ActiveDIQ-Operation-Id"
 	)
 	writes := map[string]struct{ twin, verb, ok string }{
-		"createReportSchedule":   {"previewCreateReportSchedule", "create", "201"},
-		"updateReportSchedule":   {"previewUpdateReportSchedule", "update", "200"},
-		"deleteReportSchedule":   {"previewDeleteReportSchedule", "delete", "204"},
-		"pauseReportSchedule":    {"previewPauseReportSchedule", "pause", "200"},
-		"resumeReportSchedule":   {"previewResumeReportSchedule", "resume", "200"},
-		"reassignReportSchedule": {"previewReassignReportSchedule", "reassign", "200"},
+		"createReportSchedule":              {"previewCreateReportSchedule", "create", "201"},
+		"updateReportSchedule":              {"previewUpdateReportSchedule", "update", "200"},
+		"deleteReportSchedule":              {"previewDeleteReportSchedule", "delete", "204"},
+		"pauseReportSchedule":               {"previewPauseReportSchedule", "pause", "200"},
+		"resumeReportSchedule":              {"previewResumeReportSchedule", "resume", "200"},
+		"reassignReportSchedule":            {"previewReassignReportSchedule", "reassign", "200"},
+		"updateReportReplicationThresholds": {"previewUpdateReportReplicationThresholds", "update", "200"},
 	}
 	for id, w := range writes {
 		wr, ok := ops[id]

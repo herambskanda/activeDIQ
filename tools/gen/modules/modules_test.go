@@ -124,6 +124,7 @@ func TestCheckFailsOnDrift(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	write(filepath.Join(root, "go.mod"), "module x.test\n\ngo 1.27.0\n")
 	write(filepath.Join(mig, "0001_tenant_tenants.sql"), good)
 	if err := run(root, true); err == nil || !strings.Contains(err.Error(), "is missing") {
 		t.Fatalf("no generated file: %v", err)
@@ -177,5 +178,50 @@ func TestRepositoryMapIsCurrent(t *testing.T) {
 		if g := got[table]; g.Owner != want.Owner || g.Class != want.Class {
 			t.Errorf("%s = %s/%s, want %s/%s", table, g.Owner, g.Class, want.Owner, want.Class)
 		}
+	}
+}
+
+// The module lists of the composition root (ADR-0015 D3 M3a): a new module changes what is generated, so
+// -check fails until the list is regenerated; a hand-edited list fails; a header-less list fails.
+func TestCheckModuleListDrift(t *testing.T) {
+	root := t.TempDir()
+	put := func(p, c string) {
+		t.Helper()
+		full := filepath.Join(root, filepath.FromSlash(p))
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(c), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	put("go.mod", "module x.test\n\ngo 1.27.0\n")
+	put("migrations/0001_tenant_tenants.sql", good)
+	put("internal/modules/notify/module.go", "package notify\n\nconst ModuleID module.ID = \"notify\"\n")
+	put("internal/modules/search/s.go", "package search\n") // a library: no ModuleID, not listed
+	put("internal/agentmodules/addc/m.go", "package addc\n\nconst Kind = \"addc\"\n")
+	if err := os.MkdirAll(filepath.Join(root, filepath.Dir(out)), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := run(root, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := run(root, true); err != nil {
+		t.Fatalf("clean: %v", err)
+	}
+	srv, _ := os.ReadFile(filepath.Join(root, "internal/compose/server/modules.gen.go"))
+	if !strings.Contains(string(srv), "notify.New(deps, dir)") || strings.Contains(string(srv), "search") {
+		t.Fatalf("server list:\n%s", srv)
+	}
+	put("internal/modules/inventory/module.go", "package inventory\n\nconst ModuleID module.ID = \"inventory\"\n")
+	if err := run(root, true); err == nil || !strings.Contains(err.Error(), "modules.gen.go is stale") {
+		t.Fatalf("new module, list not regenerated: %v", err)
+	}
+	if err := run(root, false); err != nil {
+		t.Fatal(err)
+	}
+	put("internal/compose/agent/modules.gen.go", strings.TrimPrefix(string(srv), "x"))
+	if err := run(root, true); err == nil || !strings.Contains(err.Error(), "stale or hand-edited") {
+		t.Fatalf("hand-edited agent list: %v", err)
 	}
 }

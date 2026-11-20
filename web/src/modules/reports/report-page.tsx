@@ -23,6 +23,7 @@ import {
 } from "./api";
 import { Controls } from "./controls";
 import { ReportsFrame } from "./frame";
+import { SubjectPicker } from "./subjects";
 import {
   ageFromSeconds,
   cellText,
@@ -62,8 +63,12 @@ function useDefinition(client: ApiClient, id: string) {
   return { state, retry: () => setAttempt((n) => n + 1) };
 }
 
-/** A report needs objects named by GUID (a group, a user) that the console cannot offer yet. */
+/** A report is about specific objects (a group, a user) that the admin chooses before it runs. */
 const needsSubjects = (d: Definition) => d.subjectKind !== "" && d.subjectKind !== "none";
+
+/** The kind of object the picker offers; a report that names none (`object`) takes either, so groups lead. */
+const subjectKindOf = (d: Definition): "group" | "user" =>
+  d.subjectKind === "user" ? "user" : "group";
 
 function FailurePanel({
   failure,
@@ -515,7 +520,10 @@ export function ReportPage({ client = api }: { readonly client?: ApiClient }) {
   const view = useMemo(() => parseView(new URLSearchParams(searchText)), [searchText]);
   const { state: def, retry: retryDefinition } = useDefinition(client, id);
   const definition = def.status === "ready" ? def.definition : null;
-  const runnable = definition !== null && !needsSubjects(definition) ? definition : null;
+  const runnable =
+    definition !== null && (!needsSubjects(definition) || view.subjects.length > 0)
+      ? definition
+      : null;
   const { state: rs, rerun, cancel, retry } = useReportRun(client, runnable, view);
   const run = rs.status === "run" ? rs.run : null;
 
@@ -537,12 +545,17 @@ export function ReportPage({ client = api }: { readonly client?: ApiClient }) {
         <h2 className="rp-title">{d.name}</h2>
         {alias !== undefined && <p className="diq-hint">Also known as: {alias}</p>}
         {run !== null && <RunStrip run={run} />}
-        {needsSubjects(d) ? (
-          <StatePanel title="This report is about a specific group or user">
-            <p>
-              Choosing the {d.subjectKind} it covers needs an object picker, which the console does
-              not have yet. Nothing has been run.
-            </p>
+        {needsSubjects(d) && (
+          <SubjectPicker
+            client={client}
+            kind={subjectKindOf(d)}
+            applied={view.subjects}
+            onRun={(subjects) => change({ subjects })}
+          />
+        )}
+        {needsSubjects(d) && view.subjects.length === 0 ? (
+          <StatePanel title={`Choose the ${subjectKindOf(d)} this report covers`}>
+            <p>Search above, pick one or more, then run the report. Nothing has been run.</p>
           </StatePanel>
         ) : (
           <>
