@@ -33,6 +33,7 @@ type ObjectRef struct{}
 func GUIDRef(g [16]byte) ObjectRef { return ObjectRef{} }
 func DNRef(d DN) ObjectRef { return ObjectRef{} }
 func WKGUIDRef(g string) ObjectRef { return ObjectRef{} }
+func (ObjectRef) ForRequest() (string, error) { return "", nil }
 `
 
 const scopeStub = `package scope
@@ -89,9 +90,10 @@ func (s *Session) DeletedContainerDescriptor(ctx context.Context, domain dn.DN) 
 	if err != nil { return dn.DN{}, nil, err }
 	_ = head
 	container, _, err := wellKnownDN(nil, WKGUIDDeletedObjects)
+	base, err := dn.DNRef(container).ForRequest()
 	flags, err := NewSDFlags(/*B2SD*/SDOwner, SDDACL)
 	if err != nil { return dn.DN{}, nil, err }
-	_, err = s.searchOnceLocked(ctx, container.String(), /*B2SCOPE*/ldap.ScopeBaseObject, objectClassPresent,
+	_, err = s.searchOnceLocked(ctx, base, /*B2SCOPE*/ldap.ScopeBaseObject, objectClassPresent,
 		/*B2ATTRS*/[]string{"nTSecurityDescriptor"}, /*B2CTRL*/[]ldap.Control{flags.control(), scope.ShowDeleted()})
 	return container, nil, err
 }
@@ -185,6 +187,7 @@ func TestFailingFixtures(t *testing.T) {
 	good := strings.Replace(adTpl, "/*EXTRA*/", "", 1)
 	goodW := strings.Replace(writeTpl, "/*EXTRA*/", "", 1)
 	cases := []struct{ name, ad, write, want string }{
+		{"b2 base not from wellKnownDN WKGUID", strings.Replace(good, "wellKnownDN(nil, WKGUIDDeletedObjects)", "wellKnownDN(nil, \"other\")", 1), goodW, "base must be the container DN"},
 		{"b2 one-level search on the container", sub(good, "B2SCOPE", "ldap.ScopeSingleLevel"), goodW, "base scope"},
 		{"b2 subtree search with 417", sub(good, "B2SCOPE", "ldap.ScopeWholeSubtree"), goodW, "base scope"},
 		{"b2 star attribute", sub(good, "B2ATTRS", `[]string{"*"}`), goodW, "exactly []string"},

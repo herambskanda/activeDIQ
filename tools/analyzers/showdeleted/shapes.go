@@ -237,19 +237,42 @@ func isNTSDOnly(pass *analysis.Pass, e ast.Expr) bool {
 	return ok && len(cl.Elts) == 1 && strLit(pass, cl.Elts[0]) == "nTSecurityDescriptor"
 }
 
-// wkguidBase: the base argument is <container>.String() where container was assigned from a
-// wellKnownDN call whose second argument is the constant WKGUIDDeletedObjects.
+// wkguidBase: the base argument is an identifier assigned from dn.DNRef(<container>).ForRequest(),
+// where <container> was assigned from a wellKnownDN call whose second argument is the constant
+// WKGUIDDeletedObjects.
 func wkguidBase(pass *analysis.Pass, fd *ast.FuncDecl, base ast.Expr) bool {
-	c, ok := base.(*ast.CallExpr)
+	baseID, ok := base.(*ast.Ident)
 	if !ok {
 		return false
 	}
-	sel, ok := c.Fun.(*ast.SelectorExpr)
-	if !ok || sel.Sel.Name != "String" {
-		return false
-	}
-	recv, ok := sel.X.(*ast.Ident)
-	if !ok {
+	// which identifier was wrapped by dn.DNRef(...).ForRequest() into baseID
+	wrapped := ""
+	ast.Inspect(fd.Body, func(n ast.Node) bool {
+		as, ok := n.(*ast.AssignStmt)
+		if !ok || len(as.Rhs) != 1 || len(as.Lhs) == 0 {
+			return true
+		}
+		if li, ok := as.Lhs[0].(*ast.Ident); !ok || li.Name != baseID.Name {
+			return true
+		}
+		fc, ok := as.Rhs[0].(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		sel, ok := fc.Fun.(*ast.SelectorExpr)
+		if !ok || sel.Sel.Name != "ForRequest" {
+			return true
+		}
+		ref, ok := sel.X.(*ast.CallExpr)
+		if !ok || len(ref.Args) != 1 || !isCall(pass, ref, dnDir, "DNRef") {
+			return true
+		}
+		if id, ok := ref.Args[0].(*ast.Ident); ok {
+			wrapped = id.Name
+		}
+		return true
+	})
+	if wrapped == "" {
 		return false
 	}
 	found := false
@@ -274,7 +297,7 @@ func wkguidBase(pass *analysis.Pass, fd *ast.FuncDecl, base ast.Expr) bool {
 			return true
 		}
 		for _, l := range as.Lhs {
-			if li, ok := l.(*ast.Ident); ok && li.Name == recv.Name {
+			if li, ok := l.(*ast.Ident); ok && li.Name == wrapped {
 				found = true
 			}
 		}
