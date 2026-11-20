@@ -4,7 +4,7 @@
 // WriteChange it received with Encode. Both sides therefore agree by construction, and no wire field
 // can differ from what the digest covers.
 //
-// Encoding (names are the step.Attr names; a name that starts with "~" is a structural field, any
+// Encoding (names are the digest.Attr names; a name that starts with "~" is a structural field, any
 // other name is "<op>:<ldapDisplayName>"):
 //
 //	create: ~class, ~rdn, ~scope, ~security, ~enabled, ~secret (presence only), set:<attr>…
@@ -24,7 +24,7 @@ import (
 
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	"github.com/skenzeriq/activediq/internal/platform/operation/step"
+	"github.com/skenzeriq/activediq/internal/platform/operation/digest"
 	connectorv1 "github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1"
 )
 
@@ -83,7 +83,7 @@ var opPrefix = map[connectorv1.EditOp]string{
 }
 
 // Encode returns the digest attributes of a change. It refuses an arm it does not encode.
-func Encode(c *connectorv1.WriteChange) (key string, attrs []step.Attr, err error) {
+func Encode(c *connectorv1.WriteChange) (key string, attrs []digest.Attr, err error) {
 	switch x := c.GetChange().(type) {
 	case *connectorv1.WriteChange_ObjectCreate:
 		oc := x.ObjectCreate
@@ -102,7 +102,7 @@ func Encode(c *connectorv1.WriteChange) (key string, attrs []step.Attr, err erro
 			attrs = append(attrs, one("~enabled", "true"))
 		}
 		if oc.GetHasSecretInput() {
-			attrs = append(attrs, step.Attr{Name: "~secret", Secret: true})
+			attrs = append(attrs, digest.Attr{Name: "~secret", Secret: true})
 		}
 		for _, e := range oc.GetInitial() {
 			if e.GetOp() != connectorv1.EditOp_EDIT_OP_SET {
@@ -167,15 +167,15 @@ func memberClassOK(c connectorv1.DirectoryObjectClass) bool {
 	return false
 }
 
-func memberAttrs(g *connectorv1.Guid, c connectorv1.DirectoryObjectClass) ([]step.Attr, error) {
+func memberAttrs(g *connectorv1.Guid, c connectorv1.DirectoryObjectClass) ([]digest.Attr, error) {
 	t, err := GUIDText(g)
 	if err != nil || !memberClassOK(c) {
 		return nil, ErrEncoding
 	}
-	return []step.Attr{one(AttrMember, t), one(AttrMemberClass, classNames[c])}, nil
+	return []digest.Attr{one(AttrMember, t), one(AttrMemberClass, classNames[c])}, nil
 }
 
-func decodeMember(attrs []step.Attr) (*connectorv1.Guid, connectorv1.DirectoryObjectClass, error) {
+func decodeMember(attrs []digest.Attr) (*connectorv1.Guid, connectorv1.DirectoryObjectClass, error) {
 	var g *connectorv1.Guid
 	var c connectorv1.DirectoryObjectClass
 	for _, a := range attrs {
@@ -213,7 +213,7 @@ func decodeMember(attrs []step.Attr) (*connectorv1.Guid, connectorv1.DirectoryOb
 // Decode derives the typed change for a digest key from its attributes. It is Encode's inverse and
 // refuses a list Encode could not have produced (an unknown structural field, a duplicate one, an
 // unparsable value), so a caller cannot smuggle a field the digest does not pin.
-func Decode(key string, attrs []step.Attr) (*connectorv1.WriteChange, error) {
+func Decode(key string, attrs []digest.Attr) (*connectorv1.WriteChange, error) {
 	switch key {
 	case KeyGroupMemberAdd:
 		g, c, err := decodeMember(attrs)
@@ -303,25 +303,25 @@ func Decode(key string, attrs []step.Attr) (*connectorv1.WriteChange, error) {
 	return nil, ErrEncoding
 }
 
-func one(name, v string) step.Attr { return step.Attr{Name: name, Values: []string{v}} }
+func one(name, v string) digest.Attr { return digest.Attr{Name: name, Values: []string{v}} }
 
-func editAttr(e *connectorv1.AttributeEdit) (step.Attr, error) {
+func editAttr(e *connectorv1.AttributeEdit) (digest.Attr, error) {
 	p, ok := opPrefix[e.GetOp()]
 	if !ok || e.GetAttribute() == "" || strings.HasPrefix(e.GetAttribute(), "~") {
-		return step.Attr{}, ErrEncoding
+		return digest.Attr{}, ErrEncoding
 	}
-	a := step.Attr{Name: p + e.GetAttribute()}
+	a := digest.Attr{Name: p + e.GetAttribute()}
 	for _, v := range e.GetValues() {
 		s, err := encodeValue(v)
 		if err != nil {
-			return step.Attr{}, err
+			return digest.Attr{}, err
 		}
 		a.Values = append(a.Values, s)
 	}
 	return a, nil
 }
 
-func decodeEdit(a step.Attr) (*connectorv1.AttributeEdit, error) {
+func decodeEdit(a digest.Attr) (*connectorv1.AttributeEdit, error) {
 	if a.Secret {
 		return nil, ErrEncoding
 	}

@@ -32,11 +32,13 @@ const (
 	KindContainer     Kind = "container"
 	KindGMSA          Kind = "gmsa"
 	KindFSP           Kind = "fsp"
-	KindOther         Kind = "other"
+	// KindPrintQueue is a published printer (printQueue), a child of its server's computer object (T-1719, D13).
+	KindPrintQueue Kind = "printqueue"
+	KindOther      Kind = "other"
 )
 
 var validKinds = map[Kind]bool{KindUser: true, KindInetOrgPerson: true, KindGroup: true, KindComputer: true, KindContact: true,
-	KindOU: true, KindContainer: true, KindGMSA: true, KindFSP: true, KindOther: true}
+	KindOU: true, KindContainer: true, KindGMSA: true, KindFSP: true, KindPrintQueue: true, KindOther: true}
 
 // ObjectState is the DM-16 lifecycle state. AD: live, deleted, recycled, purged, out_of_scope.
 // Entra: active, soft_deleted, purged.

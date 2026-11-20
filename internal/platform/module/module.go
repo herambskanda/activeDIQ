@@ -26,12 +26,9 @@ import (
 	"github.com/skenzeriq/activediq/internal/platform/apihost"
 	"github.com/skenzeriq/activediq/internal/platform/authz"
 	"github.com/skenzeriq/activediq/internal/platform/capability"
-	"github.com/skenzeriq/activediq/internal/platform/jobs"
 	"github.com/skenzeriq/activediq/internal/platform/operation"
 	"github.com/skenzeriq/activediq/internal/platform/report"
-	"github.com/skenzeriq/activediq/internal/platform/store"
 	"github.com/skenzeriq/activediq/internal/platform/store/owners"
-	"github.com/skenzeriq/activediq/internal/platform/tenant"
 )
 
 // ID is a module's stable identifier. It is also its OpenAPI tag and its web module ID.
@@ -89,20 +86,21 @@ type Registrar struct {
 	seen    map[string]struct{}
 }
 
-// Job is one job kind a module contributes (EP-5). Kind.Name must start with "<moduleID>.". Seed, when
-// set, is called by the composition root once per boot for the install tenant, in that tenant's
-// transaction, after the tenant exists; it must be idempotent (a keyed enqueue). The module starts no
-// goroutine: the kernel's worker runs the kind and the kernel calls Seed.
-type Job struct {
-	Kind jobs.Kind
-	Seed func(ctx context.Context, tx store.Tx, tid tenant.ID) error
+// Job is one job kind a module contributes (EP-5). The concrete type is jobcontrib.Job; module names
+// only this interface so that it imports neither jobs, store nor tenant (ADR-0005 rule 13).
+// JobName is the kind's name and must start with "<moduleID>.".
+type Job interface {
+	JobName() string
 }
 
-// Job registers a job kind (EP-5) in the module's namespace.
+// Job registers a job kind (EP-5) in the module's namespace. Build it with jobcontrib.Job.
 func (r *Registrar) Job(j Job) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if err := r.claim("job", j.Kind.Name); err != nil {
+	if j == nil {
+		return fmt.Errorf("%w: nil job", ErrInvalid)
+	}
+	if err := r.claim("job", j.JobName()); err != nil {
 		return err
 	}
 	r.jobs = append(r.jobs, j)
@@ -262,7 +260,7 @@ type Contributions struct {
 	ready   []func(context.Context) error
 }
 
-// Jobs lists the job kinds modules registered, in boot order. compose/server registers them on the
+// Jobs lists the job kinds modules registered, in boot order; jobcontrib.All types them. compose/server registers them on the
 // job registry and runs each Seed for the install tenant.
 func (c *Contributions) Jobs() []Job { return append([]Job(nil), c.jobs...) }
 
@@ -435,4 +433,32 @@ func satisfied(required []capability.ID, enabled capability.Set) bool {
 		}
 	}
 	return true
+}
+
+// DeclaredPermissions registers every module in a throwaway registrar, whatever its capability
+// requirements, and returns the permission of each Action and each registered permission, sorted and
+// unique. The OpenAPI contract is the same on every install, so its x-permission values must be in
+// the catalogue even where a module's capability is off; compose/server adds these to the kernel's.
+// The modules must be built against zero Deps (Register does no I/O).
+func DeclaredPermissions(mods []Entry) ([]string, error) {
+	var out []string
+	for _, e := range mods {
+		if e.Module == nil {
+			return nil, fmt.Errorf("%w: entry %q has no module", ErrInvalid, e.ID)
+		}
+		r := &Registrar{owner: e.ID, open: true, seen: map[string]struct{}{}}
+		err := e.Module.Register(r)
+		r.close()
+		if err != nil {
+			return nil, fmt.Errorf("module %q: register: %w", e.ID, err)
+		}
+		for _, a := range r.actions {
+			out = append(out, string(a.Describe().Permission))
+		}
+		for _, p := range r.perms {
+			out = append(out, string(p))
+		}
+	}
+	slices.Sort(out)
+	return slices.Compact(out), nil
 }

@@ -8,9 +8,9 @@ import (
 	"testing"
 
 	"github.com/skenzeriq/activediq/internal/directory/client"
+	"github.com/skenzeriq/activediq/internal/directory/objectdef"
 	"github.com/skenzeriq/activediq/internal/directory/writechange"
 	"github.com/skenzeriq/activediq/internal/modules/ad"
-	"github.com/skenzeriq/activediq/internal/modules/objects"
 	"github.com/skenzeriq/activediq/internal/platform/authority"
 	"github.com/skenzeriq/activediq/internal/platform/authz"
 	"github.com/skenzeriq/activediq/internal/platform/operation"
@@ -32,6 +32,9 @@ type dirFake struct {
 	objs   map[string]client.ObjectState
 	bin    bool
 	writes []client.WriteOp
+	// children is the child count served for an OU; members holds "group/member" pairs of direct members.
+	children map[string]*client.ChildCount
+	members  map[string]bool
 }
 
 func newDir() *dirFake {
@@ -49,6 +52,19 @@ func (d *dirFake) Object(_ context.Context, _ authority.Pins, t authority.Target
 		return client.ObjectState{}, nil
 	}
 	return st, nil
+}
+
+func (d *dirFake) ObjectWithChildCount(_ context.Context, _ authority.Pins, t authority.TargetRef) (client.ObjectState, error) {
+	st, ok := d.objs[t.GUID]
+	if !ok || st.Deleted {
+		return client.ObjectState{}, nil
+	}
+	st.ChildCount = d.children[t.GUID]
+	return st, nil
+}
+
+func (d *dirFake) DirectMember(_ context.Context, _ authority.Pins, g, m authority.TargetRef) (bool, error) {
+	return d.members[g.GUID+"/"+m.GUID], nil
 }
 
 func (d *dirFake) RecycleBin(context.Context, authority.Pins, authority.NamingContextID) (bool, error) {
@@ -70,6 +86,12 @@ func (d *dirFake) Write(_ context.Context, s step.Step, op client.WriteOp) (clie
 		return ""
 	}
 	switch op.DigestKind {
+	case "ad.group.addMember", "ad.group.removeMember":
+		if d.members == nil {
+			d.members = map[string]bool{}
+		}
+		d.members[op.Target.GUID+"/"+attr("~member")] = op.DigestKind == "ad.group.addMember"
+		return client.Result{}, nil
 	case client.DigestObjectMove:
 		st.Parent = attr(client.AttrNewParent)
 	case client.DigestObjectRename:
@@ -113,40 +135,40 @@ func planErr(a operation.Action, in operation.Input) error {
 }
 
 // defsFake serves one Template and its two naming formats.
-type defsFake struct{ tpl objects.Template }
+type defsFake struct{ tpl objectdef.Template }
 
-func (f defsFake) Template(_ context.Context, _ store.Tx, ref ad.TemplateRef) (objects.Stored[objects.Template], error) {
+func (f defsFake) Template(_ context.Context, _ store.Tx, ref ad.TemplateRef) (objectdef.Stored[objectdef.Template], error) {
 	if ref.ID != "t1" {
-		return objects.Stored[objects.Template]{}, objects.ErrNotFound
+		return objectdef.Stored[objectdef.Template]{}, objectdef.ErrNotFound
 	}
-	return objects.Stored[objects.Template]{ID: "t1", Version: 3, State: objects.StatePublished, Def: f.tpl}, nil
+	return objectdef.Stored[objectdef.Template]{ID: "t1", Version: 3, State: objectdef.StatePublished, Def: f.tpl}, nil
 }
 
-func (f defsFake) NamingFormat(_ context.Context, _ store.Tx, pin objects.Pin) (objects.Stored[objects.NamingFormat], error) {
-	tok := func(a string, take int) objects.Token {
-		return objects.Token{Kind: objects.TokenAttr, Attr: a, Take: take, Case: objects.CaseLower}
+func (f defsFake) NamingFormat(_ context.Context, _ store.Tx, pin objectdef.Pin) (objectdef.Stored[objectdef.NamingFormat], error) {
+	tok := func(a string, take int) objectdef.Token {
+		return objectdef.Token{Kind: objectdef.TokenAttr, Attr: a, Take: take, Case: objectdef.CaseLower}
 	}
-	var nf objects.NamingFormat
+	var nf objectdef.NamingFormat
 	switch pin.ID {
 	case "sam":
-		nf = objects.NamingFormat{Name: "sam", Purpose: objects.PurposeSAMAccountName, Alternatives: []objects.Alternative{{Tokens: []objects.Token{tok("givenName", 1), tok("sn", 0)}}}}
+		nf = objectdef.NamingFormat{Name: "sam", Purpose: objectdef.PurposeSAMAccountName, Alternatives: []objectdef.Alternative{{Tokens: []objectdef.Token{tok("givenName", 1), tok("sn", 0)}}}}
 	case "cn":
-		nf = objects.NamingFormat{Name: "cn", Purpose: objects.PurposeCN, Alternatives: []objects.Alternative{{Tokens: []objects.Token{
-			{Kind: objects.TokenAttr, Attr: "givenName"}, {Kind: objects.TokenLiteral, Literal: " "}, {Kind: objects.TokenAttr, Attr: "sn"}}}}}
+		nf = objectdef.NamingFormat{Name: "cn", Purpose: objectdef.PurposeCN, Alternatives: []objectdef.Alternative{{Tokens: []objectdef.Token{
+			{Kind: objectdef.TokenAttr, Attr: "givenName"}, {Kind: objectdef.TokenLiteral, Literal: " "}, {Kind: objectdef.TokenAttr, Attr: "sn"}}}}}
 	}
-	return objects.Stored[objects.NamingFormat]{ID: pin.ID, Version: pin.Version, State: objects.StateActive, Def: nf}, nil
+	return objectdef.Stored[objectdef.NamingFormat]{ID: pin.ID, Version: pin.Version, State: objectdef.StateActive, Def: nf}, nil
 }
 
-func userTemplate() objects.Template {
-	return objects.Template{
-		Name: "Staff", Kind: objects.KindUser, Provider: objects.ProviderAD, Purpose: objects.PurposeCreate,
-		Fields: []objects.FieldRule{
-			{Attribute: "givenName", Mode: objects.ModeEditable, Mandatory: true},
-			{Attribute: "sn", Mode: objects.ModeEditable, Mandatory: true},
-			{Attribute: "department", Mode: objects.ModeReadOnly, Default: "IT"},
+func userTemplate() objectdef.Template {
+	return objectdef.Template{
+		Name: "Staff", Kind: objectdef.KindUser, Provider: objectdef.ProviderAD, Purpose: objectdef.PurposeCreate,
+		Fields: []objectdef.FieldRule{
+			{Attribute: "givenName", Mode: objectdef.ModeEditable, Mandatory: true},
+			{Attribute: "sn", Mode: objectdef.ModeEditable, Mandatory: true},
+			{Attribute: "department", Mode: objectdef.ModeReadOnly, Default: "IT"},
 		},
-		NamingFormats: map[objects.NamePurpose]objects.Pin{
-			objects.PurposeSAMAccountName: {ID: "sam", Version: 1}, objects.PurposeCN: {ID: "cn", Version: 1},
+		NamingFormats: map[objectdef.NamePurpose]objectdef.Pin{
+			objectdef.PurposeSAMAccountName: {ID: "sam", Version: 1}, objectdef.PurposeCN: {ID: "cn", Version: 1},
 		},
 	}
 }
@@ -417,7 +439,7 @@ func TestCreateTemplateDefaultOutsideAllowlistRefused(t *testing.T) {
 	long := strings.Repeat("x", 1025)
 	for _, attr := range []string{"userAccountControl", "memberOf", "primaryGroupID", "scriptPath", "servicePrincipalName"} {
 		tpl := userTemplate()
-		tpl.Fields = append(tpl.Fields, objects.FieldRule{Attribute: attr, Mode: objects.ModeReadOnly, Default: "1"})
+		tpl.Fields = append(tpl.Fields, objectdef.FieldRule{Attribute: attr, Mode: objectdef.ModeReadOnly, Default: "1"})
 		d := newDir()
 		err := planErr(lifeActions(t, d, defsFake{tpl})[ad.CreateID], input(t, createIn(map[string]string{"givenName": "A", "sn": "S"})))
 		if !errors.Is(err, operation.ErrInvalid) || !strings.Contains(err.Error(), "attribute_not_allowed") && !strings.Contains(err.Error(), ad.ReasonAttributeDenied) {

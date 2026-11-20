@@ -241,6 +241,18 @@ func (m *Model) checkSchema(p *parser, s *Schema) {
 				kinds[ks.Const] = v
 			}
 		}
+		// The generated TypeScript names a variant by its mapping key; without an entry for every const
+		// openapi-typescript emits the schema name and the type disagrees with the wire (T-2226).
+		for kind, v := range kinds {
+			if got, ok := s.Mapping[kind]; !ok || got != v {
+				p.fail(s.Where, "discriminator.mapping must map %q to %s: every variant's kind const needs an entry", kind, v)
+			}
+		}
+		for kind := range s.Mapping {
+			if _, ok := kinds[kind]; !ok {
+				p.fail(s.Where, "discriminator.mapping key %q is no variant's kind const", kind)
+			}
+		}
 	}
 	if s.Nullable {
 		p.fail(s.Where, "a component schema is not nullable; nullability belongs to a required member")

@@ -39,15 +39,18 @@ func migrationsFS(t *testing.T, keep func(name string) bool) fs.FS {
 // the structure is as the ADR says, and the privileges are the runtime role's.
 // objectChangesMig is the T-1109 history table the object upsert writes to; it does not depend on the postings,
 // so the pre-0074 schema carries it and the populate step works.
-// policyGatesMig adds the rodc_krbtgt column the upsert writes (T-1134).
-const policyGatesMig = "0082_inventory_policy_gates.sql"
+// policyGatesMigSuffix is the T-1134 migration that adds the rodc_krbtgt column the upsert writes.
+const policyGatesMigSuffix = "_inventory_policy_gates.sql"
 
-const objectChangesMig = "0078_inventory_object_changes.sql"
+// It is matched by its name without the number so a renumber cannot break the test again.
+const objectChangesMigSuffix = "_inventory_object_changes.sql"
 
 func Test_migration_0074_builds_the_postings_over_a_populated_database(t *testing.T) {
 	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
 		const mig = "0074_inventory_search_trigrams.sql"
-		e := setupFS(t, s, migrationsFS(t, func(n string) bool { return n < mig || n == objectChangesMig || n == policyGatesMig }))
+		e := setupFS(t, s, migrationsFS(t, func(n string) bool {
+			return n < mig || strings.HasSuffix(n, objectChangesMigSuffix) || strings.HasSuffix(n, policyGatesMigSuffix)
+		}))
 		e.hStructure(t, e.adA)
 		if _, err := e.populate(t, e.adA, hBase, sSrchUser(1, "praman", "Priya Raman"), sSrchUser(2, "jdoe", "Jóhn Döe")); err != nil {
 			t.Fatal(err)

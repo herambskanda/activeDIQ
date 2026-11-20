@@ -107,6 +107,11 @@ grooming makes tickets ready. If the follow-up genuinely blocks you, block your 
   `feat fix test refactor docs chore ci perf`. Always end the subject with the ticket ID.
 - Never commit secrets, `.env*`, keys, tokens, lab passwords or customer data. If the guard hook
   blocks a write, it is right — fix the content, do not route around it.
+- Never run the full merge gate yourself: no bare `factory premerge <id>`, no `make ci` or
+  `make -k ci`. It takes ~75 min and competes for CPU and PostgreSQL with the dispatcher's live
+  gate, which then fails on load (pg18 "connection reset") and refuses an innocent ticket. Check
+  your work with the targeted job (`make fitness-safeprim`, `go test ./internal/<pkg>/...`) or
+  `factory premerge <id> -- <targeted command>`. Only the dispatcher runs the full gate.
 
 ## 8. Escalation
 
@@ -123,6 +128,14 @@ All ACs demonstrably met · tests written and passing · code review passed · Q
 evidence · docs and `knowledge/development/architecture/` updated if anything user-visible or
 structural changed · superseded code deleted · merged to `main` · two-line summary on the ticket.
 As owner you deliver the first, second, fifth and sixth before you advance.
+
+**Pre-screen before you advance (product code).** `make prescreen` (a few minutes: the cheap, Docker-free
+checks) must show no finding that `main` does not already have, run on your branch **after merging the
+current `main` into it**. Put its last lines and the time it took in your note. QA runs it again on its
+own and checks that line. It is cheap on purpose: a simple mistake caught here costs minutes, the same
+mistake caught by the merge gate costs a 35 to 50 minute run and a strike. It does not replace anything:
+the dispatcher still runs the full gate, and you still never run that yourself (section above). Tickets
+that change no product code (docs, factory runtime, skills) skip it.
 
 ## 10. Output rules — review blockers, not style
 

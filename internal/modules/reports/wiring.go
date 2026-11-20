@@ -12,12 +12,15 @@ import (
 	"github.com/skenzeriq/activediq/internal/modules/reports/export"
 	"github.com/skenzeriq/activediq/internal/modules/reports/library"
 	"github.com/skenzeriq/activediq/internal/modules/reports/run"
+	"github.com/skenzeriq/activediq/internal/modules/reports/schedule"
 	"github.com/skenzeriq/activediq/internal/platform/apihost"
 	"github.com/skenzeriq/activediq/internal/platform/authority"
 	"github.com/skenzeriq/activediq/internal/platform/authz"
 	"github.com/skenzeriq/activediq/internal/platform/blob"
 	"github.com/skenzeriq/activediq/internal/platform/module"
+	"github.com/skenzeriq/activediq/internal/platform/module/jobcontrib"
 	"github.com/skenzeriq/activediq/internal/platform/operation"
+	"github.com/skenzeriq/activediq/internal/platform/operation/opapi"
 	"github.com/skenzeriq/activediq/internal/platform/rbac"
 	"github.com/skenzeriq/activediq/internal/platform/report"
 	"github.com/skenzeriq/activediq/internal/platform/store"
@@ -41,6 +44,8 @@ type wiring struct {
 	exports  *export.Service
 	cat      *lateLibrary
 	handlers *Handlers
+	// sched is nil when the kernel gave no Runner (a boot with the reads only).
+	sched *Schedules
 }
 
 // build wires the services from the kernel ports. A nil store means the module is not configured for
@@ -59,6 +64,9 @@ func (m *Module) build() (*wiring, error) {
 	cat := &lateLibrary{}
 	svc := &run.Service{DB: d.DB, Jobs: d.Jobs, Scopes: d.ReadScopes, Audit: d.Audit, Catalog: cat, Codec: Codec{},
 		Fresh: inventoryFreshness{r: m.dir.Inventory}}
+	if pd := m.dir.PerDC; pd != nil { // a nil pointer in an interface would defeat the run's nil check
+		svc.PerDC, svc.PerDCDCs = pd, pd
+	}
 	exports := &export.Service{DB: d.DB, Jobs: d.Jobs, Runs: svc, Audit: d.Audit, Authz: authorizer{az: d.Authz}}
 	if d.BlobDir != "" {
 		bs, err := blob.NewFS(d.BlobDir)
@@ -67,8 +75,23 @@ func (m *Module) build() (*wiring, error) {
 		}
 		exports.Blob = bs
 	}
-	return &wiring{runs: svc, exports: exports, cat: cat,
-		handlers: &Handlers{Runs: svc, Exports: exports, Library: cat}}, nil
+	h := &Handlers{Runs: svc, Exports: exports, Library: cat}
+	w := &wiring{runs: svc, exports: exports, cat: cat, handlers: h}
+	if d.Runner != nil && d.OwnerStatus != nil && d.Deliveries != nil && d.Accounts != nil {
+		// A delivery link is authorised by the DM-84 row that sent it and the recipient's standing now (RP10).
+		exports.Links = export.DeliveryLinks{Deliveries: d.Deliveries, Owners: d.OwnerStatus}
+		env := &schedule.Env{Catalog: cat, Codec: Codec{}, Authz: authorizer{az: d.Authz}, Owners: d.OwnerStatus, Accounts: d.Accounts,
+			Scopes: d.ReadScopes, Perm: schedule.Permissions{Run: RunPermission, Schedule: SchedulePermission,
+				ManageAll: ScheduleManageAllPermission, DeliverExternal: DeliverExternalPermission}}
+		fire := &schedule.Fire{Env: env, DB: d.DB, Jobs: d.Jobs, Runs: svc, Exports: exports, Deliveries: d.Deliveries, Audit: d.Audit}
+		sd := &Schedules{Env: env, Fire: fire, Runner: d.Runner, DB: d.DB, Deliveries: d.Deliveries}
+		if d.StepUp != nil {
+			sd.FreshStepUp = d.StepUp.FreshSession
+		}
+		sd.Family = opapi.Family{Prefix: "reports.schedule", Base: SchedulePermission, Runner: d.Runner, Caller: h.freshCaller}
+		h.Schedules, w.sched = sd, sd
+	}
+	return w, nil
 }
 
 // register contributes the routes, the job kinds and the ready hook. The retention cadence is seeded by
@@ -78,7 +101,7 @@ func (w *wiring) register(r *module.Registrar, m *Module) error {
 	if err := r.API(api.Bind(w.handlers)); err != nil {
 		return err
 	}
-	for _, j := range []module.Job{
+	for _, j := range []jobcontrib.Job{
 		{Kind: w.runs.Kind()},
 		{Kind: w.runs.RetentionKind(), Seed: func(ctx context.Context, tx store.Tx, tid tenant.ID) error {
 			return w.runs.ScheduleRetention(ctx, tx, tid)
@@ -86,6 +109,26 @@ func (w *wiring) register(r *module.Registrar, m *Module) error {
 		{Kind: w.exports.Kind()},
 	} {
 		if err := r.Job(j); err != nil {
+			return err
+		}
+	}
+	if w.sched != nil {
+		acts, err := w.sched.Env.Actions()
+		if err != nil {
+			return err
+		}
+		for _, a := range acts {
+			if err := r.Action(a); err != nil {
+				return err
+			}
+		}
+		tick, fire := w.sched.Fire.Kinds()[0], w.sched.Fire.Kinds()[1]
+		if err := r.Job(jobcontrib.Job{Kind: tick, Seed: func(ctx context.Context, tx store.Tx, tid tenant.ID) error {
+			return w.sched.Fire.SeedTick(ctx, tx, tid)
+		}}); err != nil {
+			return err
+		}
+		if err := r.Job(jobcontrib.Job{Kind: fire}); err != nil {
 			return err
 		}
 	}

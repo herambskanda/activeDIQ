@@ -112,3 +112,32 @@ func Test_user_attribute_columns_carry_no_secret_or_binary(t *testing.T) {
 		}
 	}
 }
+
+// T-2216 AC1/AC2: a seeded unread attribute stores as not_observed, distinguishable from a row with no
+// marker (NULL); the existing columns are unchanged.
+func Test_user_read_state_columns(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		e := setup(t, s)
+		reg := e.registry(t)
+		e.hStructure(t, e.adA)
+		seen := hUser{guid: hGUID(1, 1), sam: "seen", rid: 1100, uac: i64(uacNormal), read: 15, pwdLastSet: hBase}.obs()
+		seen.Attributes = map[string]any{"mail": "s@example.test", "attrRead": map[string]any{"mail": "observed", "scriptPath": "not_observed"}}
+		old := hUser{guid: hGUID(1, 2), sam: "old", rid: 1101, uac: i64(uacNormal), read: 15, pwdLastSet: hBase}.obs()
+		if _, err := e.populate(t, e.adA, hBase, seen, old); err != nil {
+			t.Fatal(err)
+		}
+		res := e.run(t, reg, hQuery{dataset: inventory.DatasetUsers, cols: []report.ColumnID{"sam_account_name", "mail", "mail_read_state", "logon_script", "logon_script_read_state"}, scope: e.scopeNC(e.adA), now: hBase})
+		a, b := res.rows[hGUID(1, 1)], res.rows[hGUID(1, 2)]
+		if a == nil || b == nil {
+			t.Fatalf("rows = %v", res.order)
+		}
+		for c, want := range map[report.ColumnID]string{"mail_read_state": "observed", "logon_script_read_state": "not_observed", "mail": "s@example.test", "logon_script": ""} {
+			if got := string(a[c].DigestValue()); got != want {
+				t.Errorf("seen.%s = %q, want %q", c, got, want)
+			}
+		}
+		if got := string(b["mail_read_state"].DigestValue()); got != "" {
+			t.Errorf("a row with no marker reads %q, want empty", got)
+		}
+	})
+}
