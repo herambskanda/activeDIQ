@@ -78,7 +78,7 @@ func (r *Runner) PreviewStore(ctx context.Context, req Request) (Preview, error)
 	}
 	req.Origin = originOrDefault(req.Origin)
 	u := &run{r: r, req: req, act: act, d: d, persist: true}
-	p := Preview{Action: d.ID, Version: d.Version, StepUpRequired: d.StepUp, Hold: HoldNone, Reversibility: Reversible,
+	p := Preview{Action: d.ID, Version: d.Version, StepUpRequired: d.NeedsStepUp(req.Input), Hold: HoldNone, Reversibility: Reversible,
 		Steps: []StepPlan{}, Blocked: []Blocked{}, Confirmations: []Confirmation{}}
 	steps, err := u.planSteps(ctx)
 	if err != nil {

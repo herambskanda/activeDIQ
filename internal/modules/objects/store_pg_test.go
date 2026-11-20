@@ -3,6 +3,7 @@ package objects
 import (
 	"context"
 	"errors"
+	"github.com/skenzeriq/activediq/internal/directory/objectdef"
 	"os"
 	"testing"
 
@@ -53,7 +54,7 @@ func TestTemplateLifecycle(t *testing.T) {
 			}
 		})
 		tpl := userTemplate()
-		tpl.NamingFormats = map[NamePurpose]Pin{PurposeSAMAccountName: {ID: fid, Version: 1}}
+		tpl.NamingFormats = map[NamePurpose]objectdef.Pin{objectdef.PurposeSAMAccountName: {ID: fid, Version: 1}}
 		var id string
 		e.in(e.a, func(ctx context.Context, tx store.Tx) {
 			var v int
@@ -96,16 +97,16 @@ func TestTemplateLifecycle(t *testing.T) {
 			if l, err := (Templates{}).Latest(ctx, tx, id); err != nil || l.Version != 1 {
 				t.Fatalf("an unpublished draft must not be the pinned one: %+v %v", l, err)
 			}
-			list, err := (Templates{}).List(ctx, tx, KindUser)
+			list, err := (Templates{}).List(ctx, tx, objectdef.KindUser)
 			if err != nil || len(list) != 1 || list[0].Version != 2 || list[0].State != StateDraft {
 				t.Fatalf("list: %+v %v", list, err)
 			}
-			if l, err := (Templates{}).List(ctx, tx, KindGroup); err != nil || len(l) != 0 {
+			if l, err := (Templates{}).List(ctx, tx, objectdef.KindGroup); err != nil || len(l) != 0 {
 				t.Fatalf("list by kind: %+v %v", l, err)
 			}
 			// The kind of a definition cannot change.
 			g := tpl
-			g.Kind = KindGroup
+			g.Kind = objectdef.KindGroup
 			g.NamingFormats = nil
 			if _, _, err := saveTemplateTx(ctx, tx, id, g); !errors.Is(err, ErrPurpose) {
 				t.Fatalf("kind change: %v", err)

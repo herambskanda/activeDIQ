@@ -156,6 +156,7 @@ var kindOfClass = []struct {
 	{"contact", inventory.KindContact},
 	{"foreignsecurityprincipal", inventory.KindFSP},
 	{"container", inventory.KindContainer},
+	{"printqueue", inventory.KindPrintQueue},
 }
 
 // Map maps one entry. A malformed entry is an *Error (errors.Is(err, ErrMalformed)); the caller counts
@@ -327,21 +328,9 @@ func kindOf(classes []string) inventory.Kind {
 // object sits in the Deleted Objects container, which is not where it belongs: its parent is its
 // lastKnownParent, or none.
 func (m *Mapper) place(o *inventory.Observation, e *connectorv1.DirectoryEntry, set attrSet) error {
-	d := e.GetDn().GetDisplayDn()
-	if d == "" {
-		return refuse("dn", CodeMissing)
-	}
-	if len(d) > maxDN {
-		return refuse("dn", CodeTooLong)
-	}
-	parsed, err := dn.Parse(d, dn.Strict)
-	if err != nil {
-		return refuse("dn", CodeBadDN)
-	}
-	o.DN = parsed.String()
-	o.RDN = rdnOf(parsed)
-	if utf8.RuneCountInString(o.RDN) > maxRDN {
-		return refuse("dn", CodeTooLong)
+	var err error
+	if o.DN, o.RDN, err = parseDisplayDN(e.GetDn().GetDisplayDn()); err != nil {
+		return err
 	}
 
 	if o.State != inventory.ObjLive {
@@ -369,6 +358,25 @@ func (m *Mapper) place(o *inventory.Observation, e *connectorv1.DirectoryEntry, 
 		o.Ancestry = []inventory.GUID{m.nc}
 	}
 	return nil
+}
+
+// parseDisplayDN validates a display DN (strict RFC 4514) and returns it rendered with its first RDN.
+func parseDisplayDN(d string) (full, rdn string, err error) {
+	if d == "" {
+		return "", "", refuse("dn", CodeMissing)
+	}
+	if len(d) > maxDN {
+		return "", "", refuse("dn", CodeTooLong)
+	}
+	parsed, perr := dn.Parse(d, dn.Strict)
+	if perr != nil {
+		return "", "", refuse("dn", CodeBadDN)
+	}
+	rdn = rdnOf(parsed)
+	if utf8.RuneCountInString(rdn) > maxRDN {
+		return "", "", refuse("dn", CodeTooLong)
+	}
+	return parsed.String(), rdn, nil
 }
 
 // rdnOf is the first RDN of a parsed DN, rendered: the whole DN less its parent.
@@ -537,6 +545,17 @@ func (m *Mapper) bag(o *inventory.Observation, set attrSet) error {
 	if err := searchIdentifiers(bag, set); err != nil {
 		return err
 	}
+	if err := userAttributes(bag, set); err != nil {
+		return err
+	}
+	if o.State == inventory.ObjLive && (o.Kind == inventory.KindUser || o.Kind == inventory.KindInetOrgPerson) {
+		bag[inventory.ReadMarkerKey] = m.readMarker(bag)
+	}
+	if o.Kind == inventory.KindPrintQueue {
+		if err := printQueueAttributes(bag, set); err != nil {
+			return err
+		}
+	}
 	if s, present, err := firstText(set, "description", 4096); err != nil {
 		return err
 	} else if present && s != "" {
@@ -642,6 +661,147 @@ func searchIdentifiers(bag map[string]any, set attrSet) error {
 		}
 		if len(list) > 0 {
 			bag["sIDHistory"] = list[:min(len(list), maxSearchValues)]
+		}
+	}
+	return nil
+}
+
+// logonHoursLen is the size of the logonHours schedule: 168 bits, one per hour of the week.
+const logonHoursLen = 21
+
+// userAttributes adds the attributes the user-attribute reports read (T-1111, reports-2-second-slice D11).
+// An attribute the entry does not carry adds nothing. Binary values are never stored: a photo becomes
+// the flag hasThumbnailPhoto or hasJpegPhoto, and logonHours becomes its 168 bits as text, bit 0 first
+// (Sunday 00:00 UTC), '1' for an hour the account may log on. No secret is read here.
+func userAttributes(bag map[string]any, set attrSet) error {
+	for _, name := range []string{"msNPAllowDialin", "msRTCSIP-UserEnabled"} {
+		if b, present, err := boolean(set, name); err != nil {
+			return err
+		} else if present {
+			if a, _ := set.get(name); len(a.GetValues()) > 0 {
+				bag[name] = b
+			}
+		}
+	}
+	for _, a := range []struct {
+		name string
+		max  int
+	}{{"scriptPath", 260}, {"telephoneNumber", 64}, {"mobile", 64}} {
+		if s, present, err := text(set, a.name, a.max); err != nil {
+			return err
+		} else if present && s != "" {
+			bag[a.name] = s
+		}
+	}
+	if d, present, err := dnValue(set, "manager"); err != nil {
+		return err
+	} else if present && d != nil {
+		s, err := cleanText("manager", d.DisplayDn, maxDN)
+		if err != nil {
+			return err
+		}
+		if s != "" {
+			bag["manager"] = s
+		}
+	}
+	for _, p := range []struct{ attr, key string }{{"thumbnailPhoto", "hasThumbnailPhoto"}, {"jpegPhoto", "hasJpegPhoto"}} {
+		a, ok := set.get(p.attr)
+		if !ok {
+			continue
+		}
+		// Only whether a value exists: the bytes are dropped here and never leave this function.
+		vs, err := values(a, p.attr)
+		if err != nil {
+			return err
+		}
+		for _, v := range vs {
+			o, isOctets := v.GetValue().(*connectorv1.AttributeValue_Octets)
+			if !isOctets {
+				return refuse(p.attr, CodeType)
+			}
+			if len(o.Octets) > 0 {
+				bag[p.key] = true
+			}
+		}
+	}
+	if a, ok := set.get("logonHours"); ok {
+		v, err := one(a, "logonHours")
+		if err != nil {
+			return err
+		}
+		if v != nil {
+			o, isOctets := v.GetValue().(*connectorv1.AttributeValue_Octets)
+			if !isOctets {
+				return refuse("logonHours", CodeType)
+			}
+			if len(o.Octets) != logonHoursLen {
+				return refuse("logonHours", CodeRange)
+			}
+			bits := make([]byte, 0, logonHoursLen*8)
+			for _, b := range o.Octets {
+				for i := 0; i < 8; i++ {
+					bits = append(bits, '0'+(b>>i)&1)
+				}
+			}
+			bag["logonHours"] = string(bits)
+		}
+	}
+	return nil
+}
+
+// readMarkerAttrs maps each attribute whose read-state the user-attribute reports expose (T-2216, T-1112)
+// to the bag key the mapper stores it under. The marker is keyed by ldapDisplayName.
+var readMarkerAttrs = []struct{ attr, key string }{
+	{"mail", "mail"}, {"employeeID", "employeeID"}, {"department", "department"}, {"title", "title"},
+	{"company", "company"}, {"telephoneNumber", "telephoneNumber"}, {"mobile", "mobile"}, {"description", "description"},
+	{"manager", "manager"}, {"scriptPath", "scriptPath"}, {"msNPAllowDialin", "msNPAllowDialin"},
+	{"msRTCSIP-UserEnabled", "msRTCSIP-UserEnabled"}, {"logonHours", "logonHours"},
+	{"thumbnailPhoto", "hasThumbnailPhoto"}, {"jpegPhoto", "hasJpegPhoto"},
+}
+
+// readMarker records, per attribute, whether this sync observed a stored value: inventory.ReadObserved when
+// the bag holds one (so an empty value is not observed, as everywhere else in the mapper),
+// inventory.ReadNotObserved when it does not. AD omits an attribute the account cannot read exactly as it
+// omits an empty one, so not_observed means "absent or unreadable", never "empty". ReadUnknownDenied is
+// reserved for a DACL evaluation (T-2220) and is not written here. An attribute this mapper never requests
+// gets no marker: not read is not the same as read and not seen.
+func (mp *Mapper) readMarker(bag map[string]any) map[string]any {
+	m := make(map[string]any, len(readMarkerAttrs))
+	for _, a := range readMarkerAttrs {
+		if !mp.wanted[strings.ToLower(a.attr)] {
+			continue // never requested (a schema secret, or left off the request): this sync did not try to read it
+		}
+		state := inventory.ReadNotObserved
+		if _, ok := bag[a.key]; ok {
+			state = inventory.ReadObserved
+		}
+		m[a.attr] = state
+	}
+	return m
+}
+
+// printQueueAttributes adds the attributes of a published printer (T-1719, reports-2-second-slice 7.2 and D13).
+// They are read for printQueue objects only, so a computer's own location never enters the bag. An
+// attribute the entry does not carry adds nothing; printColor and printDuplexSupported are tri-state
+// (true, false, absent). Nothing here is a secret (D8). description is read by bag().
+func printQueueAttributes(bag map[string]any, set attrSet) error {
+	for _, a := range []struct {
+		name string
+		max  int
+	}{{"printerName", 512}, {"serverName", 512}, {"uNCName", 1024}, {"printShareName", 512}, {"location", 512}, {"driverName", 512}} {
+		if s, present, err := text(set, a.name, a.max); err != nil {
+			return err
+		} else if present && s != "" {
+			bag[a.name] = s
+		}
+	}
+	for _, name := range []string{"printColor", "printDuplexSupported"} {
+		if b, present, err := boolean(set, name); err != nil {
+			return err
+		} else if present {
+			if a, _ := set.get(name); len(a.GetValues()) > 0 {
+				bag[name] = b
+			}
 		}
 	}
 	return nil

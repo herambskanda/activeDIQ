@@ -33,7 +33,12 @@ type Violation struct {
 }
 
 func (v Violation) String() string {
-	if strings.HasPrefix(v.Rule, "M") {
+	switch {
+	case strings.HasPrefix(v.Rule, "M3a"):
+		return fmt.Sprintf("%s: [ADR-0015 D3 M3a] %s", v.Pos, v.Msg)
+	case strings.HasPrefix(v.Rule, "TG"), strings.HasPrefix(v.Rule, "OW"):
+		return fmt.Sprintf("%s: [ADR-0015 %s] %s", v.Pos, v.Rule, v.Msg)
+	case strings.HasPrefix(v.Rule, "M"):
 		return fmt.Sprintf("%s: [ADR-0003 %s] %s", v.Pos, v.Rule, v.Msg)
 	}
 	return fmt.Sprintf("%s: [blueprint §%s] %s", v.Pos, v.Rule, v.Msg)
@@ -76,6 +81,16 @@ func Check(root string) ([]Violation, error) {
 		return nil, err
 	}
 	vs = append(vs, cat...)
+	m3a, err := checkM3a(root, modPath)
+	if err != nil {
+		return nil, err
+	}
+	vs = append(vs, m3a...)
+	ex, err := checkExemptions(root)
+	if err != nil {
+		return nil, err
+	}
+	vs = append(vs, ex...)
 	sort.Slice(vs, func(i, j int) bool {
 		if vs[i].Pos != vs[j].Pos {
 			return vs[i].Pos < vs[j].Pos
@@ -248,7 +263,7 @@ func checkImportRules(pkgs map[string]*pkgImports, modPath string) []Violation {
 				own := under(from, "internal/modules") || under(from, "internal/agentmodules")
 				generated := i.file == "modules.gen.go" && (from == "internal/compose/server" || from == "internal/compose/agent")
 				if !own && !generated {
-					add("2.5", i, "%s imports %s; only the generated modules.gen.go of compose/server and compose/agent may name a module", from, to)
+					add("M3a", i, "%s imports %s; only the generated modules.gen.go of compose/server and compose/agent may name a module", from, to)
 				}
 			}
 			// Composition root: nothing outside it (and cmd/) imports it; role packages never import each other.
@@ -376,8 +391,8 @@ func checkWeb(root string) ([]Violation, error) {
 					target = path.Clean(path.Join(path.Dir(rel), spec))
 				}
 				toModules := under(target, "web/src/modules") || strings.HasPrefix(target, "src/modules") || strings.HasPrefix(target, "@/modules")
-				generatedList := rel == "web/src/app/modules.gen.ts"
-				if toModules && !generatedList && !(layer == "app" && path.Base(target) == "modules.gen") {
+				// The generated list itself is the one file that names web modules (blueprint §2.2 rule 5).
+				if toModules && !(layer == "app" && path.Base(target) == "modules.gen") && rel != "web/src/app/modules.gen.ts" {
 					vs = append(vs, Violation{Rule: "2.8", Pos: fmt.Sprintf("%s:%d", rel, n+1), Msg: fmt.Sprintf("web/src/%s imports %q; app and ds never import web/src/modules (only app may import the generated modules.gen)", layer, spec)})
 				}
 			}

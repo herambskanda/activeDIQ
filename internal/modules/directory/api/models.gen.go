@@ -1349,6 +1349,769 @@ func (v *DirectoryUserList) Validate(at jsontext.Pointer, errs *apitypes.Errors)
 	}
 }
 
+// ExplorerChildren: One keyset page of admitted children. No count is returned.
+type ExplorerChildren struct {
+	AsOf  *apitypes.Timestamp `json:"asOf"`
+	Items []ExplorerEntry     `json:"items"`
+	// True when the page may not be the last, including a short page that stopped at the examination ceiling.
+	More bool `json:"more"`
+	// Pass back unchanged for the next page. Null on the last page.
+	NextCursor *string `json:"nextCursor"`
+
+	p apitypes.Presence
+}
+
+// UnmarshalJSONFrom decodes the object strictly: member names match exactly and an unknown
+// member is an error. Nested values decode through the caller's options.
+func (v *ExplorerChildren) UnmarshalJSONFrom(d *jsontext.Decoder) error {
+	*v = ExplorerChildren{}
+	v.p.Begin()
+	if err := apitypes.ObjectStart(d); err != nil {
+		return err
+	}
+	for {
+		name, ok, err := apitypes.NextMember(d)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+		switch name {
+		case "asOf":
+			v.p.Mark(0, false)
+			if err := json.UnmarshalDecode(d, &v.AsOf); err != nil {
+				return err
+			}
+		case "items":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(1, null)
+			if null {
+				continue
+			}
+			if err := apitypes.DecodeArray(d, &v.Items); err != nil {
+				return err
+			}
+		case "more":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(2, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.More); err != nil {
+				return err
+			}
+		case "nextCursor":
+			v.p.Mark(3, false)
+			if err := json.UnmarshalDecode(d, &v.NextCursor); err != nil {
+				return err
+			}
+		default:
+			return apitypes.UnknownMember(d)
+		}
+	}
+}
+
+// Validate records every violation of the object's schema under at: missing required members,
+// null on a non-nullable member, bounds, patterns and closed enums.
+func (v *ExplorerChildren) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
+	// asOf
+	if v.p.Decoded() && !v.p.Has(0) {
+		errs.Required(at, "asOf")
+	}
+	// items
+	if v.p.Decoded() {
+		if !v.p.Has(1) {
+			errs.Required(at, "items")
+		}
+		if v.p.IsNull(1) {
+			errs.NullNotAllowed(at, "items")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(1) && !v.p.IsNull(1)) {
+		apitypes.CheckCount(errs, apitypes.InBody, at.AppendToken("items"), len(v.Items), 0, 200, apitypes.CodeMaxItems)
+		for i := range v.Items {
+			v.Items[i].Validate(apitypes.Index(at.AppendToken("items"), i), errs)
+		}
+	}
+	// more
+	if v.p.Decoded() {
+		if !v.p.Has(2) {
+			errs.Required(at, "more")
+		}
+		if v.p.IsNull(2) {
+			errs.NullNotAllowed(at, "more")
+		}
+	}
+	// nextCursor
+	if v.p.Decoded() && !v.p.Has(3) {
+		errs.Required(at, "nextCursor")
+	}
+	if v.NextCursor != nil {
+		apitypes.CheckLen(errs, apitypes.InBody, at.AppendToken("nextCursor"), string((*v.NextCursor)), 1, 512)
+	}
+}
+
+// ExplorerEntry: One live AD object, the same shape in the tree and the table. Keyed by objectGuid; there is no DN. name is the RDN value (or the display name), never a path. parentGuid is the row's own parent read in the same statement as the row.
+type ExplorerEntry struct {
+	ConnectionID apitypes.UUID `json:"connectionId"`
+	Enabled      *bool         `json:"enabled"`
+	// For a container, whether an admitted live child exists; null for a leaf.
+	HasChildren *bool          `json:"hasChildren"`
+	IsContainer bool           `json:"isContainer"`
+	Kind        ExplorerKind   `json:"kind"`
+	Name        string         `json:"name"`
+	ObjectClass string         `json:"objectClass"`
+	ObjectGUID  apitypes.UUID  `json:"objectGuid"`
+	ParentGUID  *apitypes.UUID `json:"parentGuid"`
+	// True for a Tier-0 object; the console disables write actions on it.
+	ReadOnly bool `json:"readOnly"`
+	// Empty when absent.
+	SamAccountName string `json:"samAccountName"`
+	// True unless the inventory holds a classifier result saying otherwise (fails closed).
+	Tier0 bool `json:"tier0"`
+	// Empty when absent.
+	UPN         string              `json:"upn"`
+	WhenChanged *apitypes.Timestamp `json:"whenChanged"`
+
+	p apitypes.Presence
+}
+
+// UnmarshalJSONFrom decodes the object strictly: member names match exactly and an unknown
+// member is an error. Nested values decode through the caller's options.
+func (v *ExplorerEntry) UnmarshalJSONFrom(d *jsontext.Decoder) error {
+	*v = ExplorerEntry{}
+	v.p.Begin()
+	if err := apitypes.ObjectStart(d); err != nil {
+		return err
+	}
+	for {
+		name, ok, err := apitypes.NextMember(d)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+		switch name {
+		case "connectionId":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(0, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.ConnectionID); err != nil {
+				return err
+			}
+		case "enabled":
+			v.p.Mark(1, false)
+			if err := json.UnmarshalDecode(d, &v.Enabled); err != nil {
+				return err
+			}
+		case "hasChildren":
+			v.p.Mark(2, false)
+			if err := json.UnmarshalDecode(d, &v.HasChildren); err != nil {
+				return err
+			}
+		case "isContainer":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(3, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.IsContainer); err != nil {
+				return err
+			}
+		case "kind":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(4, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Kind); err != nil {
+				return err
+			}
+		case "name":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(5, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Name); err != nil {
+				return err
+			}
+		case "objectClass":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(6, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.ObjectClass); err != nil {
+				return err
+			}
+		case "objectGuid":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(7, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.ObjectGUID); err != nil {
+				return err
+			}
+		case "parentGuid":
+			v.p.Mark(8, false)
+			if err := json.UnmarshalDecode(d, &v.ParentGUID); err != nil {
+				return err
+			}
+		case "readOnly":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(9, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.ReadOnly); err != nil {
+				return err
+			}
+		case "samAccountName":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(10, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.SamAccountName); err != nil {
+				return err
+			}
+		case "tier0":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(11, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Tier0); err != nil {
+				return err
+			}
+		case "upn":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(12, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.UPN); err != nil {
+				return err
+			}
+		case "whenChanged":
+			v.p.Mark(13, false)
+			if err := json.UnmarshalDecode(d, &v.WhenChanged); err != nil {
+				return err
+			}
+		default:
+			return apitypes.UnknownMember(d)
+		}
+	}
+}
+
+// Validate records every violation of the object's schema under at: missing required members,
+// null on a non-nullable member, bounds, patterns and closed enums.
+func (v *ExplorerEntry) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
+	// connectionId
+	if v.p.Decoded() {
+		if !v.p.Has(0) {
+			errs.Required(at, "connectionId")
+		}
+		if v.p.IsNull(0) {
+			errs.NullNotAllowed(at, "connectionId")
+		}
+	}
+	// enabled
+	if v.p.Decoded() && !v.p.Has(1) {
+		errs.Required(at, "enabled")
+	}
+	// hasChildren
+	if v.p.Decoded() && !v.p.Has(2) {
+		errs.Required(at, "hasChildren")
+	}
+	// isContainer
+	if v.p.Decoded() {
+		if !v.p.Has(3) {
+			errs.Required(at, "isContainer")
+		}
+		if v.p.IsNull(3) {
+			errs.NullNotAllowed(at, "isContainer")
+		}
+	}
+	// kind
+	if v.p.Decoded() {
+		if !v.p.Has(4) {
+			errs.Required(at, "kind")
+		}
+		if v.p.IsNull(4) {
+			errs.NullNotAllowed(at, "kind")
+		}
+	}
+	// name
+	if v.p.Decoded() {
+		if !v.p.Has(5) {
+			errs.Required(at, "name")
+		}
+		if v.p.IsNull(5) {
+			errs.NullNotAllowed(at, "name")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(5) && !v.p.IsNull(5)) {
+		apitypes.CheckLen(errs, apitypes.InBody, at.AppendToken("name"), string(v.Name), 0, 1024)
+	}
+	// objectClass
+	if v.p.Decoded() {
+		if !v.p.Has(6) {
+			errs.Required(at, "objectClass")
+		}
+		if v.p.IsNull(6) {
+			errs.NullNotAllowed(at, "objectClass")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(6) && !v.p.IsNull(6)) {
+		apitypes.CheckLen(errs, apitypes.InBody, at.AppendToken("objectClass"), string(v.ObjectClass), 0, 256)
+	}
+	// objectGuid
+	if v.p.Decoded() {
+		if !v.p.Has(7) {
+			errs.Required(at, "objectGuid")
+		}
+		if v.p.IsNull(7) {
+			errs.NullNotAllowed(at, "objectGuid")
+		}
+	}
+	// parentGuid
+	if v.p.Decoded() && !v.p.Has(8) {
+		errs.Required(at, "parentGuid")
+	}
+	// readOnly
+	if v.p.Decoded() {
+		if !v.p.Has(9) {
+			errs.Required(at, "readOnly")
+		}
+		if v.p.IsNull(9) {
+			errs.NullNotAllowed(at, "readOnly")
+		}
+	}
+	// samAccountName
+	if v.p.Decoded() {
+		if !v.p.Has(10) {
+			errs.Required(at, "samAccountName")
+		}
+		if v.p.IsNull(10) {
+			errs.NullNotAllowed(at, "samAccountName")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(10) && !v.p.IsNull(10)) {
+		apitypes.CheckLen(errs, apitypes.InBody, at.AppendToken("samAccountName"), string(v.SamAccountName), 0, 256)
+	}
+	// tier0
+	if v.p.Decoded() {
+		if !v.p.Has(11) {
+			errs.Required(at, "tier0")
+		}
+		if v.p.IsNull(11) {
+			errs.NullNotAllowed(at, "tier0")
+		}
+	}
+	// upn
+	if v.p.Decoded() {
+		if !v.p.Has(12) {
+			errs.Required(at, "upn")
+		}
+		if v.p.IsNull(12) {
+			errs.NullNotAllowed(at, "upn")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(12) && !v.p.IsNull(12)) {
+		apitypes.CheckLen(errs, apitypes.InBody, at.AppendToken("upn"), string(v.UPN), 0, 1024)
+	}
+	// whenChanged
+	if v.p.Decoded() && !v.p.Has(13) {
+		errs.Required(at, "whenChanged")
+	}
+}
+
+// ExplorerKind: What the object is. Domain heads and built-in containers are other or container; isContainer, not kind, says whether it can hold children.
+type ExplorerKind string
+
+const (
+	ExplorerKindOU            ExplorerKind = "ou"
+	ExplorerKindContainer     ExplorerKind = "container"
+	ExplorerKindUser          ExplorerKind = "user"
+	ExplorerKindInetorgperson ExplorerKind = "inetorgperson"
+	ExplorerKindGroup         ExplorerKind = "group"
+	ExplorerKindComputer      ExplorerKind = "computer"
+	ExplorerKindContact       ExplorerKind = "contact"
+	ExplorerKindGmsa          ExplorerKind = "gmsa"
+	ExplorerKindFsp           ExplorerKind = "fsp"
+	ExplorerKindOther         ExplorerKind = "other"
+)
+
+// Valid reports whether v is a value this build knows. Clients and responses may carry others
+// (the enum is open), so no generated code rejects an unknown value.
+func (v ExplorerKind) Valid() bool {
+	switch v {
+	case ExplorerKindOU, ExplorerKindContainer, ExplorerKindUser, ExplorerKindInetorgperson, ExplorerKindGroup, ExplorerKindComputer, ExplorerKindContact, ExplorerKindGmsa, ExplorerKindFsp, ExplorerKindOther:
+		return true
+	}
+	return false
+}
+
+// ExplorerNode: One node, the admitted path to it, and the freshness of the inventory behind them.
+type ExplorerNode struct {
+	// True when the GUID had more than one admitted live row and the newest was chosen. Absent otherwise.
+	Ambiguous *bool               `json:"ambiguous,omitzero"`
+	AsOf      *apitypes.Timestamp `json:"asOf"`
+	Node      ExplorerEntry       `json:"node"`
+	// Admitted live ancestors ending at the node's parent, root first. Empty when the node is a root.
+	Path []ExplorerPathItem `json:"path"`
+
+	p apitypes.Presence
+}
+
+// UnmarshalJSONFrom decodes the object strictly: member names match exactly and an unknown
+// member is an error. Nested values decode through the caller's options.
+func (v *ExplorerNode) UnmarshalJSONFrom(d *jsontext.Decoder) error {
+	*v = ExplorerNode{}
+	v.p.Begin()
+	if err := apitypes.ObjectStart(d); err != nil {
+		return err
+	}
+	for {
+		name, ok, err := apitypes.NextMember(d)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+		switch name {
+		case "ambiguous":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(0, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Ambiguous); err != nil {
+				return err
+			}
+		case "asOf":
+			v.p.Mark(1, false)
+			if err := json.UnmarshalDecode(d, &v.AsOf); err != nil {
+				return err
+			}
+		case "node":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(2, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Node); err != nil {
+				return err
+			}
+		case "path":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(3, null)
+			if null {
+				continue
+			}
+			if err := apitypes.DecodeArray(d, &v.Path); err != nil {
+				return err
+			}
+		default:
+			return apitypes.UnknownMember(d)
+		}
+	}
+}
+
+// Validate records every violation of the object's schema under at: missing required members,
+// null on a non-nullable member, bounds, patterns and closed enums.
+func (v *ExplorerNode) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
+	// ambiguous
+	if v.p.Decoded() && v.p.IsNull(0) {
+		errs.NullNotAllowed(at, "ambiguous")
+	}
+	// asOf
+	if v.p.Decoded() && !v.p.Has(1) {
+		errs.Required(at, "asOf")
+	}
+	// node
+	if v.p.Decoded() {
+		if !v.p.Has(2) {
+			errs.Required(at, "node")
+		}
+		if v.p.IsNull(2) {
+			errs.NullNotAllowed(at, "node")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(2) && !v.p.IsNull(2)) {
+		v.Node.Validate(at.AppendToken("node"), errs)
+	}
+	// path
+	if v.p.Decoded() {
+		if !v.p.Has(3) {
+			errs.Required(at, "path")
+		}
+		if v.p.IsNull(3) {
+			errs.NullNotAllowed(at, "path")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(3) && !v.p.IsNull(3)) {
+		apitypes.CheckCount(errs, apitypes.InBody, at.AppendToken("path"), len(v.Path), 0, 128, apitypes.CodeMaxItems)
+		for i := range v.Path {
+			v.Path[i].Validate(apitypes.Index(at.AppendToken("path"), i), errs)
+		}
+	}
+}
+
+// ExplorerPathItem: One admitted live ancestor, for the breadcrumb and for expanding the tree by GUID.
+type ExplorerPathItem struct {
+	Name       string        `json:"name"`
+	ObjectGUID apitypes.UUID `json:"objectGuid"`
+
+	p apitypes.Presence
+}
+
+// UnmarshalJSONFrom decodes the object strictly: member names match exactly and an unknown
+// member is an error. Nested values decode through the caller's options.
+func (v *ExplorerPathItem) UnmarshalJSONFrom(d *jsontext.Decoder) error {
+	*v = ExplorerPathItem{}
+	v.p.Begin()
+	if err := apitypes.ObjectStart(d); err != nil {
+		return err
+	}
+	for {
+		name, ok, err := apitypes.NextMember(d)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+		switch name {
+		case "name":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(0, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Name); err != nil {
+				return err
+			}
+		case "objectGuid":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(1, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.ObjectGUID); err != nil {
+				return err
+			}
+		default:
+			return apitypes.UnknownMember(d)
+		}
+	}
+}
+
+// Validate records every violation of the object's schema under at: missing required members,
+// null on a non-nullable member, bounds, patterns and closed enums.
+func (v *ExplorerPathItem) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
+	// name
+	if v.p.Decoded() {
+		if !v.p.Has(0) {
+			errs.Required(at, "name")
+		}
+		if v.p.IsNull(0) {
+			errs.NullNotAllowed(at, "name")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(0) && !v.p.IsNull(0)) {
+		apitypes.CheckLen(errs, apitypes.InBody, at.AppendToken("name"), string(v.Name), 0, 1024)
+	}
+	// objectGuid
+	if v.p.Decoded() {
+		if !v.p.Has(1) {
+			errs.Required(at, "objectGuid")
+		}
+		if v.p.IsNull(1) {
+			errs.NullNotAllowed(at, "objectGuid")
+		}
+	}
+}
+
+// ExplorerRoots: The containers the caller's scope admits as tree roots, with the freshness of the inventory behind them.
+type ExplorerRoots struct {
+	// The oldest last-sync time of the connections the caller may read. Null when nothing has synced yet.
+	AsOf  *apitypes.Timestamp `json:"asOf"`
+	Items []ExplorerEntry     `json:"items"`
+	// True when more than 500 roots exist; the console says to refine in Search. There is no cursor.
+	More bool `json:"more"`
+
+	p apitypes.Presence
+}
+
+// UnmarshalJSONFrom decodes the object strictly: member names match exactly and an unknown
+// member is an error. Nested values decode through the caller's options.
+func (v *ExplorerRoots) UnmarshalJSONFrom(d *jsontext.Decoder) error {
+	*v = ExplorerRoots{}
+	v.p.Begin()
+	if err := apitypes.ObjectStart(d); err != nil {
+		return err
+	}
+	for {
+		name, ok, err := apitypes.NextMember(d)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+		switch name {
+		case "asOf":
+			v.p.Mark(0, false)
+			if err := json.UnmarshalDecode(d, &v.AsOf); err != nil {
+				return err
+			}
+		case "items":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(1, null)
+			if null {
+				continue
+			}
+			if err := apitypes.DecodeArray(d, &v.Items); err != nil {
+				return err
+			}
+		case "more":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(2, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.More); err != nil {
+				return err
+			}
+		default:
+			return apitypes.UnknownMember(d)
+		}
+	}
+}
+
+// Validate records every violation of the object's schema under at: missing required members,
+// null on a non-nullable member, bounds, patterns and closed enums.
+func (v *ExplorerRoots) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
+	// asOf
+	if v.p.Decoded() && !v.p.Has(0) {
+		errs.Required(at, "asOf")
+	}
+	// items
+	if v.p.Decoded() {
+		if !v.p.Has(1) {
+			errs.Required(at, "items")
+		}
+		if v.p.IsNull(1) {
+			errs.NullNotAllowed(at, "items")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(1) && !v.p.IsNull(1)) {
+		apitypes.CheckCount(errs, apitypes.InBody, at.AppendToken("items"), len(v.Items), 0, 500, apitypes.CodeMaxItems)
+		for i := range v.Items {
+			v.Items[i].Validate(apitypes.Index(at.AppendToken("items"), i), errs)
+		}
+	}
+	// more
+	if v.p.Decoded() {
+		if !v.p.Has(2) {
+			errs.Required(at, "more")
+		}
+		if v.p.IsNull(2) {
+			errs.NullNotAllowed(at, "more")
+		}
+	}
+}
+
+// ExplorerView: containers is the tree level (containers only); all is the table (every kind).
+type ExplorerView string
+
+const (
+	ExplorerViewContainers ExplorerView = "containers"
+	ExplorerViewAll        ExplorerView = "all"
+)
+
+// Valid reports whether v is one of the closed set of values.
+func (v ExplorerView) Valid() bool {
+	switch v {
+	case ExplorerViewContainers, ExplorerViewAll:
+		return true
+	}
+	return false
+}
+
+// Validate records a violation when v is not in the set.
+func (v ExplorerView) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
+	if !v.Valid() {
+		errs.AddBody(at, apitypes.CodeEnum, "value is not one of the allowed values")
+	}
+}
+
 // HybridClassification: How the user stands in the cross-directory correlation (DM-20) under TM-D17, computed from the stored correlation and the Entra connection's takeover protection. not_hybrid: no correlation is recorded. candidate, matched, broken: the strongest recorded state (matched over candidate over broken). unknown: the facts could not be read; treat as no authority. Only a matched correlation can carry authority, and only while takeover protection is attested and neither side is Tier 0.
 type HybridClassification struct {
 	CarriesAuthority bool `json:"carriesAuthority"`

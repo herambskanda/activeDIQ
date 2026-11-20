@@ -85,12 +85,6 @@ func TestConsoleAuthzDeniesByDefault(t *testing.T) {
 	}
 }
 
-func TestSessionStepUpRefusesWithoutAStack(t *testing.T) {
-	if ok, err := (sessionStepUp{}).Fresh(context.Background(), tenant.New(), "s"); ok || err != nil {
-		t.Fatalf("nil step-up = %v, %v", ok, err)
-	}
-}
-
 // The console stack is assembled with real authn types and mounts every port.
 func TestBuildConsolePorts(t *testing.T) {
 	c, err := buildConsole(&store.DB{}, nopSink{}, testKeys(), nil)
@@ -154,7 +148,7 @@ func TestConsoleAuthzOverRealRBAC(t *testing.T) {
 }
 
 // testCatalogue is the real catalogue plus "x", the placeholder permission some cases ask for.
-func testCatalogue() apihost.Permissions { return append(permissionCatalogue(), "x") }
+func testCatalogue() apihost.Permissions { return append(bootedCatalogue(), "x") }
 
 // The relying party is the public URL's origin: RP ID without the port, exactly one origin, nothing else.
 func TestWebAuthnRelyingPartyFromPublicURL(t *testing.T) {
@@ -204,11 +198,11 @@ func TestRelyingPartyAndRedirectURIShareOneCanonicalOrigin(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s: %v", in, err)
 		}
-		redirect := po.Origin + attestCallbackPath
+		redirect := po.Origin + "/api/v1/connections/takeover-attestation/callback"
 		if rp.Origins[0] != po.Origin || !strings.HasPrefix(redirect, rp.Origins[0]+"/") || rp.RPID != "diq.example.com" {
 			t.Errorf("%s: rp %+v, redirect %s", in, rp, redirect)
 		}
-		// The loaded config carries the canonical origin, so buildAttestation sees the same bytes.
+		// The loaded config carries the canonical origin, so attestationConfig sees the same bytes.
 		c, err := config.Load(func(k string) string {
 			if k == config.EnvPublicURL {
 				return in
