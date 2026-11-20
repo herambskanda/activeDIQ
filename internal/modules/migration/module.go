@@ -39,7 +39,7 @@ func (*Module) Register(r *module.Registrar) error {
 	if err := r.Permission(PermImport); err != nil {
 		return err
 	}
-	for _, build := range []func() (operation.Action, error){CreateProject, SubmitJob} {
+	for _, build := range []func() (operation.Action, error){CreateProject, SubmitJob, func() (operation.Action, error) { return RecordFidelity(nil) }} {
 		a, err := build()
 		if err != nil {
 			return err

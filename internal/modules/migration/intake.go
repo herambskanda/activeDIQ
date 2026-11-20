@@ -68,3 +68,11 @@ func SizeGate(k SourceKind, size int64) (limitHit string, err error) {
 	}
 	return "", nil
 }
+
+// Errors of the fidelity record.
+var (
+	ErrAlreadyRecorded = errors.New("migration: the fidelity report of this job is already recorded")
+	ErrNoSuchJob       = errors.New("migration: no job with that id in this tenant")
+	ErrJobNotRunning   = errors.New("migration: the job is not running; only a released job is recorded")
+	ErrDenied          = errors.New("migration: not permitted")
+)

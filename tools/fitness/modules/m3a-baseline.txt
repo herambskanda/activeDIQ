@@ -1,0 +1,14 @@
+# Known M3a/TG2 debts on the day the rules landed (T-2164, ADR-0015 D3). One key per line; the build fails
+# when a key no longer matches a violation, so this file only shrinks. Never add a line for new work: fix it.
+#
+# Modules with no architecture page. Cleared by the architecture-pages ticket (see T-2164 follow-ups).
+no-page addc
+no-page compliance
+no-page connections
+no-page delegation
+no-page directory
+no-page helpdesk
+no-page inventory
+# Pages that describe platform packages, not modules. Cleared with the same ticket.
+no-module keys
+no-module rbac

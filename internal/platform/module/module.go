@@ -434,3 +434,31 @@ func satisfied(required []capability.ID, enabled capability.Set) bool {
 	}
 	return true
 }
+
+// DeclaredPermissions registers every module in a throwaway registrar, whatever its capability
+// requirements, and returns the permission of each Action and each registered permission, sorted and
+// unique. The OpenAPI contract is the same on every install, so its x-permission values must be in
+// the catalogue even where a module's capability is off; compose/server adds these to the kernel's.
+// The modules must be built against zero Deps (Register does no I/O).
+func DeclaredPermissions(mods []Entry) ([]string, error) {
+	var out []string
+	for _, e := range mods {
+		if e.Module == nil {
+			return nil, fmt.Errorf("%w: entry %q has no module", ErrInvalid, e.ID)
+		}
+		r := &Registrar{owner: e.ID, open: true, seen: map[string]struct{}{}}
+		err := e.Module.Register(r)
+		r.close()
+		if err != nil {
+			return nil, fmt.Errorf("module %q: register: %w", e.ID, err)
+		}
+		for _, a := range r.actions {
+			out = append(out, string(a.Describe().Permission))
+		}
+		for _, p := range r.perms {
+			out = append(out, string(p))
+		}
+	}
+	slices.Sort(out)
+	return slices.Compact(out), nil
+}

@@ -91,7 +91,7 @@ func setup(t *testing.T, s *storetest.Server) *env {
 	}
 	t.Cleanup(db.Close)
 	var acts []operation.Action
-	for _, b := range []func() (operation.Action, error){migration.CreateProject, migration.SubmitJob} {
+	for _, b := range []func() (operation.Action, error){migration.CreateProject, migration.SubmitJob, func() (operation.Action, error) { return migration.RecordFidelity(fakeTier0{}) }} {
 		a, err := b()
 		if err != nil {
 			t.Fatal(err)
@@ -108,7 +108,7 @@ func setup(t *testing.T, s *storetest.Server) *env {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &env{d: d, db: db, tid: tid, svc: &migration.Service{Runner: runner, DB: db}, rec: rec}
+	return &env{d: d, db: db, tid: tid, svc: &migration.Service{Runner: runner, DB: db, Authz: granted{"ann": true}}, rec: rec}
 }
 
 func (e *env) project(t *testing.T) string {

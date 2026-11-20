@@ -62,8 +62,10 @@ inventory_servers	invhost	config
 inventory_tier0_revisions	inventory	system
 jobs	jobs	system
 links	inventory	system
+migration_fidelity	migration	config
 migration_jobs	migration	config
 migration_projects	migration	config
+migration_proposals	migration	config
 nc_sync_passes	inventory	system
 notify_deliveries	notify	system
 notify_settings	notify	config

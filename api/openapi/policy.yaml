@@ -174,4 +174,10 @@ stepUp:
   - permission: siem.destination.manage
     reason: Creating or changing a SIEM destination can redirect or blind the tenant's audit stream, so it needs a fresh MFA (TM §7.4, AG-8). Reads do not.
     ref: TM-D16
+  - permission: objects.user.reset_password
+    reason: Resetting a password takes over an account, so it needs a fresh MFA (TM §7.4, TM-D16); an API token or automation is held for an approval that carries step-up (TM-D30 SX-4). Its preview twin does not.
+    ref: TM-D16
+  - permission: objects.computer.reset_account
+    reason: Resetting a computer account's secure-channel password can strand or take over a machine, so it needs a fresh MFA (TM §7.4, TM-D16).
+    ref: TM-D16
 largeBodies: []

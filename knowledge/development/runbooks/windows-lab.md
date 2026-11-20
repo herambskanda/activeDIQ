@@ -491,6 +491,8 @@ lab/windows/bin/agent-verify --log knowledge/development/runbooks/windows-lab-ru
   `HKLM\SYSTEM\CurrentControlSet\Services\activeDIQAgent\ImagePath` is the quoted `activediq-agent.exe` path.
 - If a run leaves the DC odd, re-run (the script is idempotent) or clean up over WinRM; `qm rollback <vmid> clean`
   needs the Proxmox host (no worker access: raise an `action new`).
+- `--build-only --msi-out <dir>` builds the MSI on the DC and downloads it (sha256-checked) without running the cases; with `--msi-out` alone the full run also downloads it. T-0724 used this to `msidump` the real MSI and run `fitness-built-msi -require` on it. No WiX extension is installed any more: the MSI needs none (below). Wrap sessions in `flock -w 3600 /tmp/claude-1000/activediq-dc1.lock`.
+- Service recovery (restart x3, 30 s, reset 1 day; case A6) and the `activeDIQ Agent` event source are set by `agentsetup configure-service` and removed by `unconfigure-service` (T-0724): WiX 5.0.2's core `ServiceConfigFailureActions` writes action names where Windows Installer wants integers (install fails, error 1939, lab), and the util extension's equivalents add a DLL custom action, a Binary row and HKLM\SYSTEM rows that `fitness-built-msi` refuses.
 - **T-0557 variant** `agent-verify --guest agent-t0557.ps1 [--mode gpo-restart]`: same build, then a real GPO
   (`New-GPO`/`New-GPLink` on the Domain Controllers OU, removed at the end), refusal of an elevated administrator
   token, job-limit read-back, CPU-cap measurement, a logon-load run and a 10-minute backlog read. About 35 minutes;
