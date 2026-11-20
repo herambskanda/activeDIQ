@@ -57,13 +57,6 @@
       "mintsTenantID": true
     },
     {
-      "package": "internal/platform/operation/operationtest",
-      "function": "harness.run",
-      "reason": "Test support, imported only from _test.go files (policy.TestSupport). The operation Contract runs an Action against a rolled-back in-memory store, never a database, so it needs a throwaway tenant ID per run and no tenant owns it; the ID reaches no real row, token or log (T-1224; ADR-0002 rule 5, ADR-0005 O7).",
-      "withPlatform": false,
-      "mintsTenantID": true
-    },
-    {
       "package": "internal/modules/connections",
       "function": "StateTenant",
       "reason": "The Entra attestation callback is an unauthenticated redirect from the IdP, so no principal carries a tenant. The state the start step issued begins with the tenant it was issued for; the callback parses that prefix only to choose whose attempt table to read. The lookup is by the SHA-256 of the whole state under that tenant's RLS, so a forged or other-tenant prefix finds nothing and grants nothing. The ID is never used as an identity or authorisation input (ADR-0002 rule 5; T-0504; needs security-architect review).",
