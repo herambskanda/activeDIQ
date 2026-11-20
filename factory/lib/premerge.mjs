@@ -71,6 +71,11 @@ export const PRE_MERGE_DEFAULTS = Object.freeze({
   // use; the size actually used follows the pass rate of the last 20 gate verdicts (`trainsize.mjs`):
   // this many at 0.85 or better, 2 at 0.6 or better, 1 below. Rollback: 0.
   train_size_max: 0,
+  // Merge plan 4.4: while a gate run is in flight, run `prescreen_argv` (the cheap checks, about 5 minutes) on the tickets
+  // at the front of the line, side by side with it. A ticket that fails is reopened to its owner at once, with no strike,
+  // so the failure costs no gate run. A pass changes nothing: the ticket still gets the full gate. Off by default.
+  prescreen_ahead: false,
+  prescreen_argv: ['make', 'prescreen'],
 });
 
 /**
@@ -99,6 +104,12 @@ export function preMergeSettings(config) {
   }
   if (typeof s.culprit_split !== 'boolean') {
     throw new FactoryError('dispatcher.pre_merge.culprit_split must be true or false');
+  }
+  if (typeof s.prescreen_ahead !== 'boolean') {
+    throw new FactoryError('dispatcher.pre_merge.prescreen_ahead must be true or false');
+  }
+  if (!Array.isArray(s.prescreen_argv) || !s.prescreen_argv.length || s.prescreen_argv.some((a) => typeof a !== 'string')) {
+    throw new FactoryError('dispatcher.pre_merge.prescreen_argv must be a non-empty array of strings');
   }
   if (!Number.isInteger(s.reserved_slots) || s.reserved_slots < 0) {
     throw new FactoryError('dispatcher.pre_merge.reserved_slots must be a whole number, 0 or more');
