@@ -890,8 +890,8 @@ func TestFullCycleCompletesRangedMembers(t *testing.T) {
 		if d.GroupsPartial != 0 || d.GroupsCompleted != 1 {
 			t.Fatalf("partial=%d completed=%d, want 0 and 1", d.GroupsPartial, d.GroupsCompleted)
 		}
-		if len(fake.reads) != 1 || fake.reads[0].pin != gtext(fake.dsa) || len(fake.reads[0].attrs) != 1 || fake.reads[0].attrs[0] != "member" {
-			t.Fatalf("reads = %+v", fake.reads)
+		if len(fake.memberReads) != 1 || fake.memberReads[0].pin != gtext(fake.dsa) || len(fake.memberReads[0].attrs) != 1 || fake.memberReads[0].attrs[0] != "member" {
+			t.Fatalf("reads = %+v", fake.memberReads)
 		}
 		if n := e.count(t, `SELECT count(*) FROM public.links WHERE connection_id = $1::uuid AND link_attr = 'member' AND state = 'active' AND source_guid = $2::uuid`, string(e.conn), gtext(ncA+11)); n != 3200 {
 			t.Fatalf("member edges of the big group = %d, want 3200", n)

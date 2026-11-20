@@ -22,8 +22,8 @@ const (
 	AgentAccount    = `NT SERVICE\activeDIQAgent`
 	PinnedPrivilege = "SeChangeNotifyPrivilege"
 	sidRestricted   = "3"
-	cfgSID          = "3" // SERVICE_CONFIG_SERVICE_SID_INFO
-	cfgPrivs        = "4" // SERVICE_CONFIG_REQUIRED_PRIVILEGES_INFO
+	cfgSID          = "5" // SERVICE_CONFIG_SERVICE_SID_INFO (MsiServiceConfig ConfigType 5; 3 is delayed auto start; https://learn.microsoft.com/en-us/windows/win32/msi/msiserviceconfig-table)
+	cfgPrivs        = "6" // SERVICE_CONFIG_REQUIRED_PRIVILEGES_INFO (ConfigType 6; 4 is failure-actions flag)
 )
 
 // Table is one imported .idt table.
@@ -272,10 +272,10 @@ func Judge(t map[string]*Table, o Options) []string {
 		for _, n := range names {
 			c := got[n]
 			if c == nil || len(c.sid) == 0 {
-				fail("ServiceInstall service %s: no MsiServiceConfig row of ConfigType 3 sets a restricted SID (the default is an unrestricted service SID)", n)
+				fail("ServiceInstall service %s: no MsiServiceConfig row of ConfigType 5 sets a restricted SID (the default is an unrestricted service SID)", n)
 			}
 			if c == nil || len(c.priv) == 0 {
-				fail("ServiceInstall service %s: no MsiServiceConfig row of ConfigType 4 pins RequiredPrivileges to %s", n, PinnedPrivilege)
+				fail("ServiceInstall service %s: no MsiServiceConfig row of ConfigType 6 pins RequiredPrivileges to %s", n, PinnedPrivilege)
 			}
 		}
 	}

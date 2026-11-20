@@ -38,6 +38,8 @@ type Query struct {
 	reasons []string
 	// search is set on a Query built by CompileSearch: it is run by ExecSearch, not Exec.
 	search *searchMeta
+	// tree is set on a Query built by CompileTree: it is run by ExecTree.
+	tree *treeMeta
 }
 
 // ScopeReasons says why the scope renders narrower than the assignments suggest: the reasons the

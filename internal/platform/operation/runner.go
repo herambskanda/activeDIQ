@@ -56,27 +56,31 @@ type Authorizer interface {
 
 // Config wires a Runner. Every field except Facts, Gate, Now, NewID and Component is required.
 type Config struct {
-	DB        TxRunner
-	Audit     audit.Sink
-	Authz     Authorizer
-	Registry  *Registry
-	Facts     LiveFacts // nil: authorisation reads no directory facts (Store Actions)
-	Gate      Gate      // nil: the kernel default, PermissionOnly
-	Now       func() time.Time
-	NewID     func() string
-	Component string
+	DB       TxRunner
+	Audit    audit.Sink
+	Authz    Authorizer
+	Registry *Registry
+	Facts    LiveFacts // nil: authorisation reads no directory facts (Store Actions)
+	// TemplateAuthz backs PlanContext.Templates (ADR-0015 D1). nil: every Template check is refused.
+	TemplateAuthz TemplateAuthz
+	Gate          Gate // nil: the kernel default, PermissionOnly
+	Now           func() time.Time
+	NewID         func() string
+	Component     string
 
 	// The fields below are used by the persisted Directory path. SubmitDirectory needs Jobs, Keys and
 	// Pinner (when an Action writes to AD); the others are optional.
 
-	Jobs       *jobs.Registry // enqueues the chunk jobs at approved -> queued
-	Keys       DEKSource      // seals transient secrets
-	Pinner     Pinner         // pins one writable DC per naming context (rule 5)
-	Settings   Settings       // tenant settings read by the kernel hold rules
-	Provenance Provenance     // the sock-puppet check of rule 8
-	Alerts     Alerter
-	Lease      time.Duration // a step claim's lease; default 2 minutes
-	Slots      int           // concurrent writes per (connection, DC); default 4
+	Jobs        *jobs.Registry   // enqueues the chunk jobs at approved -> queued
+	Keys        DEKSource        // seals transient secrets
+	Credentials CredentialSource // names the DM-11 credential of a connection for step audit events; required with Pinner
+	Pinner      Pinner           // pins one writable DC per naming context (rule 5)
+	Sites       SiteHints        // optional: AD sites to prefer when pinning (ADM-133); nil: none
+	Settings    Settings         // tenant settings read by the kernel hold rules
+	Provenance  Provenance       // the sock-puppet check of rule 8
+	Alerts      Alerter
+	Lease       time.Duration // a step claim's lease; default 2 minutes
+	Slots       int           // concurrent writes per (connection, DC); default 4
 	// Attempts is the transient-error attempt limit of one step; default 5. Backoff is the base delay.
 	Attempts int
 	Backoff  time.Duration
@@ -96,6 +100,9 @@ type Runner struct {
 func NewRunner(cfg Config) (*Runner, error) {
 	if cfg.DB == nil || cfg.Audit == nil || cfg.Authz == nil || cfg.Registry == nil {
 		return nil, fmt.Errorf("%w: runner needs DB, Audit, Authz and Registry", ErrInvalid)
+	}
+	if cfg.Pinner != nil && cfg.Credentials == nil {
+		return nil, fmt.Errorf("%w: a runner that writes to a directory needs a CredentialSource", ErrInvalid)
 	}
 	if cfg.Gate == nil {
 		cfg.Gate = PermissionOnly{}
@@ -267,7 +274,7 @@ func (u *run) failed(reason string, err error) error {
 
 func (u *run) exec(ctx context.Context) (Result, error) {
 	r := u.r
-	if u.d.StepUp && !u.req.FreshStepUp && (!u.persist || canStepUp(u.req.Actor)) {
+	if !u.req.FreshStepUp && (!u.persist || canStepUp(u.req.Actor)) && u.d.NeedsStepUp(u.req.Input) {
 		return Result{}, u.denied("step_up_required", ErrStepUpRequired)
 	}
 	steps, err := u.planSteps(ctx)
@@ -361,7 +368,7 @@ func (u *run) planSteps(ctx context.Context) ([]StepPlan, error) {
 			return fmt.Errorf("plan transaction: %w", err)
 		}
 		var perr error
-		steps, perr = u.act.Plan(ctx, PlanContext{Tx: tx, Facts: u.pinnedFacts(), Pins: maps.Clone(u.req.Pins)}, u.req.Input)
+		steps, perr = u.act.Plan(ctx, PlanContext{Tx: tx, Facts: u.pinnedFacts(), Pins: maps.Clone(u.req.Pins), Tenant: u.req.Tenant, Actor: u.req.Actor, Templates: u.r.templateGate(u.req.Actor, u.req.Tenant)}, u.req.Input)
 		return perr
 	})
 	if err != nil {

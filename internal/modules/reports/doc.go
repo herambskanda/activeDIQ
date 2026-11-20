@@ -9,7 +9,7 @@ package reports
 
 import "github.com/skenzeriq/activediq/internal/platform/authz"
 
-// The five permissions of spec reports-2a 8.5.
+// The five permissions of spec reports-2a 8.5, and the two of SYS-03 (reports-2 second slice 13, T-1720).
 const (
 	// RunPermission guards the library, runs, the run header and stored-result paging.
 	RunPermission authz.Permission = "reports.run"
@@ -23,4 +23,9 @@ const (
 	// DeliverExternalPermission is bound to no operation. The schedule Action checks it when a
 	// recipient is outside the allowed recipient domains.
 	DeliverExternalPermission authz.Permission = "reports.deliver.external"
+	// ReplicationReadPermission guards the SYS-03 thresholds read. It is also checked inside createReportRun
+	// for the SYS-03 definition, and is distinct from RunPermission.
+	ReplicationReadPermission authz.Permission = "reports.replication.read"
+	// ReplicationConfigurePermission guards editing the SYS-03 thresholds, their preview and their undo pair.
+	ReplicationConfigurePermission authz.Permission = "reports.replication.configure"
 )

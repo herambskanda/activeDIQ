@@ -27,6 +27,24 @@ type SearchSource struct {
 	objects        *anchor
 	// quoted object columns the result reads
 	kind, state, enabled, display string
+	// recents is the quoted per-account recents table; "" until WithRecents (T-1130).
+	recents string
+}
+
+// WithRecents registers the per-account recents table (T-1130): tenant_id, account_id, connection_id,
+// object_guid and opened_at. Like the key table, only this template reads it.
+func (s SearchSource) WithRecents(sch Schema, table report.Ident) (SearchSource, error) {
+	for _, c := range []struct {
+		col  string
+		want ColKind
+	}{{"tenant_id", KindGUID}, {"account_id", KindGUID}, {"connection_id", KindGUID}, {"object_guid", KindGUID}, {"opened_at", KindTime}} {
+		k, ok := sch.Column(string(table), c.col)
+		if !ok || k != c.want {
+			return s, fmt.Errorf("reportsql: search recents table %q: column %q missing or not %s", table, c.col, c.want)
+		}
+	}
+	s.recents = quote(table)
+	return s, nil
 }
 
 // NewSearchSource checks every identifier against the schema and quotes it once.
@@ -75,9 +93,12 @@ const (
 	ClassExact SearchClass = 1 + iota
 	ClassPrefix
 	ClassFuzzy
+	// ClassRecent is the class of a hit that is only an account's recent object: the empty palette, where no
+	// text matched anything (T-1130).
+	ClassRecent
 )
 
-func (c SearchClass) String() string { return [...]string{"", "exact", "prefix", "fuzzy"}[c] }
+func (c SearchClass) String() string { return [...]string{"", "exact", "prefix", "fuzzy", "recent"}[c] }
 
 // SearchType is the result group (and the type facet).
 type SearchType int16
@@ -111,13 +132,18 @@ func (t SearchType) kinds() []string {
 const (
 	MaxSearchGroupLimit = 50
 	MaxSearchCeiling    = 100000
+	// MaxRecents is the most recents one account keeps and the template reads (T-1130).
+	MaxRecents = 20
 )
 
 // SearchAfter is the rank tuple of a hit: the keyset position of a "show all" page. The caller signs it
 // into an opaque cursor and verifies it before it comes back here (rule 12); this package treats it as a
 // plain value and binds every field.
 type SearchAfter struct {
-	Class                         SearchClass
+	Class SearchClass
+	// Band is 0 for an exact hit, 1 for a recent object of the account, 2 for the rest; Recent is the
+	// position among the account's recents (1 is the latest) and 0 outside band 1 (T-1130).
+	Band, Recent                  int
 	Dead, Disabled, Whole, KeyLen int
 	SimRank                       int
 	Name                          string
@@ -142,6 +168,11 @@ type SearchQuery struct {
 	// Threshold is pg_trgm.word_similarity_threshold for the fuzzy class, 0.1..1. ExecSearch sets it for
 	// the transaction and puts the earlier value back; this is the only place it is set (SE2).
 	Threshold float32
+	// Account is the account whose recents rank the non-exact hits (a uuid); "" means none.
+	Account string
+	// RecentsOnly makes the statement list the account's recents and nothing else (the empty palette):
+	// no text, no classes, trimmed by the same scopes. It needs Account.
+	RecentsOnly bool
 }
 
 // SearchScopes maps a permission to the ReadScope the producer gave for it. A kind whose permission has
@@ -171,6 +202,12 @@ const emptyKeys = `SELECT NULL::uuid AS connection_id, NULL::uuid AS object_guid
 // with scopeSQL, the functions RP6 proves.
 func CompileSearch(src SearchSource, q SearchQuery, scopes SearchScopes) (Query, error) {
 	if q.Fuzzy != "" && (float64(q.Threshold) < store.MinTrigramThreshold || float64(q.Threshold) > store.MaxTrigramThreshold) {
+		return Query{}, ErrInvalidQuery
+	}
+	if q.RecentsOnly && (q.Account == "" || q.Exact != nil || q.Prefix != nil || q.Fuzzy != "") {
+		return Query{}, ErrInvalidQuery
+	}
+	if q.Account != "" && src.recents == "" {
 		return Query{}, ErrInvalidQuery
 	}
 	if src.objects == nil || q.Ceiling < 1 || q.Ceiling > MaxSearchCeiling || q.GroupLimit < 1 || q.GroupLimit > MaxSearchGroupLimit {
@@ -282,13 +319,24 @@ func CompileSearch(src SearchSource, q SearchQuery, scopes SearchScopes) (Query,
 	}
 
 	var sb strings.Builder
-	sb.WriteString("WITH m_exact AS MATERIALIZED (" + limit(exact) + "), m_prefix AS MATERIALIZED (" + limit(prefix) + "), m_fuzzy AS MATERIALIZED (" + limit(fuzzy) + "),")
+	// The account's recents, newest first (bounded by the writer; the LIMIT is the reader's own bound).
+	if q.Account != "" {
+		sb.WriteString("WITH rec AS (SELECT connection_id, object_guid, row_number() OVER (ORDER BY opened_at DESC, connection_id, object_guid) AS rr FROM public." +
+			src.recents + " WHERE tenant_id = " + tenantExpr + " AND account_id = " + b.bind("uuid", q.Account) + " ORDER BY opened_at DESC, connection_id, object_guid LIMIT " + strconv.Itoa(MaxRecents) + "), ")
+	} else {
+		sb.WriteString("WITH rec AS (SELECT NULL::uuid AS connection_id, NULL::uuid AS object_guid, NULL::bigint AS rr WHERE FALSE), ")
+	}
+	sb.WriteString("m_exact AS MATERIALIZED (" + limit(exact) + "), m_prefix AS MATERIALIZED (" + limit(prefix) + "), m_fuzzy AS MATERIALIZED (" + limit(fuzzy) + "),")
 	wbind := b.bind("int", q.Ceiling)
 	sb.WriteString(" ceil AS (SELECT CASE WHEN (SELECT count(*) FROM m_exact) > " + wbind + " THEN 1 WHEN (SELECT count(*) FROM m_prefix) > " + wbind +
 		" THEN 2 WHEN (SELECT count(*) FROM m_fuzzy) > " + wbind + " THEN 3 ELSE 0 END AS c),")
 	sb.WriteString(" cand AS (SELECT 1 AS cls, * FROM m_exact WHERE (SELECT c FROM ceil) IN (0) OR 1 < (SELECT c FROM ceil)" +
 		" UNION ALL SELECT 2, * FROM m_prefix WHERE (SELECT c FROM ceil) = 0 OR 2 < (SELECT c FROM ceil)" +
-		" UNION ALL SELECT 3, * FROM m_fuzzy WHERE (SELECT c FROM ceil) = 0),")
+		" UNION ALL SELECT 3, * FROM m_fuzzy WHERE (SELECT c FROM ceil) = 0")
+	if q.RecentsOnly {
+		sb.WriteString(" UNION ALL SELECT 4, r.connection_id, r.object_guid, 1::smallint, ''::text FROM rec r WHERE (SELECT c FROM ceil) = 0")
+	}
+	sb.WriteString("),")
 
 	// The scope, per permission, over the kinds read under it.
 	var scopeParts []string
@@ -332,30 +380,37 @@ func CompileSearch(src SearchSource, q SearchQuery, scopes SearchScopes) (Query,
 		lo = "ARRAY[]::text[]"
 	}
 	t := func(col string) string { return "t." + col }
+	// The hits join probes directory_objects once per candidate (LATERAL ... LIMIT 1, as the fuzzy recheck
+	// does), so the plan is a nested loop of index probes by (tenant_id, connection, object) at every W.
+	// A plain join lets the planner, expecting ~3W candidate rows, hash-join them onto a Seq Scan of the
+	// table, which reads other tenants' rows (ADR-0011 rule 16). The scope is evaluated inside the probe.
+	objCols := strings.Join([]string{"t." + src.objects.conn, "t." + src.objects.obj, "t." + src.kind, "t." + src.state, "t." + src.enabled, "t." + src.display}, ", ")
 	live := "(" + t(src.state) + " IN ('live', 'active'))"
 	grp := "CASE WHEN " + t(src.kind) + " IN ('user', 'inetorgperson') THEN 1 WHEN " + t(src.kind) + " = 'group' THEN 2 WHEN " + t(src.kind) + " IN ('computer', 'gmsa') THEN 3 ELSE 4 END"
 	sb.WriteString(" hits AS (SELECT DISTINCT ON (t." + src.objects.conn + ", t." + src.objects.obj + ") t." + src.objects.conn + " AS connection_id, t." + src.objects.obj + " AS object_guid, " +
 		t(src.kind) + " AS kind, " + t(src.state) + " AS state, " + t(src.enabled) + " AS enabled, COALESCE(" + t(src.display) + ", '') AS display_name, " +
 		grp + " AS grp, c.cls AS cls, CASE WHEN " + live + " THEN 0 ELSE 1 END AS dead, CASE WHEN " + t(src.enabled) + " IS FALSE THEN 1 ELSE 0 END AS dis, " +
+		"CASE WHEN c.cls = 1 THEN 0 WHEN rc.rr IS NOT NULL THEN 1 ELSE 2 END AS band, CASE WHEN c.cls <> 1 THEN COALESCE(rc.rr, 0) ELSE 0 END AS rr, " +
 		"CASE WHEN c.cls = 2 AND c.key = ANY(" + lo + ") THEN 0 ELSE 1 END AS whole, CASE WHEN c.cls = 2 THEN char_length(c.key) ELSE 0 END AS klen, " +
 		"CASE WHEN c.cls = 3 THEN 1000 - round((" + sim + ")::numeric * 1000)::int ELSE 0 END AS simr, " +
 		"(lower(COALESCE(" + t(src.display) + ", '')) COLLATE \"C\") AS nm, (" + sim + ")::real AS sim " +
-		"FROM cand c JOIN public." + src.objects.table + " t ON t." + "tenant_id" + " = " + tenantExpr + " AND t." + src.objects.conn + " = c.connection_id AND t." + src.objects.obj + " = c.object_guid " +
-		"WHERE " + t(src.kind) + " = ANY(" + b.bindList("text[]", kinds) + ") AND (" + scopeWhere + ") " +
+		"FROM cand c CROSS JOIN LATERAL (SELECT " + objCols + " FROM public." + src.objects.table + " t WHERE t.tenant_id = " + tenantExpr + " AND t." + src.objects.conn + " = c.connection_id AND t." + src.objects.obj + " = c.object_guid " +
+		"AND " + t(src.kind) + " = ANY(" + b.bindList("text[]", kinds) + ") AND (" + scopeWhere + ") LIMIT 1) t " +
+		"LEFT JOIN rec rc ON rc.connection_id = c.connection_id AND rc.object_guid = c.object_guid " +
 		"ORDER BY t." + src.objects.conn + ", t." + src.objects.obj + ", c.cls, CASE WHEN c.cls = 3 THEN -(" + sim + ") ELSE 0 END, CASE WHEN c.cls = 2 AND c.key = ANY(" + lo + ") THEN 0 ELSE 1 END, char_length(c.key)),")
-	rank := "cls, dead, dis, whole, klen, simr, nm, connection_id, object_guid"
+	rank := "band, rr, cls, dead, dis, whole, klen, simr, nm, connection_id, object_guid"
 	sb.WriteString(" visible AS (SELECT h.*, count(*) OVER (PARTITION BY grp) AS grp_n FROM hits h),")
 	after := ""
 	if a := q.After; a != nil {
-		after = " WHERE (cls, dead, dis, whole, klen, simr, nm, connection_id, object_guid) > (" +
-			b.bind("smallint", int16(a.Class)) + ", " + b.bind("int", a.Dead) + ", " + b.bind("int", a.Disabled) + ", " + b.bind("int", a.Whole) + ", " +
+		after = " WHERE (band, rr, cls, dead, dis, whole, klen, simr, nm, connection_id, object_guid) > (" +
+			b.bind("int", a.Band) + ", " + b.bind("int", a.Recent) + ", " + b.bind("smallint", int16(a.Class)) + ", " + b.bind("int", a.Dead) + ", " + b.bind("int", a.Disabled) + ", " + b.bind("int", a.Whole) + ", " +
 			b.bind("int", a.KeyLen) + ", " + b.bind("int", a.SimRank) + ", " + b.bind("text", a.Name) + " COLLATE \"C\", " +
 			b.bind("uuid", a.Connection) + ", " + b.bind("uuid", a.Object) + ")"
 	}
 	sb.WriteString(" paged AS (SELECT v.*, row_number() OVER (PARTITION BY grp ORDER BY " + rank + ") AS rn FROM visible v" + after + ")")
-	sb.WriteString(" SELECT cl.c, p.connection_id::text, p.object_guid::text, p.kind, p.state, p.enabled, p.display_name, p.grp, p.cls, p.dead, p.dis, p.whole, p.klen, p.simr, p.nm, p.sim, p.grp_n " +
+	sb.WriteString(" SELECT cl.c, p.connection_id::text, p.object_guid::text, p.kind, p.state, p.enabled, p.display_name, p.grp, p.cls, p.band, p.rr, p.dead, p.dis, p.whole, p.klen, p.simr, p.nm, p.sim, p.grp_n " +
 		"FROM ceil cl LEFT JOIN paged p ON p.rn <= " + b.bind("int", q.GroupLimit+1) +
-		" ORDER BY p.grp, p.cls, p.dead, p.dis, p.whole, p.klen, p.simr, p.nm, p.connection_id, p.object_guid")
+		" ORDER BY p.grp, p.band, p.rr, p.cls, p.dead, p.dis, p.whole, p.klen, p.simr, p.nm, p.connection_id, p.object_guid")
 	return Query{sql: CompiledSQL(sb.String()), args: b.args, reasons: b.reasons, search: &searchMeta{limit: q.GroupLimit, fuzzy: q.Fuzzy != "", threshold: float64(q.Threshold)}}, nil
 }
 
@@ -374,8 +429,10 @@ type SearchHit struct {
 	DisplayName        string
 	Group              SearchType
 	Class              SearchClass
-	Similarity         float32
-	Rank               SearchAfter
+	// Recent is true for an object among the account's recents that did not match exactly.
+	Recent     bool
+	Similarity float32
+	Rank       SearchAfter
 }
 
 // SearchResult is the answer. Counts and More are nil when Refine is set (rule 12).
@@ -417,10 +474,10 @@ func ExecSearch(ctx context.Context, tx store.Tx, q Query) (SearchResult, error)
 		var conn, obj, kind, state, name, nm *string
 		var enabled *bool
 		var grp, cls *int16
-		var dead, dis, whole, klen, simr *int32
+		var band, rr, dead, dis, whole, klen, simr *int32
 		var sim *float32
 		var n *int64
-		if err := rs.Scan(&ceil, &conn, &obj, &kind, &state, &enabled, &name, &grp, &cls, &dead, &dis, &whole, &klen, &simr, &nm, &sim, &n); err != nil {
+		if err := rs.Scan(&ceil, &conn, &obj, &kind, &state, &enabled, &name, &grp, &cls, &band, &rr, &dead, &dis, &whole, &klen, &simr, &nm, &sim, &n); err != nil {
 			return res, wrapErr(ctx, err)
 		}
 		res.Refine = ceil > 0
@@ -434,8 +491,8 @@ func ExecSearch(ctx context.Context, tx store.Tx, q Query) (SearchResult, error)
 			continue
 		}
 		res.Hits = append(res.Hits, SearchHit{Connection: *conn, Object: *obj, Kind: *kind, State: *state, Enabled: enabled, DisplayName: *name,
-			Group: g, Class: SearchClass(*cls), Similarity: *sim,
-			Rank: SearchAfter{Class: SearchClass(*cls), Dead: int(*dead), Disabled: int(*dis), Whole: int(*whole), KeyLen: int(*klen), SimRank: int(*simr),
+			Group: g, Class: SearchClass(*cls), Recent: *band == 1, Similarity: *sim,
+			Rank: SearchAfter{Class: SearchClass(*cls), Band: int(*band), Recent: int(*rr), Dead: int(*dead), Disabled: int(*dis), Whole: int(*whole), KeyLen: int(*klen), SimRank: int(*simr),
 				Name: *nm, Connection: *conn, Object: *obj}})
 	}
 	if err := rs.Err(); err != nil {
