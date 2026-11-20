@@ -12,6 +12,241 @@ import (
 	"github.com/skenzeriq/activediq/internal/platform/apihost/apitypes"
 )
 
+// GetExplorerNodeInput is the decoded input of getExplorerNode: path, query and header parameters, then the body.
+type GetExplorerNodeInput struct {
+	ObjectGUID   apitypes.UUID  // path "objectGuid"
+	ConnectionID *apitypes.UUID // query "connection_id"
+}
+
+func (in *GetExplorerNodeInput) BindRequest(r *apihost.Request, errs *apitypes.Errors) {
+	_ = r
+	{
+		vs := []string{r.PathValue("objectGuid")}
+		switch {
+		case len(vs) > 1:
+			errs.Add(apitypes.InPath, jsontext.Pointer("objectGuid"), apitypes.CodeType, "parameter must not repeat")
+		case len(vs) == 1 && vs[0] != "":
+			s := vs[0]
+			if x, err := apitypes.ParseUUID(s); err != nil {
+				errs.Add(apitypes.InPath, jsontext.Pointer("objectGuid"), apitypes.CodeType, "expected a valid value")
+			} else {
+				in.ObjectGUID = apitypes.UUID(x)
+			}
+		default:
+			errs.Add(apitypes.InPath, jsontext.Pointer("objectGuid"), apitypes.CodeRequired, "required parameter is missing")
+		}
+	}
+	{
+		vs := r.Query["connection_id"]
+		switch {
+		case len(vs) > 1:
+			errs.Add(apitypes.InQuery, jsontext.Pointer("connection_id"), apitypes.CodeType, "parameter must not repeat")
+		case len(vs) == 1 && vs[0] != "":
+			s := vs[0]
+			var e apitypes.UUID
+			if x, err := apitypes.ParseUUID(s); err != nil {
+				errs.Add(apitypes.InQuery, jsontext.Pointer("connection_id"), apitypes.CodeType, "expected a valid value")
+			} else {
+				e = apitypes.UUID(x)
+			}
+			in.ConnectionID = &e
+		}
+	}
+}
+
+func (in *GetExplorerNodeInput) BodyTarget() any { return nil }
+
+func (in *GetExplorerNodeInput) Validate(errs *apitypes.Errors) {
+	_ = errs
+}
+
+func (in *GetExplorerNodeInput) DestroySecrets() {}
+
+// GetExplorerNodeOutput is one of the responses getExplorerNode declares. Errors are returned as the error value.
+type GetExplorerNodeOutput interface {
+	apihost.Response
+	isGetExplorerNodeOutput()
+}
+
+// GetExplorerNode200 is the 200 response.
+type GetExplorerNode200 struct {
+	Body ExplorerNode
+}
+
+func (GetExplorerNode200) StatusCode() int                    { return 200 }
+func (o GetExplorerNode200) ResponseBody() any                { return o.Body }
+func (GetExplorerNode200) ResponseHeaders() map[string]string { return nil }
+func (GetExplorerNode200) isGetExplorerNodeOutput()           {}
+
+// ListExplorerChildrenInput is the decoded input of listExplorerChildren: path, query and header parameters, then the body.
+type ListExplorerChildrenInput struct {
+	ObjectGUID   apitypes.UUID  // path "objectGuid"
+	ConnectionID *apitypes.UUID // query "connection_id"
+	View         *ExplorerView  // query "view"
+	Limit        *int64         // query "limit"
+	Cursor       *string        // query "cursor"
+}
+
+func (in *ListExplorerChildrenInput) BindRequest(r *apihost.Request, errs *apitypes.Errors) {
+	_ = r
+	{
+		vs := []string{r.PathValue("objectGuid")}
+		switch {
+		case len(vs) > 1:
+			errs.Add(apitypes.InPath, jsontext.Pointer("objectGuid"), apitypes.CodeType, "parameter must not repeat")
+		case len(vs) == 1 && vs[0] != "":
+			s := vs[0]
+			if x, err := apitypes.ParseUUID(s); err != nil {
+				errs.Add(apitypes.InPath, jsontext.Pointer("objectGuid"), apitypes.CodeType, "expected a valid value")
+			} else {
+				in.ObjectGUID = apitypes.UUID(x)
+			}
+		default:
+			errs.Add(apitypes.InPath, jsontext.Pointer("objectGuid"), apitypes.CodeRequired, "required parameter is missing")
+		}
+	}
+	{
+		vs := r.Query["connection_id"]
+		switch {
+		case len(vs) > 1:
+			errs.Add(apitypes.InQuery, jsontext.Pointer("connection_id"), apitypes.CodeType, "parameter must not repeat")
+		case len(vs) == 1 && vs[0] != "":
+			s := vs[0]
+			var e apitypes.UUID
+			if x, err := apitypes.ParseUUID(s); err != nil {
+				errs.Add(apitypes.InQuery, jsontext.Pointer("connection_id"), apitypes.CodeType, "expected a valid value")
+			} else {
+				e = apitypes.UUID(x)
+			}
+			in.ConnectionID = &e
+		}
+	}
+	{
+		vs := r.Query["view"]
+		switch {
+		case len(vs) > 1:
+			errs.Add(apitypes.InQuery, jsontext.Pointer("view"), apitypes.CodeType, "parameter must not repeat")
+		case len(vs) == 1 && vs[0] != "":
+			s := vs[0]
+			var e ExplorerView
+			e = ExplorerView(s)
+			in.View = &e
+		}
+	}
+	{
+		vs := r.Query["limit"]
+		switch {
+		case len(vs) > 1:
+			errs.Add(apitypes.InQuery, jsontext.Pointer("limit"), apitypes.CodeType, "parameter must not repeat")
+		case len(vs) == 1 && vs[0] != "":
+			s := vs[0]
+			var e int64
+			if x, err := apitypes.ParseInt(s); err != nil {
+				errs.Add(apitypes.InQuery, jsontext.Pointer("limit"), apitypes.CodeType, "expected a valid value")
+			} else {
+				e = int64(x)
+			}
+			in.Limit = &e
+		}
+	}
+	{
+		vs := r.Query["cursor"]
+		switch {
+		case len(vs) > 1:
+			errs.Add(apitypes.InQuery, jsontext.Pointer("cursor"), apitypes.CodeType, "parameter must not repeat")
+		case len(vs) == 1 && vs[0] != "":
+			s := vs[0]
+			var e string
+			e = string(s)
+			in.Cursor = &e
+		}
+	}
+}
+
+func (in *ListExplorerChildrenInput) BodyTarget() any { return nil }
+
+func (in *ListExplorerChildrenInput) Validate(errs *apitypes.Errors) {
+	_ = errs
+	if in.View != nil {
+		if !(*in.View).Valid() {
+			errs.Add(apitypes.InQuery, jsontext.Pointer("view"), apitypes.CodeEnum, "value is not one of the allowed values")
+		}
+	}
+	if in.Limit != nil {
+		apitypes.CheckInt(errs, apitypes.InQuery, jsontext.Pointer("limit"), int64((*in.Limit)), 1, 200)
+	}
+	if in.Cursor != nil {
+		apitypes.CheckLen(errs, apitypes.InQuery, jsontext.Pointer("cursor"), string((*in.Cursor)), 1, 512)
+	}
+}
+
+func (in *ListExplorerChildrenInput) DestroySecrets() {}
+
+// ListExplorerChildrenOutput is one of the responses listExplorerChildren declares. Errors are returned as the error value.
+type ListExplorerChildrenOutput interface {
+	apihost.Response
+	isListExplorerChildrenOutput()
+}
+
+// ListExplorerChildren200 is the 200 response.
+type ListExplorerChildren200 struct {
+	Body ExplorerChildren
+}
+
+func (ListExplorerChildren200) StatusCode() int                    { return 200 }
+func (o ListExplorerChildren200) ResponseBody() any                { return o.Body }
+func (ListExplorerChildren200) ResponseHeaders() map[string]string { return nil }
+func (ListExplorerChildren200) isListExplorerChildrenOutput()      {}
+
+// ListExplorerRootsInput is the decoded input of listExplorerRoots: path, query and header parameters, then the body.
+type ListExplorerRootsInput struct {
+	ConnectionID *apitypes.UUID // query "connection_id"
+}
+
+func (in *ListExplorerRootsInput) BindRequest(r *apihost.Request, errs *apitypes.Errors) {
+	_ = r
+	{
+		vs := r.Query["connection_id"]
+		switch {
+		case len(vs) > 1:
+			errs.Add(apitypes.InQuery, jsontext.Pointer("connection_id"), apitypes.CodeType, "parameter must not repeat")
+		case len(vs) == 1 && vs[0] != "":
+			s := vs[0]
+			var e apitypes.UUID
+			if x, err := apitypes.ParseUUID(s); err != nil {
+				errs.Add(apitypes.InQuery, jsontext.Pointer("connection_id"), apitypes.CodeType, "expected a valid value")
+			} else {
+				e = apitypes.UUID(x)
+			}
+			in.ConnectionID = &e
+		}
+	}
+}
+
+func (in *ListExplorerRootsInput) BodyTarget() any { return nil }
+
+func (in *ListExplorerRootsInput) Validate(errs *apitypes.Errors) {
+	_ = errs
+}
+
+func (in *ListExplorerRootsInput) DestroySecrets() {}
+
+// ListExplorerRootsOutput is one of the responses listExplorerRoots declares. Errors are returned as the error value.
+type ListExplorerRootsOutput interface {
+	apihost.Response
+	isListExplorerRootsOutput()
+}
+
+// ListExplorerRoots200 is the 200 response.
+type ListExplorerRoots200 struct {
+	Body ExplorerRoots
+}
+
+func (ListExplorerRoots200) StatusCode() int                    { return 200 }
+func (o ListExplorerRoots200) ResponseBody() any                { return o.Body }
+func (ListExplorerRoots200) ResponseHeaders() map[string]string { return nil }
+func (ListExplorerRoots200) isListExplorerRootsOutput()         {}
+
 // SearchDirectoryInput is the decoded input of searchDirectory: path, query and header parameters, then the body.
 type SearchDirectoryInput struct {
 	Body DirectorySearchRequest
@@ -120,6 +355,9 @@ func (SearchDirectoryUsers200) isSearchDirectoryUsersOutput()      {}
 // Handlers is the tag's handler interface: one method per operation. A handler never sees
 // *http.Request, http.ResponseWriter or the raw body (ADR-0004 rule 5).
 type Handlers interface {
+	GetExplorerNode(ctx context.Context, in GetExplorerNodeInput) (GetExplorerNodeOutput, error)
+	ListExplorerChildren(ctx context.Context, in ListExplorerChildrenInput) (ListExplorerChildrenOutput, error)
+	ListExplorerRoots(ctx context.Context, in ListExplorerRootsInput) (ListExplorerRootsOutput, error)
 	SearchDirectory(ctx context.Context, in SearchDirectoryInput) (SearchDirectoryOutput, error)
 	SearchDirectoryUsers(ctx context.Context, in SearchDirectoryUsersInput) (SearchDirectoryUsersOutput, error)
 }
@@ -128,6 +366,54 @@ type Handlers interface {
 // route constructors.
 func Bind(h Handlers) apihost.TagHandlers {
 	return apihost.NewTagHandlers("directory",
+		apihost.NewRoute(apihost.RouteMeta{
+			OperationID: "getExplorerNode", Tag: "directory", Method: "GET", Path: "/directory/explorer/nodes/{objectGuid}",
+			Permission: "directory.read", Anonymous: "", Scope: "tenant", Stability: "preview", Deprecated: false, Sunset: "",
+			Class: "read", MaxBody: 0, Body: apihost.BodyNone, MediaType: "", Secret: false,
+		},
+			func() apihost.Input { return new(GetExplorerNodeInput) },
+			func(ctx context.Context, in apihost.Input) (apihost.Response, error) {
+				out, err := h.GetExplorerNode(ctx, *in.(*GetExplorerNodeInput))
+				if err != nil {
+					return nil, err
+				}
+				if out == nil {
+					return nil, fmt.Errorf("GetExplorerNode returned no output and no error")
+				}
+				return out, nil
+			}),
+		apihost.NewRoute(apihost.RouteMeta{
+			OperationID: "listExplorerChildren", Tag: "directory", Method: "GET", Path: "/directory/explorer/nodes/{objectGuid}/children",
+			Permission: "directory.read", Anonymous: "", Scope: "tenant", Stability: "preview", Deprecated: false, Sunset: "",
+			Class: "read", MaxBody: 0, Body: apihost.BodyNone, MediaType: "", Secret: false,
+		},
+			func() apihost.Input { return new(ListExplorerChildrenInput) },
+			func(ctx context.Context, in apihost.Input) (apihost.Response, error) {
+				out, err := h.ListExplorerChildren(ctx, *in.(*ListExplorerChildrenInput))
+				if err != nil {
+					return nil, err
+				}
+				if out == nil {
+					return nil, fmt.Errorf("ListExplorerChildren returned no output and no error")
+				}
+				return out, nil
+			}),
+		apihost.NewRoute(apihost.RouteMeta{
+			OperationID: "listExplorerRoots", Tag: "directory", Method: "GET", Path: "/directory/explorer/roots",
+			Permission: "directory.read", Anonymous: "", Scope: "tenant", Stability: "preview", Deprecated: false, Sunset: "",
+			Class: "read", MaxBody: 0, Body: apihost.BodyNone, MediaType: "", Secret: false,
+		},
+			func() apihost.Input { return new(ListExplorerRootsInput) },
+			func(ctx context.Context, in apihost.Input) (apihost.Response, error) {
+				out, err := h.ListExplorerRoots(ctx, *in.(*ListExplorerRootsInput))
+				if err != nil {
+					return nil, err
+				}
+				if out == nil {
+					return nil, fmt.Errorf("ListExplorerRoots returned no output and no error")
+				}
+				return out, nil
+			}),
 		apihost.NewRoute(apihost.RouteMeta{
 			OperationID: "searchDirectory", Tag: "directory", Method: "POST", Path: "/directory/search",
 			Permission: "directory.read", Anonymous: "", Scope: "tenant", Stability: "preview", Deprecated: false, Sunset: "",

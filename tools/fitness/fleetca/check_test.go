@@ -131,11 +131,16 @@ func TestBindings(t *testing.T) {
 	// not landed but the test exists: violation
 	root := tree(t, map[string]string{"internal/platform/fleet/gateway/g_test.go": "package gateway\n\nimport \"testing\"\n\nfunc TestServerCAAbsentFromClientPool(t *testing.T) {}\n"})
 	files, _ := loadGo(root)
-	vs, pend, err := runBindings(context.Background(), root, files, defaultBindings, func(context.Context, string, string, []string) ([]byte, error) { return nil, nil })
+	// The real table is flipped to Landed as tickets land their tests; this case is about the unlanded rule.
+	unlanded := append([]binding(nil), defaultBindings...)
+	for i := range unlanded {
+		unlanded[i].Landed = false
+	}
+	vs, pend, err := runBindings(context.Background(), root, files, unlanded, func(context.Context, string, string, []string) ([]byte, error) { return nil, nil })
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(vs) != 1 || vs[0].Rule != "binding-not-landed" || len(pend) != len(defaultBindings) {
+	if len(vs) != 1 || vs[0].Rule != "binding-not-landed" || len(pend) != len(unlanded) {
 		t.Fatalf("got %v pending %d", vs, len(pend))
 	}
 	// landed: missing, failed and skipped tests are each a violation, a pass is not

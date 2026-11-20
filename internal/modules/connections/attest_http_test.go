@@ -1,6 +1,6 @@
 package connections_test
 
-// The HTTP flow over the composed Entra adapters moved to internal/compose/server/entra
+// The HTTP flow over the composed Entra adapters moved to internal/modules/connections/entra
 // (attest_http_test.go): a module test must not import internal/compose (ADR-0002 rule 1; T-0943).
 // What stays here needs no adapter.
 

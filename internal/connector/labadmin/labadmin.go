@@ -8,9 +8,13 @@ package labadmin
 import (
 	"crypto/tls"
 	"crypto/x509"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/go-ldap/ldap/v3"
+
+	"github.com/skenzeriq/activediq/internal/directory/attr/guid"
 )
 
 // Admin is a bound administrator session on the lab DC.
@@ -72,6 +76,24 @@ func (a *Admin) add(dn string, attrs map[string][]string) string {
 	return dn
 }
 
+// CreateGroup adds the global security group CN=cn,parent and deletes it when the test ends. It returns the DN.
+func (a *Admin) CreateGroup(cn, parent string) string {
+	a.tb.Helper()
+	return a.add("CN="+cn+","+parent, map[string][]string{"objectClass": {"top", "group"}, "sAMAccountName": {cn}, "groupType": {"-2147483646"}})
+}
+
+// AddMemberDN adds memberDN to the member attribute of groupDN, with no undo: for a group the test created itself,
+// whose deletion at the end of the test drops the membership (a per-member undo by DN fails once a member is
+// renamed or deleted). Failure fails the test.
+func (a *Admin) AddMemberDN(groupDN, memberDN string) {
+	a.tb.Helper()
+	mod := ldap.NewModifyRequest(groupDN, nil)
+	mod.Add("member", []string{memberDN})
+	if err := a.conn.Modify(mod); err != nil {
+		a.tb.Fatal(err)
+	}
+}
+
 // AddMember makes the account with sAMAccountName sam a member of the group at groupDN, and removes
 // the membership when the test ends, so a test that puts the service account in a Tier-0 group
 // leaves the shared lab as it found it. Failure fails the test.
@@ -118,6 +140,64 @@ func (a *Admin) Move(dn, newParent string) string {
 	newDN := rdn + "," + newParent
 	a.tb.Cleanup(func() { _ = a.conn.Del(ldap.NewDelRequest(newDN, nil)) })
 	return newDN
+}
+
+// Rename changes the RDN of dn in place (an LDAP ModifyDN under the same parent, old RDN removed) and
+// deletes the object at its new DN when the test ends. The objectGUID is unchanged. It returns the new DN.
+func (a *Admin) Rename(dn, newRDN string) string {
+	a.tb.Helper()
+	i := indexUnescapedComma(dn)
+	if i >= len(dn) {
+		a.tb.Fatalf("rename %s: no parent", dn)
+	}
+	if err := a.conn.ModifyDN(ldap.NewModifyDNRequest(dn, newRDN, true, "")); err != nil {
+		a.tb.Fatal(err)
+	}
+	newDN := newRDN + dn[i:]
+	a.tb.Cleanup(func() { _ = a.conn.Del(ldap.NewDelRequest(newDN, nil)) })
+	return newDN
+}
+
+// Delete removes the object at dn now. Failure fails the test.
+func (a *Admin) Delete(dn string) {
+	a.tb.Helper()
+	if err := a.conn.Del(ldap.NewDelRequest(dn, nil)); err != nil {
+		a.tb.Fatal(err)
+	}
+}
+
+// RemoveMember removes the member at memberDN from the group at groupDN now. Failure fails the test.
+func (a *Admin) RemoveMember(groupDN, memberDN string) {
+	a.tb.Helper()
+	mod := ldap.NewModifyRequest(groupDN, nil)
+	mod.Delete("member", []string{memberDN})
+	if err := a.conn.Modify(mod); err != nil {
+		a.tb.Fatal(err)
+	}
+}
+
+// Exists reports whether an object is at dn (an administrator base search).
+func (a *Admin) Exists(dn string) bool {
+	a.tb.Helper()
+	_, err := a.conn.Search(ldap.NewSearchRequest(dn, ldap.ScopeBaseObject, ldap.NeverDerefAliases, 0, 0, false, "(objectClass=*)", []string{"objectGUID"}, nil))
+	if err == nil {
+		return true
+	}
+	if ldap.IsErrorWithCode(err, ldap.LDAPResultNoSuchObject) {
+		return false
+	}
+	a.tb.Fatalf("exists %s: %v", dn, err)
+	return false
+}
+
+// Members returns the member DNs of the group at groupDN, by a direct read.
+func (a *Admin) Members(groupDN string) []string {
+	a.tb.Helper()
+	r, err := a.conn.Search(ldap.NewSearchRequest(groupDN, ldap.ScopeBaseObject, ldap.NeverDerefAliases, 0, 0, false, "(objectClass=*)", []string{"member"}, nil))
+	if err != nil || len(r.Entries) != 1 {
+		a.tb.Fatalf("members of %s: %v", groupDN, err)
+	}
+	return r.Entries[0].GetAttributeValues("member")
 }
 
 // indexUnescapedComma is the offset of the first comma of dn not preceded by a backslash.
@@ -168,4 +248,126 @@ func (a *Admin) ReadPartitions() Partitions {
 		p.Heads = append(p.Heads, x.GetAttributeValue("nCName"))
 	}
 	return p
+}
+
+// AddValues adds vals to the multi-valued attribute attr of the object at dn (for example a
+// servicePrincipalName on a seeded user) and removes exactly those values when the test ends, so the
+// shared lab is left as it was found. Failure fails the test.
+func (a *Admin) AddValues(dn, attr string, vals ...string) {
+	a.tb.Helper()
+	mod := ldap.NewModifyRequest(dn, nil)
+	mod.Add(attr, vals)
+	if err := a.conn.Modify(mod); err != nil {
+		a.tb.Fatalf("add %s on %s: %v", attr, dn, err)
+	}
+	a.tb.Cleanup(func() {
+		undo := ldap.NewModifyRequest(dn, nil)
+		undo.Delete(attr, vals)
+		if err := a.conn.Modify(undo); err != nil {
+			a.tb.Errorf("LAB DIRTY: could not remove %s values from %s: %v", attr, dn, err)
+		}
+	})
+}
+
+// DNOf returns the DN of the one account whose sAMAccountName is sam. Failure fails the test.
+func (a *Admin) DNOf(sam string) string {
+	a.tb.Helper()
+	r, err := a.conn.Search(ldap.NewSearchRequest(a.baseDN(), ldap.ScopeWholeSubtree, ldap.NeverDerefAliases, 2, 0, false,
+		"(&(objectClass=user)(sAMAccountName="+ldap.EscapeFilter(sam)+"))", []string{"distinguishedName"}, nil))
+	if err != nil || len(r.Entries) != 1 {
+		a.tb.Fatalf("find account %q: %v", sam, err)
+	}
+	return r.Entries[0].DN
+}
+
+// CreateLoginUser adds an enabled account CN=cn,parent with sAMAccountName cn, userPrincipalName
+// cn@upnSuffix and the given password, and deletes it when the test ends. It returns the DN. A lab test
+// binds as such an account to observe what the DC records for a logon.
+func (a *Admin) CreateLoginUser(cn, parent, upnSuffix, password string) string {
+	a.tb.Helper()
+	utf16 := make([]byte, 0, 2*(len(password)+2))
+	for _, r := range `"` + password + `"` { // password is ASCII in the lab tests: one UTF-16LE unit each
+		utf16 = append(utf16, byte(r), byte(r>>8))
+	}
+	req := ldap.NewAddRequest("CN="+cn+","+parent, nil)
+	req.Attribute("objectClass", []string{"top", "person", "organizationalPerson", "user"})
+	req.Attribute("sAMAccountName", []string{cn})
+	req.Attribute("userPrincipalName", []string{cn + "@" + upnSuffix})
+	req.Attribute("userAccountControl", []string{"512"})
+	req.Attribute("unicodePwd", []string{string(utf16)})
+	if err := a.conn.Add(req); err != nil {
+		a.tb.Fatalf("create login user %s: %v", cn, err)
+	}
+	dn := "CN=" + cn + "," + parent
+	a.tb.Cleanup(func() { _ = a.conn.Del(ldap.NewDelRequest(dn, nil)) })
+	return dn
+}
+
+// computedUACLockout is UF_LOCKOUT in msDS-User-Account-Control-Computed: the DC's own verdict that the
+// account is locked out now (lockoutTime inside the lockout duration).
+const computedUACLockout = 0x10
+
+// LockedOutGUIDs returns the lower-case canonical objectGUIDs of the user accounts the DC itself reports
+// as locked out now: lockoutTime set and the constructed msDS-User-Account-Control-Computed carrying
+// UF_LOCKOUT. The filter is a constant. Failure fails the test.
+func (a *Admin) LockedOutGUIDs() map[string]struct{} {
+	a.tb.Helper()
+	r, err := a.conn.SearchWithPaging(ldap.NewSearchRequest(a.baseDN(), ldap.ScopeWholeSubtree, ldap.NeverDerefAliases, 0, 0, false,
+		"(&(objectClass=user)(!(objectClass=computer))(lockoutTime>=1))", []string{"objectGUID", "msDS-User-Account-Control-Computed"}, nil), 500)
+	if err != nil {
+		a.tb.Fatalf("locked-out search: %v", err)
+	}
+	out := map[string]struct{}{}
+	for _, e := range r.Entries {
+		n, err := strconv.ParseInt(e.GetAttributeValue("msDS-User-Account-Control-Computed"), 10, 64)
+		if err != nil || n&computedUACLockout == 0 {
+			continue
+		}
+		g, err := guid.FromBytes(e.GetRawAttributeValue("objectGUID"))
+		if err != nil {
+			a.tb.Fatalf("objectGUID: %v", err)
+		}
+		out[strings.ToLower(g.String())] = struct{}{}
+	}
+	return out
+}
+
+// LogonAttrs returns lastLogon and lastLogonTimestamp (each possibly empty) of the account with
+// sAMAccountName sam, read through the administrator session. Failure fails the test.
+func (a *Admin) LogonAttrs(sam string) (lastLogon, lastLogonTimestamp []string) {
+	a.tb.Helper()
+	r, err := a.conn.Search(ldap.NewSearchRequest(a.baseDN(), ldap.ScopeWholeSubtree, ldap.NeverDerefAliases, 2, 0, false,
+		"(&(objectClass=user)(sAMAccountName="+ldap.EscapeFilter(sam)+"))", []string{"lastLogon", "lastLogonTimestamp"}, nil))
+	if err != nil || len(r.Entries) != 1 {
+		a.tb.Fatalf("logon attributes of %q: %v", sam, err)
+	}
+	return r.Entries[0].GetAttributeValues("lastLogon"), r.Entries[0].GetAttributeValues("lastLogonTimestamp")
+}
+
+// ReplaceValues sets the attribute attr of the object at dn to vals (binary values are passed as the
+// string of their bytes) and, when the test ends, puts back exactly what was there (or removes the
+// attribute if it was absent), so the shared lab is left as it was found. Failure fails the test.
+func (a *Admin) ReplaceValues(dn, attr string, vals ...string) {
+	a.tb.Helper()
+	r, err := a.conn.Search(ldap.NewSearchRequest(dn, ldap.ScopeBaseObject, ldap.NeverDerefAliases, 1, 0, false,
+		"(objectClass=*)", []string{attr}, nil))
+	if err != nil || len(r.Entries) != 1 {
+		a.tb.Fatalf("read %s on %s: %v", attr, dn, err)
+	}
+	var before []string
+	for _, v := range r.Entries[0].GetRawAttributeValues(attr) {
+		before = append(before, string(v))
+	}
+	mod := ldap.NewModifyRequest(dn, nil)
+	mod.Replace(attr, vals)
+	if err := a.conn.Modify(mod); err != nil {
+		a.tb.Fatalf("replace %s on %s: %v", attr, dn, err)
+	}
+	a.tb.Cleanup(func() {
+		undo := ldap.NewModifyRequest(dn, nil)
+		undo.Replace(attr, before) // an empty list removes the attribute
+		if err := a.conn.Modify(undo); err != nil {
+			a.tb.Errorf("LAB DIRTY: could not restore %s on %s: %v", attr, dn, err)
+		}
+	})
 }

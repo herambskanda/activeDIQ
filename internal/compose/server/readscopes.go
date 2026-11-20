@@ -6,10 +6,9 @@ import (
 	"fmt"
 	"regexp"
 
-	"github.com/skenzeriq/activediq/internal/modules/directory"
-	"github.com/skenzeriq/activediq/internal/platform/authority"
 	"github.com/skenzeriq/activediq/internal/platform/authz"
 	"github.com/skenzeriq/activediq/internal/platform/module"
+	"github.com/skenzeriq/activediq/internal/platform/notify/delivery"
 	"github.com/skenzeriq/activediq/internal/platform/rbac"
 	"github.com/skenzeriq/activediq/internal/platform/report"
 	"github.com/skenzeriq/activediq/internal/platform/store"
@@ -39,6 +38,29 @@ func (accountOwnerStatus) Active(ctx context.Context, tx store.Tx, t tenant.ID, 
 		return false, fmt.Errorf("server: reading account state: %w", err)
 	}
 	return active, nil
+}
+
+// accountMail serves delivery.Accounts from the authn account store, in the caller's tenant transaction (RLS
+// scopes the read). Only an active account with an address has one: a message is never sent to a disabled
+// or deleted account.
+type accountMail struct{}
+
+// MailAddress implements delivery.Accounts.
+func (accountMail) MailAddress(ctx context.Context, tx store.Tx, account string) (string, error) {
+	if tx == nil || !accountUUID.MatchString(account) {
+		return "", delivery.ErrNoAddress
+	}
+	var email *string
+	err := tx.QueryRow(ctx, `SELECT email FROM public.authn_accounts WHERE id = $1::uuid AND state = 'active'`, account).Scan(&email)
+	switch {
+	case store.IsNoRows(err):
+		return "", delivery.ErrNoAddress
+	case err != nil:
+		return "", fmt.Errorf("server: reading account address: %w", err)
+	case email == nil || *email == "":
+		return "", delivery.ErrNoAddress
+	}
+	return *email, nil
 }
 
 // inventoryObjectConnections serves rbac.ObjectConnections from inventory's directory_objects, in the
@@ -97,26 +119,4 @@ func buildReadScopes(az *rbac.Authorizer, c *module.Contributions) (*rbac.ReadSc
 		return nil, fmt.Errorf("server: read scopes: %w", err)
 	}
 	return rs, nil
-}
-
-// The composition root's producer is what the directory module asks for (T-0987: buildDirectory gets it).
-var _ directory.ReadScopes = txReadScopes{}
-
-// txReadScopes adapts rbac.ReadScopes, which reads in a caller's transaction, to directory.ReadScopes,
-// which has none: it opens the tenant transaction the producer needs.
-type txReadScopes struct {
-	db *store.DB
-	rs *rbac.ReadScopes
-}
-
-func (s txReadScopes) ReadScope(ctx context.Context, tid tenant.ID, chain authority.Chain, perm authz.Permission) (authz.ReadScope, error) {
-	var out authz.ReadScope
-	err := s.db.WithTenant(ctx, tid, func(ctx context.Context, tx store.Tx) (err error) {
-		out, err = s.rs.For(ctx, tx, tid, chain, perm)
-		return err
-	})
-	if err != nil {
-		return authz.ReadScope{}, err
-	}
-	return out, nil
 }

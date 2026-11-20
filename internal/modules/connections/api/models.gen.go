@@ -9,6 +9,327 @@ import (
 	"github.com/skenzeriq/activediq/internal/platform/apihost/apitypes"
 )
 
+// ConnectionHealth: The health of one connection. Nothing here is a credential or an identity the connection binds as.
+type ConnectionHealth struct {
+	// Domain controllers that answered the last probe.
+	DcReachable int64 `json:"dcReachable"`
+	// Domain controllers known for the connection.
+	DcTotal     int64         `json:"dcTotal"`
+	DisplayName string        `json:"displayName"`
+	ID          apitypes.UUID `json:"id"`
+	// Seconds since the last successful sync, at the time of the answer. Null when it has never synced.
+	LagSeconds *int64 `json:"lagSeconds"`
+	// The last successful sync, UTC. Null when the connection has never synced.
+	LastSyncAt *apitypes.Timestamp   `json:"lastSyncAt"`
+	State      ConnectionHealthState `json:"state"`
+
+	p apitypes.Presence
+}
+
+// UnmarshalJSONFrom decodes the object strictly: member names match exactly and an unknown
+// member is an error. Nested values decode through the caller's options.
+func (v *ConnectionHealth) UnmarshalJSONFrom(d *jsontext.Decoder) error {
+	*v = ConnectionHealth{}
+	v.p.Begin()
+	if err := apitypes.ObjectStart(d); err != nil {
+		return err
+	}
+	for {
+		name, ok, err := apitypes.NextMember(d)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+		switch name {
+		case "dcReachable":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(0, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.DcReachable); err != nil {
+				return err
+			}
+		case "dcTotal":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(1, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.DcTotal); err != nil {
+				return err
+			}
+		case "displayName":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(2, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.DisplayName); err != nil {
+				return err
+			}
+		case "id":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(3, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.ID); err != nil {
+				return err
+			}
+		case "lagSeconds":
+			v.p.Mark(4, false)
+			if err := json.UnmarshalDecode(d, &v.LagSeconds); err != nil {
+				return err
+			}
+		case "lastSyncAt":
+			v.p.Mark(5, false)
+			if err := json.UnmarshalDecode(d, &v.LastSyncAt); err != nil {
+				return err
+			}
+		case "state":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(6, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.State); err != nil {
+				return err
+			}
+		default:
+			return apitypes.UnknownMember(d)
+		}
+	}
+}
+
+// Validate records every violation of the object's schema under at: missing required members,
+// null on a non-nullable member, bounds, patterns and closed enums.
+func (v *ConnectionHealth) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
+	// dcReachable
+	if v.p.Decoded() {
+		if !v.p.Has(0) {
+			errs.Required(at, "dcReachable")
+		}
+		if v.p.IsNull(0) {
+			errs.NullNotAllowed(at, "dcReachable")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(0) && !v.p.IsNull(0)) {
+		apitypes.CheckInt(errs, apitypes.InBody, at.AppendToken("dcReachable"), int64(v.DcReachable), 0, 1000)
+	}
+	// dcTotal
+	if v.p.Decoded() {
+		if !v.p.Has(1) {
+			errs.Required(at, "dcTotal")
+		}
+		if v.p.IsNull(1) {
+			errs.NullNotAllowed(at, "dcTotal")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(1) && !v.p.IsNull(1)) {
+		apitypes.CheckInt(errs, apitypes.InBody, at.AppendToken("dcTotal"), int64(v.DcTotal), 0, 1000)
+	}
+	// displayName
+	if v.p.Decoded() {
+		if !v.p.Has(2) {
+			errs.Required(at, "displayName")
+		}
+		if v.p.IsNull(2) {
+			errs.NullNotAllowed(at, "displayName")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(2) && !v.p.IsNull(2)) {
+		apitypes.CheckLen(errs, apitypes.InBody, at.AppendToken("displayName"), string(v.DisplayName), 0, 256)
+	}
+	// id
+	if v.p.Decoded() {
+		if !v.p.Has(3) {
+			errs.Required(at, "id")
+		}
+		if v.p.IsNull(3) {
+			errs.NullNotAllowed(at, "id")
+		}
+	}
+	// lagSeconds
+	if v.p.Decoded() && !v.p.Has(4) {
+		errs.Required(at, "lagSeconds")
+	}
+	if v.LagSeconds != nil {
+		apitypes.CheckInt(errs, apitypes.InBody, at.AppendToken("lagSeconds"), int64((*v.LagSeconds)), 0, 9007199254740991)
+	}
+	// lastSyncAt
+	if v.p.Decoded() && !v.p.Has(5) {
+		errs.Required(at, "lastSyncAt")
+	}
+	// state
+	if v.p.Decoded() {
+		if !v.p.Has(6) {
+			errs.Required(at, "state")
+		}
+		if v.p.IsNull(6) {
+			errs.NullNotAllowed(at, "state")
+		}
+	}
+}
+
+// ConnectionHealthList: One row per readable connection. Not paged, because a tenant has few connections; at most 256.
+type ConnectionHealthList struct {
+	Items []ConnectionHealth `json:"items"`
+
+	p apitypes.Presence
+}
+
+// UnmarshalJSONFrom decodes the object strictly: member names match exactly and an unknown
+// member is an error. Nested values decode through the caller's options.
+func (v *ConnectionHealthList) UnmarshalJSONFrom(d *jsontext.Decoder) error {
+	*v = ConnectionHealthList{}
+	v.p.Begin()
+	if err := apitypes.ObjectStart(d); err != nil {
+		return err
+	}
+	for {
+		name, ok, err := apitypes.NextMember(d)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+		switch name {
+		case "items":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(0, null)
+			if null {
+				continue
+			}
+			if err := apitypes.DecodeArray(d, &v.Items); err != nil {
+				return err
+			}
+		default:
+			return apitypes.UnknownMember(d)
+		}
+	}
+}
+
+// Validate records every violation of the object's schema under at: missing required members,
+// null on a non-nullable member, bounds, patterns and closed enums.
+func (v *ConnectionHealthList) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
+	// items
+	if v.p.Decoded() {
+		if !v.p.Has(0) {
+			errs.Required(at, "items")
+		}
+		if v.p.IsNull(0) {
+			errs.NullNotAllowed(at, "items")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(0) && !v.p.IsNull(0)) {
+		apitypes.CheckCount(errs, apitypes.InBody, at.AppendToken("items"), len(v.Items), 0, 256, apitypes.CodeMaxItems)
+		for i := range v.Items {
+			v.Items[i].Validate(apitypes.Index(at.AppendToken("items"), i), errs)
+		}
+	}
+}
+
+// ConnectionHealthState: synced, lagging (last sync older than its interval, or some DCs unreachable), dc_unreachable (no DC reachable) or suspended (paused by an administrator).
+type ConnectionHealthState string
+
+const (
+	ConnectionHealthStateSynced        ConnectionHealthState = "synced"
+	ConnectionHealthStateLagging       ConnectionHealthState = "lagging"
+	ConnectionHealthStateDcUnreachable ConnectionHealthState = "dc_unreachable"
+	ConnectionHealthStateSuspended     ConnectionHealthState = "suspended"
+)
+
+// Valid reports whether v is a value this build knows. Clients and responses may carry others
+// (the enum is open), so no generated code rejects an unknown value.
+func (v ConnectionHealthState) Valid() bool {
+	switch v {
+	case ConnectionHealthStateSynced, ConnectionHealthStateLagging, ConnectionHealthStateDcUnreachable, ConnectionHealthStateSuspended:
+		return true
+	}
+	return false
+}
+
+// ConnectionSummary: How many connections the tenant has. A count only; no connection is identified.
+type ConnectionSummary struct {
+	ConnectionCount int64 `json:"connectionCount"`
+
+	p apitypes.Presence
+}
+
+// UnmarshalJSONFrom decodes the object strictly: member names match exactly and an unknown
+// member is an error. Nested values decode through the caller's options.
+func (v *ConnectionSummary) UnmarshalJSONFrom(d *jsontext.Decoder) error {
+	*v = ConnectionSummary{}
+	v.p.Begin()
+	if err := apitypes.ObjectStart(d); err != nil {
+		return err
+	}
+	for {
+		name, ok, err := apitypes.NextMember(d)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+		switch name {
+		case "connectionCount":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(0, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.ConnectionCount); err != nil {
+				return err
+			}
+		default:
+			return apitypes.UnknownMember(d)
+		}
+	}
+}
+
+// Validate records every violation of the object's schema under at: missing required members,
+// null on a non-nullable member, bounds, patterns and closed enums.
+func (v *ConnectionSummary) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
+	// connectionCount
+	if v.p.Decoded() {
+		if !v.p.Has(0) {
+			errs.Required(at, "connectionCount")
+		}
+		if v.p.IsNull(0) {
+			errs.NullNotAllowed(at, "connectionCount")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(0) && !v.p.IsNull(0)) {
+		apitypes.CheckInt(errs, apitypes.InBody, at.AppendToken("connectionCount"), int64(v.ConnectionCount), 0, 256)
+	}
+}
+
 // TakeoverAttestationMaxAge: The new attestation_max_age.
 type TakeoverAttestationMaxAge struct {
 	MaxAgeSeconds int64 `json:"maxAgeSeconds"`

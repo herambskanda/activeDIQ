@@ -1,10 +1,13 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/skenzeriq/activediq/tools/gen/modules/modlist"
 )
 
 const mod = "example.test/m"
@@ -99,28 +102,41 @@ func expectClean(t *testing.T, files map[string]string) {
 	}
 }
 
+// The two generated lists of the clean tree, rendered by the same code the generator uses.
+var baseServerList, baseAgentList = modlist.Render(mod, modlist.Lists{
+	Server: []string{"helpdesk", "objects"},
+	Agent:  []modlist.AgentModule{{ID: "addc"}},
+})
+
 // base is a clean layered tree every failing case is derived from.
 func base() map[string]string {
 	return map[string]string{
-		"internal/platform/capability/c.go":      leaf("capability"),
-		"internal/platform/module/m.go":          goPkg("module", "internal/platform/capability"),
-		"internal/directory/d.go":                goPkg("directory", "internal/platform/module"),
-		"internal/connector/c.go":                goPkg("connector", "internal/directory"),
-		"internal/modules/objects/o.go":          goPkg("objects", "internal/platform/module", "internal/directory"),
-		"internal/modules/helpdesk/h.go":         goPkg("helpdesk", "internal/platform/module"),
-		"internal/agentmodules/addc/a.go":        goPkg("addc", "internal/platform/module"),
-		"internal/compose/config/c.go":           leaf("config"),
-		"internal/compose/profile/p.go":          goPkg("profile", "internal/platform/capability"),
-		"internal/compose/server/s.go":           goPkg("server", "internal/compose/config", "internal/connector"),
-		"internal/compose/server/modules.gen.go": goPkg("server", "internal/modules/objects", "internal/modules/helpdesk"),
-		"internal/compose/agent/a.go":            goPkg("agent", "internal/compose/config"),
-		"internal/compose/agent/modules.gen.go":  goPkg("agent", "internal/agentmodules/addc"),
-		"internal/compose/edge/e.go":             goPkg("edge", "internal/compose/config"),
-		"internal/compose/connector/c.go":        goPkg("connector", "internal/compose/config", "internal/connector"),
-		"cmd/server/main.go":                     goPkg("main", "internal/compose/server"),
-		"cmd/agent/main.go":                      goPkg("main", "internal/compose/agent"),
-		"cmd/edge/main.go":                       goPkg("main", "internal/compose/edge"),
-		"cmd/connector/main.go":                  goPkg("main", "internal/compose/connector"),
+		"internal/platform/capability/c.go":  leaf("capability"),
+		"internal/platform/module/m.go":      goPkg("module", "internal/platform/capability"),
+		"internal/directory/d.go":            goPkg("directory", "internal/platform/module"),
+		"internal/connector/c.go":            goPkg("connector", "internal/directory"),
+		"internal/modules/objects/o.go":      goPkg("objects", "internal/platform/module", "internal/directory"),
+		"internal/modules/objects/id.go":     "package objects\n\nconst ModuleID = \"objects\"\n",
+		"internal/modules/helpdesk/h.go":     goPkg("helpdesk", "internal/platform/module"),
+		"internal/modules/helpdesk/id.go":    "package helpdesk\n\nconst ModuleID = \"helpdesk\"\n",
+		"internal/agentmodules/addc/a.go":    goPkg("addc", "internal/platform/module"),
+		"internal/agentmodules/addc/kind.go": "package addc\n\nconst Kind = \"addc\"\n",
+		pagesDir + "/README.md":              "# index\n",
+		pagesDir + "/objects.md":             "# objects\n",
+		pagesDir + "/helpdesk.md":            "# helpdesk\n",
+		pagesDir + "/addc.md":                "# addc\n",
+		"internal/compose/config/c.go":       leaf("config"),
+		"internal/compose/profile/p.go":      goPkg("profile", "internal/platform/capability"),
+		"internal/compose/server/s.go":       goPkg("server", "internal/compose/config", "internal/connector"),
+		modlist.ServerFile:                   string(baseServerList),
+		modlist.AgentFile:                    string(baseAgentList),
+		"internal/compose/agent/a.go":        goPkg("agent", "internal/compose/config"),
+		"internal/compose/edge/e.go":         goPkg("edge", "internal/compose/config"),
+		"internal/compose/connector/c.go":    goPkg("connector", "internal/compose/config", "internal/connector"),
+		"cmd/server/main.go":                 goPkg("main", "internal/compose/server"),
+		"cmd/agent/main.go":                  goPkg("main", "internal/compose/agent"),
+		"cmd/edge/main.go":                   goPkg("main", "internal/compose/edge"),
+		"cmd/connector/main.go":              goPkg("main", "internal/compose/connector"),
 	}
 }
 
@@ -164,11 +180,11 @@ func TestRule4ModulesNeverImportEachOther(t *testing.T) {
 
 func TestRule5OnlyGeneratedListsNameAModule(t *testing.T) {
 	// Handwritten file in compose/server naming a module.
-	expect(t, with(map[string]string{"internal/compose/server/s.go": goPkg("server", "internal/modules/objects")}), "2.5", "modules.gen.go")
+	expect(t, with(map[string]string{"internal/compose/server/s.go": goPkg("server", "internal/modules/objects")}), "M3a", "modules.gen.go")
 	// The generated filename in the wrong package.
-	expect(t, with(map[string]string{"internal/compose/edge/modules.gen.go": goPkg("edge", "internal/modules/objects")}), "2.5", "internal/compose/edge")
+	expect(t, with(map[string]string{"internal/compose/edge/modules.gen.go": goPkg("edge", "internal/modules/objects")}), "M3a", "internal/compose/edge")
 	// cmd naming a module.
-	expect(t, with(map[string]string{"cmd/edge/main.go": goPkg("main", "internal/compose/edge", "internal/modules/objects")}), "2.5", "cmd/edge")
+	expect(t, with(map[string]string{"cmd/edge/main.go": goPkg("main", "internal/compose/edge", "internal/modules/objects")}), "M3a", "cmd/edge")
 }
 
 func TestComposeRootIsPrivate(t *testing.T) {
@@ -285,4 +301,162 @@ func TestM7CatalogueRows(t *testing.T) {
 			t.Fatal("want an error for a blueprint without §5.1")
 		}
 	})
+}
+
+// ---- M3a, TG2, TG3, OW1 (ADR-0015): each rule has a failing fixture and the clean tree passes. ----
+
+func without(m map[string]string, keys ...string) map[string]string {
+	for _, k := range keys {
+		delete(m, k)
+	}
+	return m
+}
+
+func TestM3aListMustCarryTheGeneratedHeader(t *testing.T) {
+	hand := strings.TrimPrefix(string(baseServerList), modlist.Header+"\n\n")
+	expect(t, with(map[string]string{modlist.ServerFile: hand}), "M3a", "generated header")
+	expect(t, with(map[string]string{modlist.AgentFile: "package agent\n"}), "M3a", "generated header")
+}
+
+func TestM3aListMustRegenerateToTheSameBytes(t *testing.T) {
+	// Stale: a module exists that the list does not name.
+	expect(t, with(map[string]string{"internal/modules/inventory/m.go": "package inventory\n\nconst ModuleID = \"inventory\"\n", pagesDir + "/inventory.md": "x"}), "M3a", "stale or hand-edited")
+	// Hand-edited: same header, one byte different.
+	expect(t, with(map[string]string{modlist.ServerFile: string(baseServerList) + "// edited\n"}), "M3a", "stale or hand-edited")
+	// Missing list while modules exist.
+	expect(t, without(base(), modlist.ServerFile), "M3a", "list is missing")
+}
+
+func TestM3aModuleNeedsAPageAndPageNeedsAModule(t *testing.T) {
+	expect(t, without(base(), pagesDir+"/helpdesk.md"), "M3a-page", "no architecture page")
+	expect(t, without(base(), pagesDir+"/addc.md"), "M3a-page", "internal/agentmodules/addc")
+	expect(t, with(map[string]string{pagesDir + "/ghost.md": "x"}), "M3a-orphan", "no module")
+	// README and non-ID names (platform pages) are not module pages.
+	expectClean(t, with(map[string]string{pagesDir + "/operation-persistence.md": "x"}))
+}
+
+func TestM3aBaselineIsHonouredAndCannotGoStale(t *testing.T) {
+	m := with(map[string]string{pagesDir + "/ghost.md": "x", baselinePath: "no-module ghost # T-9999\n"})
+	expectClean(t, m)
+	// The debt is paid but the line stays: the build fails so the baseline shrinks.
+	expect(t, with(map[string]string{baselinePath: "no-module ghost\n"}), "M3a", "matches no violation")
+}
+
+const tplPlan = `package ad
+
+import (
+	"fmt"
+	"context"
+
+	"example.test/m/internal/modules/objects"
+	"example.test/m/internal/platform/operation"
+)
+
+type TemplateRef struct{ ID string }
+
+func load(ctx context.Context, pc operation.PlanContext, ref TemplateRef) (objects.Template, error) {
+	return objects.Template{}, nil
+}
+
+func planCreate(ctx context.Context, pc operation.PlanContext, ref TemplateRef) error {
+%s}
+`
+
+func tg2Tree(body string) map[string]string {
+	return with(map[string]string{
+		"internal/modules/ad/p.go":      fmt.Sprintf(tplPlan, body),
+		"internal/modules/ad/id.go":     "package ad\n\nconst ModuleID = \"ad\"\n",
+		pagesDir + "/ad.md":             "x",
+		modlist.ServerFile:              string(serverListWith("ad", "helpdesk", "objects")),
+		"internal/modules/objects/t.go": "package objects\n\ntype Template struct{}\n",
+	})
+}
+
+func serverListWith(ids ...string) []byte {
+	s, _ := modlist.Render(mod, modlist.Lists{Server: ids, Agent: []modlist.AgentModule{{ID: "addc"}}})
+	return s
+}
+
+func TestTG2PlanMustCheckTheTemplateGateFirst(t *testing.T) {
+	// The ad fixtures import objects, so TG2 aside they trip rule 2.4; only TG2 is asserted here.
+	expect(t, tg2Tree("\t_, err := load(ctx, pc, ref)\n\treturn err\n"), "TG2", "never calls pc.Templates.CheckTemplate")
+	expect(t, tg2Tree("\tpc.Facts.Facts(ctx, nil)\n\tif err := pc.Templates.CheckTemplate(ctx, \"p\", ref.ID); err != nil {\n\t\treturn err\n\t}\n\t_, err := load(ctx, pc, ref)\n\treturn err\n"), "TG2", "after a CheckInput, Facts")
+	// The helper that reads counts at its call site: gate after `load` is too late.
+	expect(t, tg2Tree("\t_, _ = load(ctx, pc, ref)\n\treturn pc.Templates.CheckTemplate(ctx, \"p\", ref.ID)\n"), "TG2", "after a CheckInput, Facts")
+}
+
+func TestTG2PassesWhenGateComesFirst(t *testing.T) {
+	vs, err := Check(tree(t, tg2Tree("\tif err := pc.Templates.CheckTemplate(ctx, \"p\", ref.ID); err != nil {\n\t\treturn err\n\t}\n\t_, err := load(ctx, pc, ref)\n\treturn err\n")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, v := range vs {
+		if v.Rule == "TG2" {
+			t.Fatalf("unexpected %v", v)
+		}
+	}
+}
+
+func TestTG3TemplateConsumersMustNotImportRbac(t *testing.T) {
+	rbac := goPkg("x", "internal/platform/rbac")
+	// ad, objects, and a module that imports objects.
+	expect(t, with(map[string]string{"internal/modules/objects/r.go": rbac}), "TG3", "internal/platform/rbac")
+	expect(t, with(map[string]string{"internal/modules/helpdesk/r.go": goPkg("helpdesk", "internal/modules/objects", "internal/platform/rbac")}), "TG3", "imports internal/modules/objects")
+	// A module that does not touch objects may import rbac; a test file may too.
+	vs, err := Check(tree(t, with(map[string]string{"internal/modules/helpdesk/r.go": rbac})))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, v := range vs {
+		if v.Rule == "TG3" {
+			t.Fatalf("unexpected %v", v)
+		}
+	}
+	// The allowlist exempts a wiring module that imports objects, but never ad or objects.
+	m := with(map[string]string{"internal/modules/helpdesk/r.go": goPkg("helpdesk", "internal/modules/objects", "internal/platform/rbac"), tg3AllowPath: "helpdesk # wires rbac\n"})
+	vs, _ = Check(tree(t, m))
+	for _, v := range vs {
+		if v.Rule == "TG3" {
+			t.Fatalf("allowlisted module reported: %v", v)
+		}
+	}
+	expect(t, with(map[string]string{tg3AllowPath: "objects\n"}), "TG3", "cannot be on the TG3 allowlist")
+}
+
+func TestOW1ObjectsActionsTargetTheStore(t *testing.T) {
+	desc := func(pkg, id, target string) string {
+		return "package " + pkg + "\n\nvar d = operation.Descriptor{ID: " + id + ", Target: " + target + "}\n"
+	}
+	expect(t, with(map[string]string{"internal/modules/objects/a.go": desc("objects", `"objects.template.create"`, "operation.TargetAD")}), "OW1", "TargetStore")
+	// An objects.* ID is caught in any module, through a const.
+	expect(t, with(map[string]string{"internal/modules/helpdesk/a.go": "package helpdesk\n\nconst id = \"objects.template.apply\"\n\nvar d = operation.Descriptor{ID: operation.ActionID(id), Target: operation.TargetAD}\n"}), "OW1", "TargetStore")
+	// Store Actions of objects, and other modules' AD Actions, are fine.
+	vs, _ := Check(tree(t, with(map[string]string{
+		"internal/modules/objects/a.go":  desc("objects", `"objects.template.create"`, "operation.TargetStore"),
+		"internal/modules/helpdesk/a.go": desc("helpdesk", `"helpdesk.grant"`, "operation.TargetAD"),
+	})))
+	for _, v := range vs {
+		if v.Rule == "OW1" {
+			t.Fatalf("unexpected %v", v)
+		}
+	}
+}
+
+// M11 (ADR-0013 decision 5): an exempt.json entry targeting rule 2.5 or M3 (or any other rule that
+// admits no exemption) fails, however it is spelled; an incomplete or expired entry fails too.
+func TestM11RefusesNoExemptionRules(t *testing.T) {
+	entry := func(rule string) map[string]string {
+		return with(map[string]string{exemptPath: `[{"rule":"` + rule + `","subject":"x","reason":"r","ticket":"T-1","expires":"2999-01-01"}]`})
+	}
+	for _, rule := range []string{"2.5", "§2.5", "rule 2.5", "M3", "m3", "M1", "M2", "M6", "M9"} {
+		expect(t, entry(rule), "M11", "admits no exemption")
+	}
+	expectClean(t, entry("M4")) // a rule that does admit one, fully filled in
+}
+
+func TestM11IncompleteOrExpiredEntry(t *testing.T) {
+	files := with(map[string]string{exemptPath: `[{"rule":"M4","subject":"x","reason":"","ticket":"","expires":"2001-01-01"}]`})
+	expect(t, files, "M11", "no reason")
+	expect(t, files, "M11", "no ticket")
+	expect(t, files, "M11", "expired")
 }

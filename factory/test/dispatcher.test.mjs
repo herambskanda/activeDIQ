@@ -117,9 +117,9 @@ test('a worker that advances its ticket: run recorded, ticket moves, daily count
 
 test('a ticket runs through every stage with the right role at each stage', async () => {
   await withFactory({}, {}, async (f, log) => {
-    const t = createTicket(f.ctx, ticketInput({ type: 'docs', owner: 'docs-writer', status: 'ready' }), 'x');
+    const t = createTicket(f.ctx, ticketInput({ type: 'design', owner: 'docs-writer', status: 'ready' }), 'x');
     const d = new Dispatcher(f.ctx);
-    await drive(f, d, () => tickets(f)[t.id].status === 'done', 'docs ticket to finish');
+    await drive(f, d, () => tickets(f)[t.id].status === 'done', 'design ticket to finish');
     assert.deepEqual(readArgsLog(log).map((c) => c.role), ['docs-writer', 'product-manager']);
     assert.equal(tickets(f)[t.id].result, 'advance by fake claude');
   });
@@ -127,7 +127,7 @@ test('a ticket runs through every stage with the right role at each stage', asyn
 
 test('a rejecting reviewer sends the ticket back to the owner', async () => {
   await withFactory({}, { FAKE_CLAUDE_MODE: 'reject' }, async (f) => {
-    const t = createTicket(f.ctx, ticketInput({ type: 'docs', owner: 'docs-writer', status: 'ready' }), 'x');
+    const t = createTicket(f.ctx, ticketInput({ type: 'design', owner: 'docs-writer', status: 'ready' }), 'x');
     claimTicket(f.ctx, t.id);
     advanceTicket(f.ctx, t.id, 'docs-writer', 'drafted');
     const d = new Dispatcher(f.ctx);
