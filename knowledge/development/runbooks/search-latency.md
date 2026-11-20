@@ -22,7 +22,7 @@ A passing version takes about 25 minutes on a loaded host, 5.5 of them for the s
 
 Output tables land in `factory/demos/evidence/T-1102/search-latency-pg16.txt` and `-pg18.txt`
 (`SEARCH_LATENCY_OUT` overrides the directory). Under the hood:
-`ACTIVEDIQ_SEARCH_LARGE_OBJECTS=50000 go test ./internal/modules/search/latency -run TestSearchLatency50k`.
+`ACTIVEDIQ_SEARCH_LARGE_OBJECTS=50000 go test ./internal/modules/directory/latency -run TestSearchLatency50k`.
 The switch follows the `ACTIVEDIQ_*_LARGE` convention of the reports scale tests; the benchmark accepts
 exactly `50000`.
 

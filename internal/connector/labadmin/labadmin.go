@@ -343,3 +343,31 @@ func (a *Admin) LogonAttrs(sam string) (lastLogon, lastLogonTimestamp []string) 
 	}
 	return r.Entries[0].GetAttributeValues("lastLogon"), r.Entries[0].GetAttributeValues("lastLogonTimestamp")
 }
+
+// ReplaceValues sets the attribute attr of the object at dn to vals (binary values are passed as the
+// string of their bytes) and, when the test ends, puts back exactly what was there (or removes the
+// attribute if it was absent), so the shared lab is left as it was found. Failure fails the test.
+func (a *Admin) ReplaceValues(dn, attr string, vals ...string) {
+	a.tb.Helper()
+	r, err := a.conn.Search(ldap.NewSearchRequest(dn, ldap.ScopeBaseObject, ldap.NeverDerefAliases, 1, 0, false,
+		"(objectClass=*)", []string{attr}, nil))
+	if err != nil || len(r.Entries) != 1 {
+		a.tb.Fatalf("read %s on %s: %v", attr, dn, err)
+	}
+	var before []string
+	for _, v := range r.Entries[0].GetRawAttributeValues(attr) {
+		before = append(before, string(v))
+	}
+	mod := ldap.NewModifyRequest(dn, nil)
+	mod.Replace(attr, vals)
+	if err := a.conn.Modify(mod); err != nil {
+		a.tb.Fatalf("replace %s on %s: %v", attr, dn, err)
+	}
+	a.tb.Cleanup(func() {
+		undo := ldap.NewModifyRequest(dn, nil)
+		undo.Replace(attr, before) // an empty list removes the attribute
+		if err := a.conn.Modify(undo); err != nil {
+			a.tb.Errorf("LAB DIRTY: could not restore %s on %s: %v", attr, dn, err)
+		}
+	})
+}

@@ -269,7 +269,11 @@ func TestTenantOwnerRoleGrantsReconfirmAndOtherRolesDoNot(t *testing.T) {
 			t.Errorf("role %q: want denied, got %v", r.Name, err)
 		}
 	}
-	if len(builtIn(t, TenantOwnerRole).Permissions) != 1 {
-		t.Errorf("tenant-owner holds %v; migration 0043 allow-lists exactly the reconfirm permission", builtIn(t, TenantOwnerRole).Permissions)
+	want := []authz.Permission{reconfirmPerm, "agentfleet.policy.edit", "agentfleet.keyset.rotate"}
+	got := slices.Clone(builtIn(t, TenantOwnerRole).Permissions)
+	slices.Sort(got)
+	slices.Sort(want)
+	if !slices.Equal(got, want) {
+		t.Errorf("tenant-owner holds %v; migrations 0043 and 0090 allow-list exactly %v", got, want)
 	}
 }

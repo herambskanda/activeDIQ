@@ -72,3 +72,32 @@ func Test_closed_list_user_attributes(t *testing.T) {
 		}
 	}
 }
+
+// T-2216: a user's bag records per attribute whether a value was observed; an omitted attribute is
+// not_observed (absent or unreadable), and unknown_denied is never written. Non-users carry no marker.
+func Test_map_user_read_marker(t *testing.T) {
+	m := mapper(dirsync.Config{})
+	got := mustMap(t, m, entry(90, "CN=Marker,OU=People,DC=lab,DC=test", gid(ouGUID),
+		attrs(nil).classes("user").with("mail", txt("m@lab.test")).with("scriptPath", txt(""))))
+	rm, ok := got.Observation.Attributes["attrRead"].(map[string]any)
+	if !ok {
+		t.Fatalf("no attrRead marker: %v", got.Observation.Attributes)
+	}
+	if rm["mail"] != "observed" {
+		t.Errorf("mail = %v, want observed", rm["mail"])
+	}
+	for _, k := range []string{"scriptPath", "manager", "logonHours", "thumbnailPhoto"} {
+		if rm[k] != "not_observed" {
+			t.Errorf("%s = %v, want not_observed", k, rm[k])
+		}
+	}
+	for k, v := range rm {
+		if v == "unknown_denied" {
+			t.Errorf("%s: unknown_denied must never be written", k)
+		}
+	}
+	grp := mustMap(t, m, entry(91, "CN=G,OU=People,DC=lab,DC=test", gid(ouGUID), attrs(nil).classes("group")))
+	if _, ok := grp.Observation.Attributes["attrRead"]; ok {
+		t.Error("a group carries a user read marker")
+	}
+}

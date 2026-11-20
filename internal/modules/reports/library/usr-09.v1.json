@@ -1,0 +1,58 @@
+{
+  "id": "usr-09",
+  "version": 1,
+  "category": "users",
+  "title": "Skype for Business / Lync",
+  "description": "Users whose msRTCSIP-UserEnabled is TRUE or FALSE. The attribute exists only where the schema was extended for Skype for Business or Lync.",
+  "dataset": "inventory.users",
+  "columns": [
+    "display_name",
+    "sam_account_name",
+    "domain",
+    "dn",
+    "skype_enabled",
+    "enabled"
+  ],
+  "sort": [
+    {
+      "column": "sam_account_name",
+      "dir": "asc"
+    }
+  ],
+  "caveats": [
+    "ou_path_is_dn",
+    "skype_schema_not_checked"
+  ],
+  "presets": [
+    {
+      "id": "enabled",
+      "names": [
+        "Skype for Business/Lync Enabled Users"
+      ],
+      "where": {
+        "cmp": {
+          "col": "skype_enabled",
+          "op": "eq",
+          "value": {
+            "bool": true
+          }
+        }
+      }
+    },
+    {
+      "id": "disabled",
+      "names": [
+        "Skype for Business/Lync Disabled Users"
+      ],
+      "where": {
+        "cmp": {
+          "col": "skype_enabled",
+          "op": "eq",
+          "value": {
+            "bool": false
+          }
+        }
+      }
+    }
+  ]
+}

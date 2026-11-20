@@ -36,6 +36,9 @@ type ObjectState struct {
 	Deleted         bool
 	LastKnownParent string
 	LastKnownRDN    string
+	// ChildCount is the OU/container's direct-child count, set only when the read asked for it
+	//: the OU delete preview. nil otherwise.
+	ChildCount *ChildCount
 	// Links are the deactivated link values the object held when it was deleted.
 	Links []LinkValue
 }
@@ -45,6 +48,14 @@ type ObjectState struct {
 // Deleted Objects container (restore); without it a deleted object does not exist.
 type ObjectReader interface {
 	Object(ctx context.Context, pins authority.Pins, target authority.TargetRef, attrs []string, showDeleted bool) (ObjectState, error)
+	// ObjectWithChildCount is Object for an OU or container plus the bounded direct-child count
+	// (connector contract §5.3a): the OU delete preview. The count is what the connector's identity can
+	// read, so zero does not prove a leaf; the DC decides at delete.
+	ObjectWithChildCount(ctx context.Context, pins authority.Pins, target authority.TargetRef) (ObjectState, error)
+	// DirectMember reports whether member is a direct value of group's member attribute, read on the
+	// pins (the group's side of the link: `memberOf` of the member, GUID-matched, for a group too large
+	// to read in full). A read error is an error, never false.
+	DirectMember(ctx context.Context, pins authority.Pins, group, member authority.TargetRef) (bool, error)
 	// RecycleBin reports whether the AD Recycle Bin is enabled for the forest of the naming context.
 	RecycleBin(ctx context.Context, pins authority.Pins, nc authority.NamingContextID) (bool, error)
 }

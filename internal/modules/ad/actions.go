@@ -23,20 +23,26 @@ const (
 	UnlockID        operation.ActionID = "ad.user.unlock"
 	EnableID        operation.ActionID = "ad.user.enable"
 	DisableID       operation.ActionID = "ad.user.disable"
+	// ComputerResetID resets a computer account's machine password (kind 13, T-1586).
+	ComputerResetID operation.ActionID = "ad.computer.resetAccount"
 
 	PermResetPassword authz.Permission = "objects.user.reset_password"
 	PermUnlock        authz.Permission = "objects.user.unlock"
 	PermEnable        authz.Permission = "objects.user.enable"
 	PermDisable       authz.Permission = "objects.user.disable"
+	// PermComputerReset has no default grant and needs a fresh MFA (TM-D28 class reset_computer, §7.4).
+	PermComputerReset authz.Permission = "objects.computer.reset_account"
 
 	AuditPasswordReset audit.Kind = "ad.user.password_reset"
 	AuditUnlocked      audit.Kind = "ad.user.unlocked"
 	AuditEnabled       audit.Kind = "ad.user.enabled"
 	AuditDisabled      audit.Kind = "ad.user.disabled"
+	AuditComputerReset audit.Kind = "ad.computer.reset"
 
 	// ClassUser is the target class of every Action here; the kinds also allow computers, and an
 	// Action for them is a later row.
-	ClassUser = accountkind.ClassUser
+	ClassUser     = accountkind.ClassUser
+	ClassComputer = accountkind.ClassComputer
 )
 
 // Stable reasons for a refusal the caller can act on. None carries a directory value.
@@ -45,6 +51,7 @@ const (
 	ReasonRefused     = "refused_by_directory_guard"
 	ReasonNotFound    = "target_not_found"
 	ReasonNotUser     = "target_not_a_user"
+	ReasonNotComputer = "target_not_a_computer"
 	ReasonUnavailable = "directory_unavailable"
 )
 
@@ -109,12 +116,33 @@ type spec struct {
 	reason        string
 	stepUp        bool
 	secret        bool
+	// class is the live object class the Action targets ("" = user).
+	class string
+	// credential marks a step that sets a credential the caller does not supply (the machine password):
+	// reconciliation never re-applies it (rule 6) and a lost response is an unknown outcome.
+	credential bool
 	// satisfied reports whether the state already shows the kind's after-state (Verify, Observe, and
 	// the change-nothing case of Inverse).
 	satisfied func(p payload, st client.AccountState, claimedAt time.Time) (bool, error)
 }
 
 var specs = []spec{
+	{
+		id: ComputerResetID, key: accountkind.KeyComputerReset, perm: PermComputerReset,
+		schema: "#/components/schemas/AdComputerReset", audit: AuditComputerReset,
+		reversibility: operation.Irreversible, stepUp: true, class: ClassComputer, credential: true,
+		reason: "the machine password is generated inside the connector and known to no one: the computer must repair its secure channel or rejoin the domain, and the reset cannot be undone",
+		// Verify: pwdLastSet moved. A retry is never ALREADY_APPLIED (the kind has no no-op), so the read-back
+		// is the only proof the reset landed; BitLocker recovery and LAPS passwords are separate attributes the
+		// kind never writes (it sends unicodePwd only).
+		satisfied: func(p payload, st client.AccountState, claimedAt time.Time) (bool, error) {
+			if claimedAt.IsZero() {
+				return st.PwdLastSet != "" && st.PwdLastSet != "0" && st.PwdLastSet != p.PwdLastSet, nil
+			}
+			t, ok := fileTime(st.PwdLastSet)
+			return ok && t.After(claimedAt), nil
+		},
+	},
 	{
 		id: ResetPasswordID, key: accountkind.KeyResetPassword, perm: PermResetPassword,
 		schema: "#/components/schemas/AdUserResetPassword", audit: AuditPasswordReset,
@@ -199,7 +227,7 @@ func build[In any](p ports, sp spec, target func(In) Target, mustChange func(In)
 	return operation.Define(operation.Typed[In, payload, Outcome]{
 		Descriptor: operation.Descriptor{
 			ID: sp.id, Version: 1, Permission: sp.perm, Input: sp.schema,
-			Target: operation.TargetAD, TargetClass: ClassUser, Reversibility: sp.reversibility,
+			Target: operation.TargetAD, TargetClass: sp.liveClass(), Reversibility: sp.reversibility,
 			AuditKind: sp.audit, StepUp: sp.stepUp, SecretInput: sp.secret,
 		},
 		Plan: func(ctx context.Context, pc operation.PlanContext, in In) ([]operation.TypedStep[payload], error) {
@@ -210,18 +238,18 @@ func build[In any](p ports, sp spec, target func(In) Target, mustChange func(In)
 			if p.reader == nil {
 				return nil, errUnavailable
 			}
-			ref := t.ref()
+			ref := t.refAs(sp.liveClass())
 			st, err := p.reader.Account(ctx, pc.Pins, ref)
 			if err != nil {
 				return nil, readError(err)
 			}
-			if err := checkTarget(st); err != nil {
+			if err := checkTarget(sp.liveClass(), st); err != nil {
 				return nil, err
 			}
 			pl := payload{Target: t, MustChange: mustChange(in), UAC: st.UserAccountControl, Lockout: st.LockoutTime, PwdLastSet: st.PwdLastSet}
 			sp1 := operation.StepPlan{
 				Target: ref, Kind: sp.key, Reversibility: sp.reversibility, ReversibilityReason: sp.reason,
-				Diff: diffOf(sp, pl), Preconditions: preconditions(sp, st), Credential: sp.secret,
+				Diff: diffOf(sp, pl), Preconditions: preconditions(sp, st), Credential: sp.secret || sp.credential,
 			}
 			return []operation.TypedStep[payload]{{Plan: sp1, Payload: pl}}, nil
 		},
@@ -231,10 +259,10 @@ func build[In any](p ports, sp spec, target func(In) Target, mustChange func(In)
 			}
 			pl := tp.Payload
 			res, err := p.writer.Write(pinned(ctx, s, pl.Target), s, client.WriteOp{
-				DigestKind: sp.key, Target: pl.Target.ref(), Attrs: attrsOf(sp, pl),
+				DigestKind: sp.key, Target: pl.Target.refAs(sp.liveClass()), Attrs: attrsOf(sp, pl),
 			})
 			if err != nil {
-				return Outcome{}, writeError(err, sp.secret)
+				return Outcome{}, writeError(err, sp.secret || sp.credential)
 			}
 			out := Outcome{NoOp: res.NoOp}
 			if res.Apply != nil {
@@ -247,7 +275,7 @@ func build[In any](p ports, sp spec, target func(In) Target, mustChange func(In)
 				return operation.Verdict{}, errUnavailable
 			}
 			pl := tp.Payload
-			st, err := p.reader.Account(pinned(ctx, s, pl.Target), stepPins(s, pl.Target), pl.Target.ref())
+			st, err := p.reader.Account(pinned(ctx, s, pl.Target), stepPins(s, pl.Target), pl.Target.refAs(sp.liveClass()))
 			if err != nil {
 				return operation.Verdict{}, readError(err)
 			}
@@ -290,7 +318,7 @@ func build[In any](p ports, sp spec, target func(In) Target, mustChange func(In)
 				return "", errUnavailable
 			}
 			pl := tp.Payload
-			st, err := p.reader.Account(ctx, pins, pl.Target.ref())
+			st, err := p.reader.Account(ctx, pins, pl.Target.refAs(sp.liveClass()))
 			if err != nil {
 				return "", readError(err)
 			}
@@ -301,7 +329,7 @@ func build[In any](p ports, sp spec, target func(In) Target, mustChange func(In)
 			if err != nil {
 				return "", err
 			}
-			if sp.secret {
+			if sp.secret || sp.credential {
 				// A credential's after-state is "last set after the claim"; a must-change reset leaves
 				// pwdLastSet 0 whether or not it ran, so it cannot be told apart from before.
 				if pl.MustChange && pl.PwdLastSet == "0" {
@@ -338,8 +366,16 @@ func inverseInput[In any](t Target) (In, error) {
 	return in, nil
 }
 
-func (t Target) ref() authority.TargetRef {
-	return accountkind.Target(t.ConnectionID, t.ObjectGUID, ClassUser, t.NamingContext)
+func (t Target) refAs(class string) authority.TargetRef {
+	return accountkind.Target(t.ConnectionID, t.ObjectGUID, class, t.NamingContext)
+}
+
+// liveClass is the class the Action targets: a user unless the row says otherwise.
+func (sp spec) liveClass() string {
+	if sp.class == "" {
+		return ClassUser
+	}
+	return sp.class
 }
 
 func (t Target) validate() error {
@@ -349,12 +385,14 @@ func (t Target) validate() error {
 	return nil
 }
 
-func checkTarget(st client.AccountState) error {
+func checkTarget(class string, st client.AccountState) error {
 	switch {
 	case !st.Exists:
 		return fmt.Errorf("%w: %s", operation.ErrInvalid, ReasonNotFound)
-	case st.Class != ClassUser:
+	case st.Class != class && class == ClassUser:
 		return fmt.Errorf("%w: %s", operation.ErrInvalid, ReasonNotUser)
+	case st.Class != class:
+		return fmt.Errorf("%w: %s", operation.ErrInvalid, ReasonNotComputer)
 	case st.Tier0:
 		return fmt.Errorf("%w: %s", operation.ErrDenied, ReasonTier0)
 	}
@@ -386,6 +424,11 @@ func attrsOf(sp spec, p payload) []step.Attr {
 // preconditions state the before-state in words the plan view shows. They are not digested.
 func preconditions(sp spec, st client.AccountState) []string {
 	switch sp.id {
+	case ComputerResetID:
+		return []string{
+			"sets a new random machine password the directory alone holds: the computer loses its secure channel until it repairs it or rejoins the domain",
+			"BitLocker recovery information and LAPS passwords are not touched by this Action",
+		}
 	case UnlockID:
 		if st.LockoutTime == "" || st.LockoutTime == "0" {
 			return []string{"account is not locked out: nothing will change"}

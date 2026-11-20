@@ -43,7 +43,7 @@ func pg(inner ...string) []string {
 const (
 	inv = "./internal/directory/inventory"
 	key = "./internal/platform/searchkey"
-	srv = "./internal/modules/search"
+	srv = "./internal/directory/search"
 )
 
 var defaultBindings = []binding{
@@ -80,7 +80,7 @@ var defaultBindings = []binding{
 		What: "the plan-shape checker the SE5 plan tests use fails on a Seq Scan, a Hash or Merge Join onto directory_objects and an index probe without tenant_id (failing self-test fixture)"},
 	{Check: "SE5", Name: "Test_search_fuzzy_reads_only_the_tenants_own_postings", Pkg: inv, Landed: true, Owner: "T-1335", Subtests: pg(),
 		What: "at the default W, rows examined on every search relation, directory_objects included, are exactly equal with tenant B empty, equal to A and ten times A (ADR-0011 rule 16)"},
-	{Check: "SE6", Name: "TestSearchLatency50k", Pkg: "./internal/modules/search/latency", Nightly: true, Landed: true, Owner: "T-1102",
+	{Check: "SE6", Name: "TestSearchLatency50k", Pkg: "./internal/modules/directory/latency", Nightly: true, Landed: true, Owner: "T-1102",
 		Subtests: []string{"pg16", "pg18"},
 		What:     "universal search answers within rule 14's budget per class, scoped and unscoped, over 50,000 objects on PostgreSQL 16 and 18 (ADR-0011 SE6)"},
 }
