@@ -26,6 +26,11 @@
       "owner": "internal/platform/keys"
     },
     {
+      "table": "public.fleet_server_ca",
+      "reason": "The fleet gateway's server CA belongs to the installation, not to a tenant (ADR-0008): one CA, one pin, one presented chain for every tenant, so its row has no tenant_id and no RLS (ADR-0002 rule 4). It signs ServerAuth leaves only and is never in the client pool. sealed_key is sealed under the installation DEK and destroyed when the row leaves the active state (CHECK and guard trigger); the runtime role cannot DELETE or TRUNCATE. Any tenant transaction can read it, so only its owning package may name it in SQL.",
+      "owner": "internal/platform/fleet/fleetsql"
+    },
+    {
       "table": "public.update_verifier_floor",
       "reason": "The update verifier's rollback floor is install-level: one monotone row shared by the server, connector and agent update paths, read before and outside any tenant transaction, so it has no tenant_id and no RLS. The guard trigger refuses any lowering and the runtime role cannot DELETE or TRUNCATE it (ENH-07, TM-D12 rule 2). Any tenant transaction can read it, so only its owning package may name it in SQL.",
       "owner": "internal/platform/updateverify/floorpg"
@@ -48,6 +53,12 @@
       "reason": "The gateway's client-CA pool holds every tenant's CA certificates, so one read runs in platform scope and calls the SECURITY DEFINER function fleet_ca_trust_anchors(), the only path to those rows: its owner role can read public certificate columns only, never sealed_key, and the function refuses a tenant context (T-0712, T-0733; TM-A11, TM-D24). It parses the tenant IDs the function returns from fleet_ca rows into typed IDs; it grants no access with them and a per-tenant check of the leaf's issuer still runs on every RPC (TM-Q8).",
       "withPlatform": true,
       "mintsTenantID": true
+    },
+    {
+      "package": "internal/platform/fleet/fleetsql",
+      "function": "Enroller.SignServerLeaf",
+      "reason": "The gateway's ServerAuth leaf is signed by the installation server CA, a registered-global row that belongs to no tenant, and unsealing its key needs the installation DEK (also global), so the call runs in platform scope. It is not reachable from any RPC, takes no principal, key or CSR, checks every name against the configured fleet endpoints, is rate-capped per node and audits each issuance (ADR-0008 item 7, T-0735; TM-TB6-T15, T16).",
+      "withPlatform": true
     },
     {
       "package": "internal/platform/tenant/provision",

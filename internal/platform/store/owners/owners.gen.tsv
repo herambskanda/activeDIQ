@@ -46,6 +46,7 @@ directory_object_changes	inventory	system
 directory_objects	inventory	system
 enrollment_tokens	fleet	config
 fleet_ca	fleet	system
+fleet_server_ca	fleet	system
 helpdesk_caller_verifications	helpdesk	system
 helpdesk_request_keys	helpdesk	system
 hybrid_links	connection	config
