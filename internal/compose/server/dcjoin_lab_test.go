@@ -17,14 +17,17 @@ import (
 	"github.com/skenzeriq/activediq/internal/connector/ad"
 	"github.com/skenzeriq/activediq/internal/connector/tier0"
 	"github.com/skenzeriq/activediq/internal/connector/write"
+	"github.com/skenzeriq/activediq/internal/directory"
 	"github.com/skenzeriq/activediq/internal/directory/attr/guid"
 	"github.com/skenzeriq/activediq/internal/directory/client"
 	"github.com/skenzeriq/activediq/internal/directory/dn"
-	modad "github.com/skenzeriq/activediq/internal/modules/ad"
+	"github.com/skenzeriq/activediq/internal/platform"
 	"github.com/skenzeriq/activediq/internal/platform/audit"
 	"github.com/skenzeriq/activediq/internal/platform/audit/chain"
 	"github.com/skenzeriq/activediq/internal/platform/authority"
+	"github.com/skenzeriq/activediq/internal/platform/capability"
 	"github.com/skenzeriq/activediq/internal/platform/jobs"
+	"github.com/skenzeriq/activediq/internal/platform/module"
 	"github.com/skenzeriq/activediq/internal/platform/operation"
 	"github.com/skenzeriq/activediq/internal/platform/operation/step"
 	"github.com/skenzeriq/activediq/internal/platform/secret"
@@ -48,6 +51,12 @@ import (
 // Samba's `DSDB Change` line is not a Windows 4738/5136 event; AC2 is the Windows lab (T-2304).
 
 // labAccounts is a client.AccountReader over the lab session.
+const (
+	adModuleID         module.ID          = "ad"
+	resetPasswordID    operation.ActionID = "ad.user.resetPassword"
+	auditPasswordReset audit.Kind         = "ad.user.password_reset"
+)
+
 type labAccounts struct{ sess *ad.Session }
 
 func (l labAccounts) Account(ctx context.Context, _ authority.Pins, target authority.TargetRef) (client.AccountState, error) {
@@ -160,11 +169,18 @@ func TestLabDCLogJoin(t *testing.T) {
 			}
 			cl := client.New(client.WithTransport(handlerTransport{h, p.prov.Identity()}), client.WithTier0Builder(noLinkTier0{}),
 				client.WithFacts(client.NewConnectorFacts(p.reads)))
-			as, err := modad.Actions(labAccounts{p.sess}, logWriter{cl, t})
+			// The module is reached through the generated list (ADR-0015 D3 M3a): only modules.gen.go names it.
+			var mods []module.Entry
+			for _, e := range generatedModules(platform.Deps{}, directory.Services{AccountReader: labAccounts{p.sess}, AccountWriter: logWriter{cl, t}}) {
+				if e.ID == adModuleID {
+					mods = append(mods, e)
+				}
+			}
+			c, err := module.Boot(context.Background(), mods, capability.NewSet(capability.DirectoryAD))
 			if err != nil {
 				t.Fatal(err)
 			}
-			return as
+			return c.Actions()
 		})
 		ctx, cancel := context.WithTimeout(r.ctx, 4*time.Minute)
 		defer cancel()
@@ -196,7 +212,7 @@ func TestLabDCLogJoin(t *testing.T) {
 		}
 
 		pre, _ := labAccounts{r.sess}.Account(ctx, nil, authority.TargetRef{GUID: r.plain})
-		sub, err := r.runner.SubmitDirectory(ctx, operation.Request{Tenant: r.e.ten, Action: modad.ResetPasswordID, Actor: r.human(), FreshStepUp: true,
+		sub, err := r.runner.SubmitDirectory(ctx, operation.Request{Tenant: r.e.ten, Action: resetPasswordID, Actor: r.human(), FreshStepUp: true,
 			Secrets: map[int]secret.Secret{0: secret.FromBytes([]byte(newPassword))},
 			Input:   operation.Input(fmt.Sprintf(`{"connectionId":%q,"objectGuid":%q,"namingContext":%q}`, r.e.ad, r.plain, r.nc))})
 		if err != nil || sub.Planned != 1 || sub.Blocked != 0 {
@@ -290,7 +306,7 @@ func TestLabDCLogJoin(t *testing.T) {
 				t.Fatal(err)
 			}
 			// The step event is the one of the Action's own audit kind; started and completed are operation-level.
-			if env.Operation != string(sub.Operation) || env.Kind != string(modad.AuditPasswordReset) || !env.HasStep || env.Outcome != string(audit.Success) {
+			if env.Operation != string(sub.Operation) || env.Kind != string(auditPasswordReset) || !env.HasStep || env.Outcome != string(audit.Success) {
 				continue
 			}
 			found = true
