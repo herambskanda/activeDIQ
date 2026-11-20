@@ -23,6 +23,30 @@ export type RunParameters = S["ReportRunParameters"];
 export const DEFINITIONS_LIMIT = 50;
 export const ROWS_LIMIT = 500;
 
+/** The best matches the subject picker asks for; the server ranks them and says when there are more. */
+export const SUBJECT_SEARCH_LIMIT = 10;
+
+/** Searches the directory for the groups or users a report is about. The text travels in the body (ADR-0011 rule 15). */
+export async function searchSubjects(
+  client: ApiClient,
+  kind: "group" | "user",
+  q: string,
+  signal: AbortSignal,
+) {
+  const result = await unwrap(
+    client.POST("/directory/search", {
+      body: { q, type: kind === "group" ? "groups" : "users", groupLimit: SUBJECT_SEARCH_LIMIT },
+      signal,
+    }),
+  );
+  const group = result.groups[0];
+  return {
+    refine: result.refine,
+    more: group?.more === true,
+    items: group?.items ?? [],
+  };
+}
+
 export function listDefinitions(
   client: ApiClient,
   query: { q?: string; category?: string; cursor?: string; limit?: number },

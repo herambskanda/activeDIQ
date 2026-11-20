@@ -49,7 +49,12 @@ func (m *Module) Register(r *module.Registrar) error {
 	if err != nil {
 		return err
 	}
+	ms, err := MemberActions(m.life)
+	if err != nil {
+		return err
+	}
 	as = append(as, ls...)
+	as = append(as, ms...)
 	for _, a := range as {
 		if err := r.Action(a); err != nil {
 			return err

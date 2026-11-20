@@ -24,10 +24,14 @@ const (
 	// TargetClassTenant is the tenant store root itself (GUID is the tenant ID). Only a tenant-wide
 	// root covers it: it is the target of an operation scoped to the whole tenant.
 	TargetClassTenant = "tenant"
+	// TargetClassReportSchedule is one report schedule (DM-73; GUID is the schedule ID). Authorised like any
+	// store row, under a tenant-wide root; it is its own class so an undo of one schedule's change is
+	// superseded only by a later change of that schedule.
+	TargetClassReportSchedule = "report_schedule"
 )
 
 // storeClasses are the target classes authorised as rows of activeDIQ's own store.
-var storeClasses = []string{TargetClassRole, TargetClassAssignment, TargetClassTenant, "settings"}
+var storeClasses = []string{TargetClassRole, TargetClassAssignment, TargetClassTenant, TargetClassReportSchedule, "settings"}
 
 func isStoreClass(c string) bool { return slices.Contains(storeClasses, c) }
 
@@ -94,15 +98,26 @@ func (a *Authorizer) FactsQuery(_ authority.Chain, _ authz.Permission, t authori
 	return authority.FactsQuery{Target: t, Tier0: true, Ancestry: true}
 }
 
-// Authorize decides whether the chain's requester may exercise perm on t, given the facts read live.
-func (a *Authorizer) Authorize(ctx context.Context, chain authority.Chain, perm authz.Permission, t authority.TargetRef, f authority.Facts) error {
+// requestTenant is the one place this package turns the tenant text into a typed ID. The text is read from
+// the request context that the authority chain's authentication step set (authority.TenantFrom), never
+// from a request field; the parse only converts that server-set value and fails closed (ADR-0002 rule 5).
+func requestTenant(ctx context.Context) (tenant.ID, error) {
 	tid, ok := authority.TenantFrom(ctx)
 	if !ok {
-		return denied(ReasonNoTenant)
+		return tenant.ID{}, denied(ReasonNoTenant)
 	}
 	tn, err := tenant.Parse(tid)
 	if err != nil {
-		return denied(ReasonNoTenant)
+		return tenant.ID{}, denied(ReasonNoTenant)
+	}
+	return tn, nil
+}
+
+// Authorize decides whether the chain's requester may exercise perm on t, given the facts read live.
+func (a *Authorizer) Authorize(ctx context.Context, chain authority.Chain, perm authz.Permission, t authority.TargetRef, f authority.Facts) error {
+	tn, err := requestTenant(ctx)
+	if err != nil {
+		return err
 	}
 	// The requester is a person. Whatever acted for them narrows their authority and never widens it
 	// (ADR-0005 rule 7): an API token intersects it, an automation policy must be granted the same

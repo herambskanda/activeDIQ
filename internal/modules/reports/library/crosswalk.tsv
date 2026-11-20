@@ -56,3 +56,24 @@ Recently Created OUs	ou-01	Organizational units	recently_created
 All Contacts	ctc-01	Contacts	all	
 Mail Enabled Contacts	ctc-01	Contacts	mail_enabled	
 Recently Created Contacts	ctc-01	Contacts	recently_created	
+Users with Cannot Change Password	pwd-04	Password change blocked	blocked	
+Recently Modified Users	usr-06	User changes	modified	
+Recently Deleted Users	usr-06	User changes	deleted	
+Recently Modified Groups	grp-05	Group changes	modified	
+Recently Deleted Groups	grp-05	Group changes	deleted	
+Recently Modified Computers	cmp-03	Computer changes	modified	
+Recently Deleted Computers	cmp-03	Computer changes	deleted	
+Recently Modified Contacts	ctc-02	Contact changes	modified	
+Recently Deleted Contacts	ctc-02	Contact changes	deleted	
+Recently Modified OUs	ou-02	OU changes	modified	
+Dial-in Allow Access	usr-07	Sign-in and access settings	dialin_allow	
+Dial-in Deny Access	usr-07	Sign-in and access settings	dialin_deny	
+Smart Card Enabled Users	usr-07	Sign-in and access settings	smartcard	
+Logon Hour Based Report	usr-07	Sign-in and access settings	logon_hours	
+Photo Based Reports	usr-08	Profile settings	photo_with	
+Users With Logon Script	usr-08	Profile settings	script_with	
+Users Without Logon Script	usr-08	Profile settings	script_without	
+Skype for Business/Lync Enabled Users	usr-09	Skype for Business / Lync	enabled	
+Skype for Business/Lync Disabled Users	usr-09	Skype for Business / Lync	disabled	
+Users With Empty Attributes	usr-11	Attribute completeness	empty_mail	
+Users With Duplicate Attributes	usr-11	Attribute completeness	-	needs a duplicate-count column in the engine (T-2205)

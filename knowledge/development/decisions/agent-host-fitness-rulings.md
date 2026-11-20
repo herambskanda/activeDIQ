@@ -152,7 +152,7 @@ type and the one privilege in a core `ServiceConfig` **nested inside the `Servic
 ```
 
 `RequiredPrivilege` is documented with parent `ServiceConfig` ([WiX schema](https://docs.firegiant.com/wix/schema/wxs/requiredprivilege/));
-`ServiceSid` is a `ServiceConfig` attribute ([WiX ServiceConfig](https://wixtoolset.org/docs/schema/wxs/serviceconfig)). Recovery actions are NOT on the core `ServiceConfig` (it has no failure-action attributes: WIX0004 with WiX 5.0.2); they are on `util:ServiceConfig`, a second element inside the same `ServiceInstall`, which has only those attributes (T-1249; `sc qfailure` read back on dc1 in the T-0833 log). The core element raises WIX1149 itself, so the build suppresses it on purpose (`-sw1149`) and runs with `-wx` so any other warning fails (runbook "Building the MSI"). It has no privilege attribute beyond the `RequiredPrivilege` child.
+`ServiceSid` is a `ServiceConfig` attribute ([WiX ServiceConfig](https://wixtoolset.org/docs/schema/wxs/serviceconfig)). Recovery actions are NOT on the core `ServiceConfig` (it has no failure-action attributes: WIX0004 with WiX 5.0.2) and are no longer on `util:ServiceConfig` either: `agentsetup configure-service` sets them (T-0724, see the addendum below). The core element raises WIX1149 itself, so the build suppresses it on purpose (`-sw1149`) and runs with `-wx` so any other warning fails (runbook "Building the MSI"). It has no privilege attribute beyond the `RequiredPrivilege` child.
 So **whether WiX really writes the privilege list is
 `[UNVERIFIED — lab]`**: T-0648 must read it back after install (`sc qprivs activeDIQAgent`, and the token of
 the running service). If WiX cannot write it, the fallback is **not** the registry: file a ruling request
@@ -187,3 +187,19 @@ Windows proofs (identity, privileges, ACE, rollback leaves nothing) stay lab ite
 4. `make fitness-agent-host` must print R3, R4, A1, A4 `ok` (A2/A3 remain T-0648).
 
 Every change to an allowlist is a security-architect review; do not add lines to make the check pass.
+
+
+## T-0724 addendum (windows-engineer, confirmed by security-architect (T-0724 review))
+
+The first real MSI (WiX 5.0.2 on the lab DC, `msidump`) showed what T-0688 could not: the core
+`ServiceConfig` does write the restricted SID (MsiServiceConfig ConfigType 5, Argument 3) and the single privilege
+(ConfigType 6) and the lab reads both back; but service recovery and the event source could not be authored
+without something `fitness-built-msi` refuses (core `ServiceConfigFailureActions` fails the install with error
+1939 because WiX writes `restart` where Windows Installer wants `1`; `util:ServiceConfig` adds a DLL custom action
+and a Binary row; `util:EventSource` writes HKLM\SYSTEM registry rows). As the sixth-action fallback above
+anticipated, they are now two fixed verbs of `agentsetup` (`configure-service`, `unconfigure-service`) in
+three pinned custom actions (`ConfigureService`, `RollbackConfigureService`, `UnconfigureService`), same shape as
+the five reviewed ones: SYSTEM, deferred or rollback, no impersonation, no argument. Nothing was loosened in
+`fitness-built-msi`; its ConfigType constants were corrected from 3/4 to 5/6 (they had judged neither).
+
+The no-reboot, no-command recovery rule that `fitness-built-msi` used to enforce on `MsiServiceConfigFailureActions` is now carried by `TestRecoveryPolicyIsRestartOnly` and `TestRecoveryPolicyValues` in `cmd/agentsetup/recovery_scan_test.go`. They run on Linux CI and fail on `ServiceReboot`, `ServiceRunCommand`, `NoAction`, `SetRecoveryCommand`, `SetRebootMessage` or `SetRecoveryActionsOnNonCrashFailures`, and on any recovery number other than 3 restarts, 30 s, reset after 86400 s. `TestRecoveryScanBites` proves the scan fails on each. Workflow token hygiene for `release.yml` (read-only top level, `contents: write` on the publish job only, `persist-credentials: false` on every checkout) is pinned by `tools/ci/workflows-check.sh`.

@@ -1,0 +1,17 @@
+=== RUN   TestLabFeedPrimeAndTheCookiePreChecks
+--- PASS: TestLabFeedPrimeAndTheCookiePreChecks (3.27s)
+=== RUN   TestLabFeedRefusalsAndTheMandatorySet
+--- PASS: TestLabFeedRefusalsAndTheMandatorySet (12.70s)
+=== RUN   TestLabFeedIssuerDownIsUnreachableNeverStale
+--- PASS: TestLabFeedIssuerDownIsUnreachableNeverStale (1.84s)
+=== RUN   TestLabFeedStuckDCIsBounded
+--- PASS: TestLabFeedStuckDCIsBounded (3.79s)
+PASS
+ok  	github.com/skenzeriq/activediq/internal/connector/read	21.630s
+2026/11/06 05:43:09 INFO server: lab connection active (in-process connector) lab=samba connection_id=13f4969d-5163-4ad3-9c42-48c43c3fb121 tenant_id=6bd5d343-1c60-44b3-b4d6-8b2e47984b28
+2026/11/06 05:43:27 INFO server: lab connection active (in-process connector) lab=samba connection_id=31bc3b10-8d96-4c86-ba76-fb13c975bf41 tenant_id=9667d6be-5ccf-40c7-9bd4-807eb4956a2a
+--- PASS: TestLabServerServesChangeFeed (43.59s)
+    --- PASS: TestLabServerServesChangeFeed/pg16 (25.79s)
+    --- PASS: TestLabServerServesChangeFeed/pg18 (17.80s)
+PASS
+ok  	github.com/skenzeriq/activediq/internal/compose/server	54.345s
