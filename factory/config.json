@@ -10,6 +10,7 @@
   "dispatcher": {
     "tick_seconds": 20,
     "max_parallel": 8,
+    "hold_ready": true,
     "min_free_disk_gb": 10,
     "daily_run_cap": 800,
     "run_timeout_minutes": 90,
@@ -24,6 +25,7 @@
       "reserved_slots": 2,
       "keep_unread_moves": true,
       "culprit_split": true,
+      "prescreen_ahead": true,
       "train_size_max": 2,
       "train_size": 1,
       "max_gate_failures": 2,

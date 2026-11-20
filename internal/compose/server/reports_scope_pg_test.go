@@ -16,6 +16,7 @@ import (
 
 	"github.com/skenzeriq/activediq/internal/directory/inventory"
 	"github.com/skenzeriq/activediq/internal/platform/apihost"
+	"github.com/skenzeriq/activediq/internal/platform/apihost/apitest"
 	"github.com/skenzeriq/activediq/internal/platform/capability"
 	"github.com/skenzeriq/activediq/internal/platform/jobs"
 	"github.com/skenzeriq/activediq/internal/platform/rbac"
@@ -101,8 +102,7 @@ func TestReportsRunOverComposedReadScopes(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		perms := apihost.Permissions{"reports.run", "reports.export", "reports.schedule", "reports.schedule.manage_all",
-			"reports.deliver.external", "directory.read", "connections.read", "connections.takeover.attest", "siem.destination.manage", "siem.destination.read", "helpdesk.caller.verify"}
+		perms := apitest.Catalogue(doc)
 		door := rptDoor{}
 		srv, err := apihost.Build(doc, []apihost.TagHandlers{tag}, pol, perms, apihost.Ports{Authn: door, Authz: door, Limits: door, StepUp: door})
 		if err != nil {

@@ -9,7 +9,7 @@ import path from 'node:path';
 // The real config, with the dispatcher tuning these tests are written against pinned, so raising
 // slots or the grooming floor in production does not break the selection-mechanism tests.
 const config = JSON.parse(fs.readFileSync(path.join(REAL_FACTORY, 'config.json'), 'utf8'));
-Object.assign(config.dispatcher, { max_parallel: 2, grooming_min_ready: 3, only_milestone: null });
+Object.assign(config.dispatcher, { max_parallel: 2, grooming_min_ready: 3, only_milestone: null, hold_ready: false });
 const NOW = new Date(2026, 9, 2, 10, 0, 0); // local 10:00: before the digest hour
 const EVENING = new Date(2026, 9, 2, 19, 0, 0);
 
@@ -273,6 +273,28 @@ test('only_milestone launches just that milestone\'s ready tickets but still res
   assert.ok(!got.includes('T-0020'), 'an M2b ready ticket is not launched');
   const open = ids(pick(state({ tickets: t }), NOW, { ...locked, dispatcher: { ...locked.dispatcher, only_milestone: null } }));
   assert.ok(open.includes('T-0020'));
+});
+
+test('hold_ready starts no ready ticket or grooming but still runs review, rework and the digest', () => {
+  const t = [
+    ticket({ id: 'T-0030', priority: 'P0' }),
+    ticket({ id: 'T-0031', status: 'review' }),
+    ticket({ id: 'T-0032', status: 'in_progress' }),
+    ticket({ id: 'T-0033', status: 'backlog' }),
+  ];
+  const wide = { ...config, dispatcher: { ...config.dispatcher, max_parallel: 6 } };
+  const open = ids(pick(state({ tickets: t }), EVENING, wide));
+  assert.ok(open.includes('T-0030') && open.includes('meta:grooming'));
+  const held = ids(pick(state({ tickets: t }), EVENING, { ...wide, dispatcher: { ...wide.dispatcher, hold_ready: true } }));
+  assert.deepEqual(held.sort(), ['T-0031', 'T-0032', 'meta:digest']);
+});
+
+test('hold_ready still runs a ready ticket that was started before (refused or unblocked), not a never-started one', () => {
+  const old = ticket({ id: 'T-0040', priority: 'P2' });
+  old.history = [{ ts: 'x', by: 'qa', from: 'qa', to: 'done', note: 'ok' }, { ts: 'y', by: 'cli', from: 'blocked', to: 'ready', note: 'retry' }];
+  const fresh = ticket({ id: 'T-0041', priority: 'P0' });
+  const held = { ...config, dispatcher: { ...config.dispatcher, max_parallel: 6, hold_ready: true } };
+  assert.deepEqual(ids(pick(state({ tickets: [old, fresh] }), NOW, held)).filter((x) => x.startsWith('T-')), ['T-0040']);
 });
 
 test('T-1617: a gate run in flight holds reserved_slots back from max_parallel', () => {

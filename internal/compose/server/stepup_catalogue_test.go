@@ -46,6 +46,9 @@ var stepUpTable = map[operation.ActionID]string{
 	"delegation.role.update":       "RBAC change: editing a custom role's permissions",
 	"delegation.assignment.grant":  "RBAC change: granting an assignment",
 	"delegation.assignment.revoke": "RBAC change: revoking an assignment",
+	// Host-agent policy (T-0599, ADR-0007): the policy every DC agent enforces and the key that signs it.
+	"agentfleet.policy.edit":   "Editing the addc password and event policy every DC agent enforces",
+	"agentfleet.keyset.rotate": "Rotating the agent policy signing key (suspected exposure)",
 }
 
 func catalogue(t *testing.T) []operation.Descriptor {
