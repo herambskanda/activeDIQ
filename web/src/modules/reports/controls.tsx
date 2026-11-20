@@ -38,7 +38,7 @@ export function Controls({
   const presets = definition.presets.map((p) => ({ value: p.id, label: p.name }));
   const periodDays =
     view.days ??
-    (run?.parameters.period?.kind === "ReportPeriodLastDays" ? run.parameters.period.days : null) ??
+    (run?.parameters.period?.kind === "last_days" ? run.parameters.period.days : null) ??
     preset?.periodDays ??
     null;
   const hasPeriod = preset?.periodDays !== null && preset?.periodDays !== undefined;

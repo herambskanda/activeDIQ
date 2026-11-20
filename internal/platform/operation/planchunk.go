@@ -164,7 +164,7 @@ func (r *Runner) PlanChunk(ctx context.Context, t tenant.ID, tx txFunc, a planAr
 		}
 		var err error
 		steps, err = cp.PlanChunk(ctx, PlanContext{Tx: q, Facts: pinnedReader{port: r.cfg.Facts, ad: d.Target == TargetAD, store: d.Target == TargetStore,
-			pins: maps.Clone(op.Pins), dsas: maps.Clone(op.DSAs), tenant: t}, Pins: op.Pins}, Input(op.Input), first, n)
+			pins: maps.Clone(op.Pins), dsas: maps.Clone(op.DSAs), tenant: t}, Pins: op.Pins, Tenant: t, Actor: op.Chain, Templates: r.templateGate(op.Chain, t)}, Input(op.Input), first, n)
 		return err
 	})
 	if perr == nil && len(steps) > n {

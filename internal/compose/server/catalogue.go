@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"slices"
 
+	"github.com/skenzeriq/activediq/internal/directory"
+	"github.com/skenzeriq/activediq/internal/platform"
 	"github.com/skenzeriq/activediq/internal/platform/apihost"
 	"github.com/skenzeriq/activediq/internal/platform/module"
 	"github.com/skenzeriq/activediq/internal/platform/notify/syslog"
@@ -20,6 +22,13 @@ func kernelPermissions() []string {
 			set = append(set, string(p))
 		}
 	}
+	// Every module's Action and registered permissions exist whether or not its capability is enabled
+	// on this install: the contract names them in x-permission on every install (ADR-0004 rule 14).
+	declared, err := module.DeclaredPermissions(generatedModules(platform.Deps{}, directory.Services{}))
+	if err != nil {
+		panic(err) // a module that cannot register against zero deps also fails TestM14 and Boot
+	}
+	set = append(set, declared...)
 	slices.Sort(set)
 	return slices.Compact(set)
 }

@@ -10,6 +10,7 @@ import (
 	"github.com/skenzeriq/activediq/internal/directory/attr/guid"
 	"github.com/skenzeriq/activediq/internal/directory/dn"
 	"github.com/skenzeriq/activediq/internal/directory/ldapfilter"
+	"github.com/skenzeriq/activediq/internal/directory/sd"
 	connectorv1 "github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1"
 )
 
@@ -86,6 +87,24 @@ func (a *ADSource) Classify(ctx context.Context, id guid.GUID) (write.Verdict, e
 		return write.Verdict{}, write.ErrNoBoundDC
 	}
 	return a.prov.Classify(ctx, id, nil)
+}
+
+// PasswordChanger is the optional Cannot Change Password half of a Source. A Source without it
+// answers include_password_change with NOT_CONFIRMED (CAPABILITY_UNSUPPORTED as the code).
+type PasswordChanger interface {
+	// ReadPasswordChange reads the object's DACL (DACL-only SD flags, never the SACL) and classifies
+	// it. It returns the objectGUID the state belongs to; the state is NotConfirmed exactly when err
+	// is non-nil. No descriptor byte leaves the connector.
+	ReadPasswordChange(ctx context.Context, id guid.GUID) (guid.GUID, sd.PasswordChange, error)
+}
+
+var _ PasswordChanger = (*ADSource)(nil)
+
+func (a *ADSource) ReadPasswordChange(ctx context.Context, id guid.GUID) (guid.GUID, sd.PasswordChange, error) {
+	if !a.ok() {
+		return guid.GUID{}, sd.PasswordChangeNotConfirmed, write.ErrNoBoundDC
+	}
+	return a.sess.ReadPasswordChange(ctx, dn.GUIDRef(id))
 }
 
 // Searcher is the optional search half of a Source. A Source without it answers ScopedSearch with
@@ -191,15 +210,9 @@ func (a *ADSource) Topology(ctx context.Context) (*ad.Topology, error) {
 	return a.sess.Topology(ctx)
 }
 
-// IsSamba reports whether the bound DC's rootDSE names Samba as its vendor; it labels the
-// ReadReplicationStatus capability and gates nothing.
-func (a *ADSource) IsSamba(ctx context.Context) (bool, error) {
-	if !a.ok() {
-		return false, write.ErrNoBoundDC
-	}
-	rd, err := a.sess.RootDSE(ctx)
-	if err != nil {
-		return false, err
-	}
-	return rd.IsSamba(), nil
+// ChildCounter is the optional child-count half of a Source (§5.3a). A Source without it answers a
+// request with include_child_count with CAPABILITY_UNSUPPORTED.
+type ChildCounter interface {
+	// CountChildren counts the immediate children of the object, at most limit (ad.Session.CountChildren).
+	CountChildren(ctx context.Context, id guid.GUID, limit uint32) (n uint32, capped bool, err error)
 }

@@ -181,6 +181,69 @@ func (v *CsrfValue) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
 	}
 }
 
+// SessionInfo: What the calling session may do, as permission names only.
+type SessionInfo struct {
+	// The catalogue permission names the session holds at tenant scope, sorted. Display only.
+	Permissions []string `json:"permissions"`
+
+	p apitypes.Presence
+}
+
+// UnmarshalJSONFrom decodes the object strictly: member names match exactly and an unknown
+// member is an error. Nested values decode through the caller's options.
+func (v *SessionInfo) UnmarshalJSONFrom(d *jsontext.Decoder) error {
+	*v = SessionInfo{}
+	v.p.Begin()
+	if err := apitypes.ObjectStart(d); err != nil {
+		return err
+	}
+	for {
+		name, ok, err := apitypes.NextMember(d)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+		switch name {
+		case "permissions":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(0, null)
+			if null {
+				continue
+			}
+			if err := apitypes.DecodeArray(d, &v.Permissions); err != nil {
+				return err
+			}
+		default:
+			return apitypes.UnknownMember(d)
+		}
+	}
+}
+
+// Validate records every violation of the object's schema under at: missing required members,
+// null on a non-nullable member, bounds, patterns and closed enums.
+func (v *SessionInfo) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
+	// permissions
+	if v.p.Decoded() {
+		if !v.p.Has(0) {
+			errs.Required(at, "permissions")
+		}
+		if v.p.IsNull(0) {
+			errs.NullNotAllowed(at, "permissions")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(0) && !v.p.IsNull(0)) {
+		apitypes.CheckCount(errs, apitypes.InBody, at.AppendToken("permissions"), len(v.Permissions), 0, 1024, apitypes.CodeMaxItems)
+		for i := range v.Permissions {
+			apitypes.CheckLen(errs, apitypes.InBody, apitypes.Index(at.AppendToken("permissions"), i), string(v.Permissions[i]), 0, 128)
+		}
+	}
+}
+
 // TotpCodeRequest: A TOTP code from the account's authenticator.
 type TotpCodeRequest struct {
 	Code secret.Secret `json:"code"`

@@ -10,6 +10,11 @@ import (
 	addcv1 "github.com/skenzeriq/activediq/internal/proto/activediq/addc/v1"
 )
 
+// Kind is the component kind this module serves (fleet.KindADDC; compose/agent's tests hold the two
+// equal, an agent module may not import platform/fleet). compose/agent's generated modules.gen.go
+// switches on it.
+const Kind = "addc"
+
 // Module implements host module for domain controllers and serves activediq.addc.v1.Addc.
 type Module struct {
 	addcv1.UnimplementedAddcServer

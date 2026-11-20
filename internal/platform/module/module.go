@@ -81,7 +81,46 @@ type Registrar struct {
 	sets    []report.Dataset
 	tags    []apihost.TagHandlers
 	perms   []authz.Permission
+	jobs    []Job
+	ready   []func(context.Context) error
 	seen    map[string]struct{}
+}
+
+// Job is one job kind a module contributes (EP-5). The concrete type is jobcontrib.Job; module names
+// only this interface so that it imports neither jobs, store nor tenant (ADR-0005 rule 13).
+// JobName is the kind's name and must start with "<moduleID>.".
+type Job interface {
+	JobName() string
+}
+
+// Job registers a job kind (EP-5) in the module's namespace. Build it with jobcontrib.Job.
+func (r *Registrar) Job(j Job) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if j == nil {
+		return fmt.Errorf("%w: nil job", ErrInvalid)
+	}
+	if err := r.claim("job", j.JobName()); err != nil {
+		return err
+	}
+	r.jobs = append(r.jobs, j)
+	return nil
+}
+
+// Ready registers a check that runs once after every module has registered and the report host is
+// sealed (Contributions.Ready). Use it for what needs the other contributions, such as the report
+// library resolving its definitions against the sealed datasets; an error stops start-up.
+func (r *Registrar) Ready(fn func(context.Context) error) error {
+	if fn == nil {
+		return fmt.Errorf("%w: nil ready hook", ErrInvalid)
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !r.open {
+		return fmt.Errorf("%w: ready hook", ErrClosed)
+	}
+	r.ready = append(r.ready, fn)
+	return nil
 }
 
 // scopeEntry pins the kind read once at registration, so an evaluator cannot answer differently later.
@@ -217,6 +256,23 @@ type Contributions struct {
 	sets    []report.OwnedDatasets
 	tags    []apihost.TagHandlers
 	perms   []authz.Permission
+	jobs    []Job
+	ready   []func(context.Context) error
+}
+
+// Jobs lists the job kinds modules registered, in boot order; jobcontrib.All types them. compose/server registers them on the
+// job registry and runs each Seed for the install tenant.
+func (c *Contributions) Jobs() []Job { return append([]Job(nil), c.jobs...) }
+
+// Ready runs the modules' ready hooks in boot order and stops at the first error. compose/server calls
+// it after the report host is sealed.
+func (c *Contributions) Ready(ctx context.Context) error {
+	for _, fn := range c.ready {
+		if err := fn(ctx); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // API lists the route handlers modules registered, in boot order. compose/server mounts them on
@@ -329,6 +385,8 @@ func Boot(ctx context.Context, mods []Entry, enabled capability.Set, opts ...Boo
 		out.actions = append(out.actions, r.actions...)
 		out.tags = append(out.tags, r.tags...)
 		out.perms = append(out.perms, r.perms...)
+		out.jobs = append(out.jobs, r.jobs...)
+		out.ready = append(out.ready, r.ready...)
 		if len(r.sets) > 0 {
 			out.sets = append(out.sets, report.OwnedDatasets{Owner: string(e.ID), Datasets: slices.Clone(r.sets)})
 		}
@@ -375,4 +433,32 @@ func satisfied(required []capability.ID, enabled capability.Set) bool {
 		}
 	}
 	return true
+}
+
+// DeclaredPermissions registers every module in a throwaway registrar, whatever its capability
+// requirements, and returns the permission of each Action and each registered permission, sorted and
+// unique. The OpenAPI contract is the same on every install, so its x-permission values must be in
+// the catalogue even where a module's capability is off; compose/server adds these to the kernel's.
+// The modules must be built against zero Deps (Register does no I/O).
+func DeclaredPermissions(mods []Entry) ([]string, error) {
+	var out []string
+	for _, e := range mods {
+		if e.Module == nil {
+			return nil, fmt.Errorf("%w: entry %q has no module", ErrInvalid, e.ID)
+		}
+		r := &Registrar{owner: e.ID, open: true, seen: map[string]struct{}{}}
+		err := e.Module.Register(r)
+		r.close()
+		if err != nil {
+			return nil, fmt.Errorf("module %q: register: %w", e.ID, err)
+		}
+		for _, a := range r.actions {
+			out = append(out, string(a.Describe().Permission))
+		}
+		for _, p := range r.perms {
+			out = append(out, string(p))
+		}
+	}
+	slices.Sort(out)
+	return slices.Compact(out), nil
 }

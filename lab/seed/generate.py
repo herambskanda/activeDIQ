@@ -392,16 +392,41 @@ def generate(tier: str, seed: int, now: int, user_pw: str, svc_pw: str) -> tuple
                           "replace: lastLogonTimestamp", ldif_value("lastLogonTimestamp", filetime(now - age * day)), ""]
         counts["computers"] += 1
     server_names: list[str] = []
+    printer_specs: list[tuple[str, int, str, list[tuple[str, object]]]] = []   # (server DN, age, queue name, attrs)
     for i in range(cfg["servers"]):
         name = f"SRV-{['APP', 'DB', 'FILE', 'WEB'][i % 4]}-{i + 1:03d}"
         server_names.append(name)
-        aged_writer(rng.randint(1, 20)).entry(f"CN={name},{servers_ou}", [
+        srv_age = rng.randint(1, 20)
+        if i < 2:
+            printer_specs.append((f"CN={name},{servers_ou}", srv_age, name, []))
+        aged_writer(srv_age).entry(f"CN={name},{servers_ou}", [
             ("objectClass", "top"), ("objectClass", "person"), ("objectClass", "organizationalPerson"),
             ("objectClass", "user"), ("objectClass", "computer"), ("cn", name),
             ("sAMAccountName", name + "$"), ("dNSHostName", f"{name.lower()}.{UPN_SUFFIX}"),
             ("operatingSystem", "Windows Server 2022 Standard"), ("userAccountControl", UAC_WORKSTATION),
         ])
         counts["computers"] += 1
+
+    # ---- published printers (T-1719, D13): printQueue objects are children of their server's computer object.
+    # Deterministic (no rng draw, so every later object keeps its place) and loaded in the server's own
+    # bucket, after it. SRV-APP-001 gets a fully described queue and one whose name needs DN escaping and
+    # carries non-ASCII; SRV-DB-002 gets a bare queue with only the mandatory attributes.
+    manifest["printers"] = []
+    for srv_dn, srv_age, srv, _ in printer_specs:
+        host = f"{srv.lower()}.{UPN_SUFFIX}"
+        queues = ([("Floor 2, Ünï Colour", True), ("Floor1-Mono", True)] if srv.endswith("001") else [("bare-queue", False)])
+        for qname, described in queues:
+            attrs: list[tuple[str, object]] = [
+                ("objectClass", "top"), ("objectClass", "leaf"), ("objectClass", "connectionPoint"), ("objectClass", "printQueue"),
+                ("cn", f"{srv}-{qname}"), ("printerName", qname), ("serverName", host), ("shortServerName", srv),
+                ("uNCName", "\\\\" + host + "\\" + qname.replace(", ", "-").replace(" ", "-")), ("versionNumber", 4)]
+            if described:
+                attrs += [("printShareName", qname.replace(", ", "-").replace(" ", "-")), ("location", "HQ/2/East"),
+                          ("description", f"lab printer {qname}"), ("driverName", "HP Universal Printing PCL 6"),
+                          ("printColor", "TRUE" if "Colour" in qname else "FALSE"), ("printDuplexSupported", "TRUE")]
+            dn = f"CN={esc_dn(srv + '-' + qname)},{srv_dn}"
+            aged_writer(srv_age).entry(dn, attrs)
+            manifest["printers"].append({"dn": dn, "server_dn": srv_dn, "printerName": qname, "described": described})
 
     # `manager` is a linked attribute: its target must exist, so it is set after the add pass
     for u in users:
@@ -488,6 +513,7 @@ def generate(tier: str, seed: int, now: int, user_pw: str, svc_pw: str) -> tuple
         "generated_users": cfg["users"],
         "edge_users": len(edge_specs),
         "computers": counts["computers"],
+        "printers": len(manifest["printers"]),
         "groups": counts["groups"],
         "ous": counts["ous"],
         "user_states": state_counts,

@@ -146,7 +146,7 @@ func (r *Runner) approve(ctx context.Context, t tenant.ID, opID, planHash, viaRe
 	}
 	act, _ := r.cfg.Registry.Lookup(op.Action)
 	d := act.Describe()
-	if err := r.checkApprover(ctx, op, ap, d.StepUp || sum.Worst == Irreversible); err != nil {
+	if err := r.checkApprover(ctx, op, ap, d.NeedsStepUp(Input(op.Input)) || sum.Worst == Irreversible); err != nil {
 		return Submission{}, err
 	}
 	if err := r.requireApproverScope(ctx, op, targets, ap.Principal); err != nil {

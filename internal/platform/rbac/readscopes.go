@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/skenzeriq/activediq/internal/platform/authority"
 	"github.com/skenzeriq/activediq/internal/platform/authz"
@@ -332,4 +333,48 @@ func summary(grants int, narrowed bool) string {
 		b.WriteString(", narrowed by the API token's scope")
 	}
 	return b.String()
+}
+
+// ErrReadScopesUnbound is returned by LateReadScopes before the producer is bound. It refuses: a read
+// with no producer is never answered unscoped.
+var ErrReadScopesUnbound = errors.New("rbac: the read-scope producer is not bound yet")
+
+// LateReadScopes is the read-scope producer handed to modules at construction, before the EP-6
+// evaluators the modules contribute exist (the producer is built from them). The composition root binds
+// the real producer once after Boot; until then every call is refused. It implements the same For as
+// *ReadScopes.
+type LateReadScopes struct {
+	mu sync.RWMutex
+	rs ReadScopeProducer
+}
+
+// ReadScopeProducer is what a module asks for: the caller's read scope in a transaction. *ReadScopes
+// implements it; tests bind a fixed one.
+type ReadScopeProducer interface {
+	For(ctx context.Context, tx store.Tx, t tenant.ID, chain authority.Chain, perm authz.Permission) (authz.ReadScope, error)
+}
+
+// Bind sets the producer. It may be called once; a second call or a nil producer is refused.
+func (l *LateReadScopes) Bind(rs ReadScopeProducer) error {
+	if rs == nil {
+		return errors.New("rbac: bind a nil read-scope producer")
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.rs != nil {
+		return errors.New("rbac: the read-scope producer is already bound")
+	}
+	l.rs = rs
+	return nil
+}
+
+// For implements the producer: it delegates to the bound *ReadScopes, or refuses.
+func (l *LateReadScopes) For(ctx context.Context, tx store.Tx, t tenant.ID, chain authority.Chain, perm authz.Permission) (authz.ReadScope, error) {
+	l.mu.RLock()
+	rs := l.rs
+	l.mu.RUnlock()
+	if rs == nil {
+		return authz.ReadScope{}, ErrReadScopesUnbound
+	}
+	return rs.For(ctx, tx, t, chain, perm)
 }
