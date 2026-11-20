@@ -279,6 +279,55 @@ components:
             type: /problems/idempotency-key-reuse
             title: The idempotency key was used with a different request
             status: 422
+    CallerVerificationUnavailable:
+      description: >-
+        The caller cannot be verified. One answer for an unknown, disabled, out-of-scope, protected or own target and for a target with no held destination; it never says which.
+      content:
+        application/problem+json:
+          schema:
+            $ref: shared/problems.yaml#/components/schemas/Problem
+          example:
+            type: /problems/caller-verification-unavailable
+            title: This caller cannot be verified
+            status: 422
+    CallerVerificationRefused:
+      description: >-
+        The verification was refused. One answer for a wrong code, used-up attempts, an expired, superseded, unknown or foreign challenge; it never says which and never repeats the code.
+      content:
+        application/problem+json:
+          schema:
+            $ref: shared/problems.yaml#/components/schemas/Problem
+          example:
+            type: /problems/caller-verification-refused
+            title: The verification was refused
+            status: 422
+    CallerVerificationLimit:
+      description: >-
+        A caller-verification limit was reached. errors[].code is quota (the hourly issue limit of the target or the technician) or paused (too many failed challenges).
+      content:
+        application/problem+json:
+          schema:
+            $ref: shared/problems.yaml#/components/schemas/Problem
+          example:
+            type: /problems/caller-verification-limit
+            title: The verification limit was reached
+            status: 429
+            errors:
+              - in: body
+                pointer: /
+                code: quota
+                detail: The hourly limit of codes for this caller or technician is reached.
+    CallerVerificationDeliveryFailed:
+      description: >-
+        The code could not be delivered. No code exists, none is shown and the issue does not count against the limits.
+      content:
+        application/problem+json:
+          schema:
+            $ref: shared/problems.yaml#/components/schemas/Problem
+          example:
+            type: /problems/caller-verification-delivery-failed
+            title: The code could not be delivered
+            status: 502
     PreconditionRequired:
       description: A precondition header is required
       content:
@@ -423,3 +472,33 @@ components:
             type: /problems/report-row-cap-exceeded
             title: The result is over the row cap of the format
             status: 422
+    ExplorerCursorInvalid:
+      description: >-
+        The paging parameters cannot be used. errors[].code says why: cursor_invalid (bad, forged or mismatched cursor: a cursor from another node,
+        view or scope; nothing is read), or a malformed limit or view. No DN or cursor content is echoed.
+      content:
+        application/problem+json:
+          schema:
+            $ref: shared/problems.yaml#/components/schemas/Problem
+          example:
+            type: /problems/explorer-query-invalid
+            title: The paging parameters cannot be used
+            status: 400
+            traceId: 4bf92f3577b34da6a3ce929d0e0e4736
+            errors:
+              - in: query
+                pointer: cursor
+                code: cursor_invalid
+                detail: The cursor cannot be used. Start again from the first page.
+    ExplorerUnavailable:
+      description: Explorer could not finish in time
+      content:
+        application/problem+json:
+          schema:
+            $ref: shared/problems.yaml#/components/schemas/Problem
+          example:
+            type: /problems/explorer-unavailable
+            title: The directory is busy
+            status: 503
+            detail: The directory is busy. Try again.
+            traceId: 4bf92f3577b34da6a3ce929d0e0e4736

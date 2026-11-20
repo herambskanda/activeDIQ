@@ -143,7 +143,7 @@ func Test_password_state_reads_closure_at_scale(t *testing.T) {
 		var plan strings.Builder
 		if err := e.tx(t, e.a, func(ctx context.Context, tx store.Tx) error {
 			// EXPLAIN ANALYZE runs the statement again with instrumentation: the 30 s default can cancel it.
-			if _, err := tx.Exec(ctx, "SELECT set_config('statement_timeout', '600s', true)"); err != nil {
+			if err := store.SetStatementTimeout(ctx, tx, 600*time.Second); err != nil {
 				return err
 			}
 			rows, err := tx.Query(ctx, "EXPLAIN (ANALYZE, COSTS OFF, TIMING OFF) "+res.sql[0], res.args[0]...)
@@ -181,3 +181,5 @@ func (e *env) bulkExec(t *testing.T, sql string, args ...any) error {
 		return err
 	})
 }
+
+func day(n int) time.Duration { return time.Duration(n) * 24 * time.Hour }

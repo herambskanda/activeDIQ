@@ -83,6 +83,10 @@ type GrantInput struct {
 	Roots      []Root
 	ValidFrom  *time.Time // nil: now
 	ValidUntil *time.Time
+	// Templates restricts the holder to these Templates (ADM-132); none: every Template.
+	Templates []string
+	// Sites orders the AD sites whose DCs are tried first (ADM-133); a hint only.
+	Sites []string
 }
 
 func tenantOf(ctx context.Context, tx store.Tx) (t tenant.ID, _ error) {
@@ -435,7 +439,7 @@ func (g *Grants) grant(ctx context.Context, tx store.Tx, by authority.Chain, in 
 	if err != nil {
 		return err
 	}
-	if !validRoots(tn, in.Roots) {
+	if !validRoots(tn, in.Roots) || !validConstraint(in.Templates, in.Sites) {
 		return ErrInvalid
 	}
 	role, err := readRole(ctx, tx, tn, in.RoleID, lockShare)
@@ -454,6 +458,9 @@ func (g *Grants) grant(ctx context.Context, tx store.Tx, by authority.Chain, in 
 			return err
 		}
 		if err := g.mustHold(ctx, tn, by, actor, role.perms, in.Roots); err != nil {
+			return err
+		}
+		if err := templateEscalation(ctx, tx, tn, actor, role.perms, in.Templates); err != nil {
 			return err
 		}
 	}
@@ -484,7 +491,7 @@ VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6::uuid, $7::uuid)`, tn.String(), in.ID
 			return fmt.Errorf("rbac: creating assignment root: %w", err)
 		}
 	}
-	return nil
+	return insertConstraints(ctx, tx, tn, in.ID, in.Templates, in.Sites)
 }
 
 // Revoke ends an assignment. The actor must hold every privilege of the assignment over its scope (or be

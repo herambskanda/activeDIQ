@@ -590,7 +590,7 @@
       ],
       "disposition": "convert",
       "ticket": "T-1228",
-      "reason": "Reached from the delegation.role.create Action's Apply and from the host CLI (grantDirectoryReader). Take the step.Step; the CLI gets a narrow bootstrap twin that T-1228 adds here under category bootstrap with callers [internal/compose/server.grantDirectoryReader] (pre-authorised by the T-1221 amendment), as GrantBootstrap already is."
+      "reason": "Reached from the delegation.role.create Action's Apply and from the host CLI (grantConsoleRole). Take the step.Step; the CLI gets a narrow bootstrap twin that T-1228 adds here under category bootstrap with callers [internal/compose/server.grantConsoleRole] (pre-authorised by the T-1221 amendment), as GrantBootstrap already is."
     },
     {
       "package": "internal/platform/rbac",
@@ -624,9 +624,9 @@
       "category": "bootstrap",
       "ticket": "T-1221",
       "callers": [
-        "internal/compose/server.grantDirectoryReader"
+        "internal/compose/server.grantConsoleRole"
       ],
-      "reason": "The host CLI's grant path that skips the grantor-holds-it check, accepted only for principal cli-account-init-local (T-0808; fitness-grantbootstrap already restricts its mentions to localaccount.go). Widens: it grants directory-reader to the CLI's local account. Bounded by host access and the single principal it accepts."
+      "reason": "The host CLI's grant path that skips the grantor-holds-it check, accepted only for principal cli-account-init-local (T-0808; fitness-grantbootstrap already restricts its mentions to localaccount.go). Widens: it grants directory-reader and console-report-runner (reports.run only, same roots) to the CLI's local account (T-1928 amendment, 2026-11-13). Bounded by host access and the single principal it accepts."
     },
     {
       "package": "internal/platform/rbac",

@@ -26,6 +26,13 @@ type fileDef struct {
 	Params      []fileParam  `json:"params"`
 	Caveats     []string     `json:"caveats"`
 	PerDC       *filePerDC   `json:"perDC"`
+	Widget      *fileWidget  `json:"widget"`
+}
+
+// fileWidget is the widget profile: the views Home may render and the table's columns.
+type fileWidget struct {
+	Views        []string `json:"views"`
+	TableColumns []string `json:"tableColumns"`
 }
 
 // filePerDC marks a report that reads per-DC attributes live; Scope is "all" (read-only DCs included, the
@@ -113,6 +120,15 @@ func Decode(data []byte) (report.Definition, error) {
 	}
 	for _, c := range f.Caveats {
 		d.Caveats = append(d.Caveats, report.CaveatID(c))
+	}
+	if f.Widget != nil {
+		d.Widget = &report.WidgetProfile{}
+		for _, v := range f.Widget.Views {
+			d.Widget.Views = append(d.Widget.Views, report.WidgetView(v))
+		}
+		for _, c := range f.Widget.TableColumns {
+			d.Widget.TableColumns = append(d.Widget.TableColumns, report.ColumnID(c))
+		}
 	}
 	for _, p := range f.Params {
 		ps, err := param(p)
