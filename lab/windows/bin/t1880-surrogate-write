@@ -13,6 +13,7 @@ import dc1winrm
 
 
 def main(argv):
+    env, _, addr = dc1winrm.load_env("t1880-surrogate-write")  # the address gate runs first (T-1279)
     if len(argv) != 5 or argv[1] not in ("samr", "adsi-ldap"):
         sys.exit(__doc__)
     mode, comp, creator, units = argv[1:]
@@ -20,7 +21,6 @@ def main(argv):
     if not (re.fullmatch(r"[A-Za-z0-9!-]+", pw) and re.fullmatch(r"[A-Za-z0-9]+", comp)
             and re.fullmatch(r"[A-Za-z0-9]+", creator) and re.fullmatch(r"[0-9a-fA-F]{4}(,[0-9a-fA-F]{4})*", units)):
         sys.exit("t1880-surrogate-write: bad argument or password on stdin")
-    env, _, addr = dc1winrm.load_env("t1880-surrogate-write")
     ps = dc1winrm.make_ps(env, addr)
     chars = ",".join(f"0x{u}" for u in units.split(","))
     if mode == "samr":
