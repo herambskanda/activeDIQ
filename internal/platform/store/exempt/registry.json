@@ -356,7 +356,7 @@
     {
       "column": "public.authn_authenticator_enrollments.expires_at",
       "value": "2030-01-01T00:00:00Z",
-      "reason": "INSERT trigger: an enrolment starts pending with an expiry (DM-37, ENH-09 \u00a75); the probe row is a pending enrolment."
+      "reason": "INSERT trigger: an enrolment starts pending with an expiry (DM-37, ENH-09 §5); the probe row is a pending enrolment."
     },
     {
       "column": "public.authn_ad_attempts.key_hash",
@@ -606,7 +606,7 @@
     {
       "column": "public.connection_attestation_attempts.code_verifier",
       "value": "probe-code-verifier-0123456789-0123456789-0123",
-      "reason": "CHECK: a PKCE code_verifier is 43..128 characters (RFC 7636 \u00a74.1)."
+      "reason": "CHECK: a PKCE code_verifier is 43..128 characters (RFC 7636 §4.1)."
     },
     {
       "column": "public.connection_attestation_attempts.state_hash",
@@ -1074,6 +1074,46 @@
       "column": "public.helpdesk_request_keys.state",
       "value": "pending",
       "reason": "CHECK: helpdesk_rk_state/helpdesk_rk_done: pending carries no completed_at; the probe row is pending."
+    },
+    {
+      "column": "public.report_schedules.definition_id",
+      "value": "probe-report",
+      "reason": "CHECK: definition_id matches ^[a-z][a-z0-9-]{1,63}$ (report_schedules_definition_id_check)."
+    },
+    {
+      "column": "public.report_schedules.time_zone",
+      "value": "UTC",
+      "reason": "CHECK: time_zone is an IANA-shaped name (report_schedules_time_zone_check)."
+    },
+    {
+      "column": "public.report_schedules.state",
+      "value": "active",
+      "reason": "CHECK: state is one of a closed set and ties pause_reason and next_run_at to it; the probe row is active."
+    },
+    {
+      "column": "public.report_schedule_recipients.kind",
+      "value": "address",
+      "reason": "CHECK: kind is account or address and each kind requires its own column; the probe row is an address recipient, so account stays NULL."
+    },
+    {
+      "column": "public.report_schedule_recipients.address",
+      "value": "probe@example.test",
+      "reason": "CHECK: an address recipient carries an address of 3 to 254 characters."
+    },
+    {
+      "column": "public.report_schedule_recipients.formats",
+      "value": "{csv}",
+      "reason": "CHECK: formats is a non-empty subset of csv, xlsx, pdf, html."
+    },
+    {
+      "column": "public.report_schedule_recipients.delivery",
+      "value": "attachment",
+      "reason": "CHECK: delivery is attachment or link, and an address recipient is attachment only."
+    },
+    {
+      "column": "public.report_schedule_fires.state",
+      "value": "queued",
+      "reason": "CHECK: state is one of a closed set (report_schedule_fires_state_check)."
     },
     {
       "column": "public.migration_fidelity.class",

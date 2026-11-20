@@ -2790,6 +2790,55 @@ components:
             type: string
             format: email
             maxLength: 254
+    ReportSchedulePause:
+      description: >-
+        The input of the Action reports.schedule.pause: the schedule to pause. It has no request body; the id is the path parameter.
+      type: object
+      required: [scheduleId]
+      additionalProperties: false
+      properties:
+        scheduleId:
+          type: string
+          format: uuid
+    ReportScheduleDelete:
+      description: >-
+        The input of the Action reports.schedule.delete: the schedule to archive. It has no request body; the id is the path parameter.
+      type: object
+      required: [scheduleId]
+      additionalProperties: false
+      properties:
+        scheduleId:
+          type: string
+          format: uuid
+    ReportScheduleRestore:
+      description: >-
+        The input of the Action reports.schedule.restore, the inverse of every other schedule Action. Clients never send it: undoReportScheduleOperation builds it from the operation it undoes.
+      type: object
+      required: [scheduleId, mode, expect]
+      additionalProperties: false
+      properties:
+        scheduleId:
+          type: string
+          format: uuid
+        mode:
+          type: string
+          maxLength: 16
+          description: version, archive or reassign_back.
+        version:
+          type: integer
+          minimum: 1
+          maximum: 1000000
+        expect:
+          type: integer
+          minimum: 1
+          maximum: 1000000
+        confirmedExternal:
+          type: array
+          maxItems: 50
+          items:
+            type: string
+            format: email
+            maxLength: 254
     ReportScheduleReassign:
       description: >-
         Hands a schedule to another account.
