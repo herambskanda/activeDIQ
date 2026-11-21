@@ -543,7 +543,6 @@ func TestActivationSubjectWithoutCheckFails(t *testing.T) {
 		"P4":     "internal/connector/ldap/ldap.go",
 		"P5":     "internal/platform/updater/updater.go",
 		"U3":     "proto/skenzeriq/agent/v1/agent.proto",
-		"U4":     "proto/skenzeriq/agent/v1/agent.proto",
 	} {
 		t.Run(check, func(t *testing.T) {
 			vs := run(t, repo(t, map[string]string{path: "package x\n"}), "ACT")
@@ -576,9 +575,9 @@ func TestActivationImplementedCheckMustPass(t *testing.T) {
 	extra := withCommand(t, "U3", `["go", "version"]`)
 	extra["proto/skenzeriq/agent/v1/agent.proto"] = "syntax = \"proto3\";\n"
 	extra["proto/skenzeriq/agent/v1/x.txt"] = "x"
-	// U3 passes now; U4 (same subject) is still unimplemented.
+	// U3 passes now; U4 (same subject) has its shipped command, which the fixture repo does not contain.
 	vs := run(t, repo(t, extra), "ACT")
-	expect(t, vs, "ACT", "activation table U4", "not implemented")
+	expect(t, vs, "ACT", "activation table U4", "cannot run")
 	for _, v := range vs {
 		if strings.Contains(v.Pos, "U3") {
 			t.Errorf("U3 has an implemented, passing check: %s", v)
@@ -834,7 +833,7 @@ func TestShippedDeferralsMatchADRTable(t *testing.T) {
 			t.Errorf("%s: %s", a.Check, strings.Join(ps, "; "))
 		}
 	}
-	if n != 6 { // P2-oci left the table when its check landed (T-1462)
+	if n != 5 { // P2-oci (T-1462) and U4 (T-2418) left the table when their checks landed
 		t.Errorf("manifest carries %d deferrals, ADR-0002 lists six", n)
 	}
 }
