@@ -294,6 +294,25 @@ with the group as target class `group` and the member GUID and class as `~member
 Plan-time `member` write-property probe and the C20 refusals are not built; kind 13's cluster-object
 refusal is proven on Windows only (CC-WK-59).
 
+**As built (T-2343).** Two more optional halves of `Source`, both Go-level only (no RPC or proto surface yet; the
+`authn` adapters are a later ticket).
+
+- `read.ChangeTimer` (`ADSource.AttrChangeTimes` over `ad.Session.AttrChangeTimes`) reads the constructed,
+  read-only `msDS-ReplAttributeMetaData` of one object and decodes it with `replxml`. Per attribute it answers
+  `AttrChange{Known, At}`: `At` is the **originating** change time (when the value was written on the originating DC,
+  not when this DC received it). Missing metadata, an undecodable entry, or a FILETIME of 0 is `Known=false`, never a
+  zero time, so the caller (HeldContacts 24h rule, spec 11 Q1) applies its tenant fallback. `mail`, `mobile` and
+  `otherMobile` are each read independently; `otherMobile` and the metadata attribute are in `DefaultSchema`.
+  The decode is proven offline (synthetic MS-DRSR-shaped XML; no captured value yet). **Samba 4.22 does not serve
+  `msDS-ReplAttributeMetaData` over LDAP** (only `replPropertyMetaData`), so the lab test skips there with a reason; real
+  originating-time behaviour needs a Windows DC (follow-up T-2346, which should also capture a fixture).
+- `read.SignInResolver` (`ADSource.ResolveSignInName` over `ad.Session.ResolveSignInName`) resolves an exact
+  `sAMAccountName` or UPN through the filter builder (the two-match abort is unit-tested through a search seam; Samba
+  cannot build an ambiguous pair). Empty names, `*` and control characters are rejected before any
+  search; zero or more than one match is `OBJECT_NOT_FOUND` (no ambiguity leak). The match carries `Disabled`,
+  `Expired` and `MustChange`, decoded from `userAccountControl`, `accountExpires` and `pwdLastSet`; an unreadable flag
+  attribute refuses the answer rather than reporting the user as fine.
+
 ### 5.4 Typed values
 
 The connector's codecs (P3) decode, so no caller sees raw bytes of a known syntax.

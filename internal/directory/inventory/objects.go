@@ -178,7 +178,10 @@ type Observation struct {
 	LastLogonTimestamp time.Time
 	// HasSPN says whether servicePrincipalName has a value (nil: not read). The values themselves are
 	// not stored.
-	HasSPN     *bool
+	HasSPN *bool
+	// ClusterSPN says a servicePrincipalName value has a failover-cluster class (nil: not read); set it
+	// with IsClusterSPN. It feeds the CMP-02 exclusion of cluster objects (T-1477).
+	ClusterSPN *bool
 	InputsRead InputsRead
 
 	// PasswordChange is the Cannot Change Password state the sync classified from the DACL read path
@@ -481,7 +484,7 @@ func (p Populator) Populate(ctx context.Context, tx store.Tx, connection Connect
 			cg, string(attrs[i]), nullTime(o.WhenCreated), nullTime(o.WhenChanged), observed.UTC(), o.ObservedDSA, cloud, string(o.State),
 			syncEnabledVal, cloudManagedVal, nilIfEmpty(o.OnPremisesSecurityIdentifier), o.OnPremisesDomainName, nilIfEmpty(o.OnPremisesImmutableID),
 			o.UserAccountControl, o.PrimaryGroupID, nullTime(o.LastLogonTimestamp), o.HasSPN, int16(o.InputsRead),
-			pwState, nullTime(o.PasswordChangeAt), record, noiseAttributes).
+			pwState, nullTime(o.PasswordChangeAt), record, noiseAttributes, o.ClusterSPN).
 			Scan(&w.inserted, &w.moved, &w.completeChanged)
 		if store.IsNoRows(err) {
 			out.Stale++
@@ -604,7 +607,7 @@ const upsertObjectSQL = `WITH old AS (
 			consistency_guid, attributes, when_created, when_changed, observed_at, observed_dsa, cloud_seen_at, state,
 			on_prem_sync_enabled, on_prem_cloud_managed, on_prem_sid, on_prem_domain_name, on_prem_immutable_id, ancestry_complete,
 			user_account_control, primary_group_id, last_logon_timestamp, spn_present, inputs_read,
-			password_change_state, password_change_at)
+			password_change_state, password_change_at, cluster_spn)
 		VALUES (NULLIF(current_setting('app.tenant_id', true), '')::uuid, $1::uuid, $2::uuid, $3::uuid, $4, $5,
 			$6::uuid, $7::uuid[], $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19::jsonb, $20, $21, $22, $23, $24, $25,
 			$26, $27, $28, $29, $30,
@@ -617,7 +620,7 @@ const upsertObjectSQL = `WITH old AS (
 					AND p.object_guid = $6::uuid), false)
 			END,
 			$31::bigint, $32::bigint, $33::timestamptz, $34::boolean, $35::smallint,
-			$36::text, $37::timestamptz)
+			$36::text, $37::timestamptz, $40::boolean)
 		ON CONFLICT (tenant_id, connection_id, object_guid) DO UPDATE SET
 			nc_guid = EXCLUDED.nc_guid, kind = EXCLUDED.kind, object_class = EXCLUDED.object_class, parent_guid = EXCLUDED.parent_guid,
 			ancestry = EXCLUDED.ancestry, ancestry_complete = EXCLUDED.ancestry_complete, dn = EXCLUDED.dn, rdn = EXCLUDED.rdn, sid = EXCLUDED.sid,
@@ -632,6 +635,7 @@ const upsertObjectSQL = `WITH old AS (
 			user_account_control = EXCLUDED.user_account_control, primary_group_id = EXCLUDED.primary_group_id,
 			last_logon_timestamp = EXCLUDED.last_logon_timestamp, spn_present = EXCLUDED.spn_present, inputs_read = EXCLUDED.inputs_read,
 			password_change_state = EXCLUDED.password_change_state, password_change_at = EXCLUDED.password_change_at,
+			cluster_spn = EXCLUDED.cluster_spn,
 			cloud_seen_at = GREATEST(d.cloud_seen_at, EXCLUDED.cloud_seen_at)
 		WHERE d.observed_at <= EXCLUDED.observed_at
 		RETURNING (xmax = 0) AS inserted, d.parent_guid, d.ancestry, d.ancestry_complete),
@@ -937,4 +941,18 @@ func uniq(s []string) map[string]bool {
 		m[x] = true
 	}
 	return m
+}
+
+// IsClusterSPN reports whether any servicePrincipalName value is of a failover-cluster class: the text
+// before the first '/' equals MSClusterVirtualServer or MSServerCluster, case-insensitively (ad-expert,
+// T-1477). Equality on the class, never a substring: MSServerClusterMgmtAPI is on cluster nodes, which are
+// ordinary servers, and a host name that contains "cluster" proves nothing.
+func IsClusterSPN(spns []string) bool {
+	for _, v := range spns {
+		class, _, ok := strings.Cut(v, "/")
+		if ok && (strings.EqualFold(class, "MSClusterVirtualServer") || strings.EqualFold(class, "MSServerCluster")) {
+			return true
+		}
+	}
+	return false
 }

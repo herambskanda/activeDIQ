@@ -145,6 +145,8 @@ func open(ctx context.Context, cfg Config, maintenance bool) (*DB, error) {
 	if sepWait <= 0 {
 		sepWait = 5 * time.Second
 	}
+	installReset(pc)
+	installReset(sc)
 	pool, err := pgxpool.NewWithConfig(ctx, pc)
 	if err != nil {
 		return nil, fmt.Errorf("store: open pool: %w", err)
