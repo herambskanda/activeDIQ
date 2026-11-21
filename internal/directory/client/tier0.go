@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/hex"
 	"errors"
+	"github.com/skenzeriq/activediq/internal/directory/writechange"
 	"strings"
 	"time"
 
@@ -153,7 +154,23 @@ func touched(op WriteOp) (inventory.ConnectionID, []inventory.GUID, error) {
 	if !ref.Valid() {
 		return "", nil, ctxErr(ReasonBadRef, nil)
 	}
-	return ref.Connection, []inventory.GUID{ref.Object}, nil
+	objs := []inventory.GUID{ref.Object}
+	if op.DigestKind == writechange.KeyGroupMemberAdd || op.DigestKind == writechange.KeyGroupMemberRemove {
+		// Kinds 11 and 12 touch the group (the target) and the member: each needs its own correlation
+		// statement and Tier-0 verdict (contract §8.10.3). The member's GUID is a digested attribute.
+		var member string
+		for _, a := range op.Attrs {
+			if a.Name == writechange.AttrMember && len(a.Values) == 1 {
+				member = strings.ToLower(a.Values[0])
+			}
+		}
+		mref := inventory.Ref{Connection: ref.Connection, Object: inventory.GUID(member)}
+		if !mref.Valid() {
+			return "", nil, ctxErr(ReasonBadRef, nil)
+		}
+		objs = append(objs, mref.Object)
+	}
+	return ref.Connection, objs, nil
 }
 
 func kinds(k connection.Kind) (own, peer connectorv1.ProviderKind, err error) {

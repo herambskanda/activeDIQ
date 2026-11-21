@@ -18,8 +18,9 @@ import (
 
 const (
 	// DefaultSearchCeiling is W: matched key rows per class above which a class is withheld and the
-	// caller is told to refine. [PROPOSED] 10,000; T-1102 measures and sets it.
-	DefaultSearchCeiling = 10000
+	// caller is told to refine. 7,000: the largest swept W whose ceiling-class p95 is under 200 ms for the
+	// admin and the scoped caller on pg16 and pg18 in both T-1303 sweeps (pg16 admin at 8,000 is 199.0 and 216.4 ms).
+	DefaultSearchCeiling = 7000
 	// searchThreshold is pg_trgm.word_similarity_threshold for the fuzzy class. Tuned on the 'Pryia Ramn'
 	// vector (T-1095): its word_similarity to 'priya raman' is 0.333 on pg16 and pg18, a transposition
 	// costing four trigrams, so 0.5 cannot find it; the nearest unrelated name measured ('praveen
@@ -40,6 +41,8 @@ type SearchRequest struct {
 	GroupLimit int
 	// After, when set, is a verified keyset position (the caller checks its MAC).
 	After *reportsql.SearchAfter
+	// Account, when set, ranks the account's recent objects above the other non-exact hits (T-1130).
+	Account string
 }
 
 // SearchResult is reportsql's: trimmed hits, the refine state, and counts only when they are exact.
@@ -66,10 +69,13 @@ func WithCeiling(w int) SearcherOption { return func(s *Searcher) { s.ceiling = 
 
 // NewSearcher registers the search source against the live schema, as the datasets are.
 func NewSearcher(sch reportsql.Schema, opts ...SearcherOption) (*Searcher, error) {
-	src, err := reportsql.NewSearchSource(sch, "inventory_search_keys", report.Anchor{ID: "t", Table: "directory_objects", Mode: report.RowAnchor,
+	src, err := reportsql.NewSearchSource(sch, "inventory_search_keys", "inventory_search_trigrams", report.Anchor{ID: "t", Table: "directory_objects", Mode: report.RowAnchor,
 		Project: idents("object_guid"), Connection: "connection_id", NC: "nc_guid", Object: "object_guid", Parent: "parent_guid",
 		Ancestry: "ancestry", Complete: "ancestry_complete"}, "kind", "state", "enabled", "display_name")
 	if err != nil {
+		return nil, fmt.Errorf("inventory: search source: %w", err)
+	}
+	if src, err = src.WithRecents(sch, "inventory_recent_objects"); err != nil {
 		return nil, fmt.Errorf("inventory: search source: %w", err)
 	}
 	s := &Searcher{src: src, ceiling: DefaultSearchCeiling}
@@ -85,6 +91,21 @@ func NewSearcher(sch reportsql.Schema, opts ...SearcherOption) (*Searcher, error
 	return s, nil
 }
 
+// checkTenant proves tid is the tenant the transaction is bound to.
+func checkTenant(ctx context.Context, tx store.Tx, tid tenant.ID) error {
+	if tid.IsZero() {
+		return ErrNoTenant
+	}
+	var ok bool
+	if err := tx.QueryRow(ctx, `SELECT NULLIF(current_setting('app.tenant_id', true), '') = $1`, tid.String()).Scan(&ok); err != nil {
+		return fmt.Errorf("inventory: tenant context: %w", err)
+	}
+	if !ok {
+		return ErrNoTenant
+	}
+	return nil
+}
+
 // Search answers exact, prefix and fuzzy lookups over the tenant's users, groups, computers and contacts,
 // trimmed to scopes in the statement itself. tx is the caller's tenant transaction (its statement timeout
 // is the safety net of rule 13); tid must be the tenant of tx. Search text is never logged or echoed.
@@ -92,21 +113,17 @@ func (s *Searcher) Search(ctx context.Context, tx store.Tx, tid tenant.ID, scope
 	if s == nil {
 		return SearchResult{}, ErrNotConfigured
 	}
-	if tid.IsZero() {
-		return SearchResult{}, ErrNoTenant
+	if err := checkTenant(ctx, tx, tid); err != nil {
+		return SearchResult{}, err
 	}
-	var ok bool
-	if err := tx.QueryRow(ctx, `SELECT NULLIF(current_setting('app.tenant_id', true), '') = $1`, tid.String()).Scan(&ok); err != nil {
-		return SearchResult{}, fmt.Errorf("inventory: tenant context: %w", err)
-	}
-	if !ok {
-		return SearchResult{}, ErrNoTenant
+	if req.Account != "" && !isUUID(req.Account) {
+		return SearchResult{}, ErrNoAccount
 	}
 	p, err := searchkey.Classify(req.Text)
 	if err != nil {
 		return SearchResult{}, fmt.Errorf("%w: %w", ErrSearchRefused, err)
 	}
-	q := reportsql.SearchQuery{Exact: p.Exact, Prefix: p.Prefix, Fuzzy: p.Fuzzy, Types: req.Types, GroupLimit: req.GroupLimit, Ceiling: s.ceiling, After: req.After, Threshold: searchThreshold}
+	q := reportsql.SearchQuery{Exact: p.Exact, Prefix: p.Prefix, Fuzzy: p.Fuzzy, Types: req.Types, GroupLimit: req.GroupLimit, Ceiling: s.ceiling, After: req.After, Threshold: searchThreshold, Account: req.Account}
 	if q.GroupLimit == 0 {
 		q.GroupLimit = 5
 	}

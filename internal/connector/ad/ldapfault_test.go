@@ -211,12 +211,101 @@ type fakeUpstream struct {
 	// parents > 0 spreads the entries over that many parent OUs, gives each an instanceType, and
 	// answers a base-scope read of "OU=p<k>,..." with the parent's GUID, counting the reads (T-0694).
 	parents int
-	mu      sync.Mutex
-	reads   map[string]int
+	// noGUID: the first noGUID entries are listed without objectGUID (a DC's partial system objects).
+	noGUID int
+	// missingParent / dropOnParent: a read of parent OU k answers no entry (parent unreadable), or drops
+	// the connection (a session fault, which must still fail the search).
+	missingParent map[int]bool
+	dropOnParent  map[int]bool
+	mu            sync.Mutex
+	reads         map[string]int
 	// sdAttrs, when set, is the entry served for every "<GUID=" base-scope read (an SD read), and
 	// modifies counts the Modify requests the upstream received (T-0726).
 	sdAttrs  map[string][][]byte
 	modifies int
+	// repl serves the msDS-Repl* rootDSE attributes (T-1723), keyed by lower-case name. rangeSize > 0
+	// answers in attr;range=lo-hi windows; rangeNoEnd never sends the terminal window; replDenied
+	// answers insufficientAccessRights for the named attribute. searches records every search.
+	repl       map[string][][]byte
+	rangeSize  int
+	rangeNoEnd bool
+	replDenied map[string]bool
+	searches   []searchRec
+}
+
+type searchRec struct {
+	base     string
+	attrs    []string
+	controls []string
+}
+
+func (f *fakeUpstream) searchLog() []searchRec {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]searchRec(nil), f.searches...)
+}
+
+// searchDetail reads the requested attribute names and control OIDs out of a SearchRequest.
+func searchDetail(pkt *ber.Packet) (attrs, controls []string) {
+	body := pkt.Children[1]
+	if len(body.Children) >= 8 {
+		for _, a := range body.Children[7].Children {
+			v, _ := a.Value.(string)
+			attrs = append(attrs, v)
+		}
+	}
+	if len(pkt.Children) > 2 {
+		for _, c := range pkt.Children[2].Children {
+			if len(c.Children) > 0 {
+				v, _ := c.Children[0].Value.(string)
+				controls = append(controls, v)
+			}
+		}
+	}
+	return attrs, controls
+}
+
+// replAnswer builds the rootDSE entry for a request that names msDS-Repl* attributes, or reports
+// that the request is not one.
+func (f *fakeUpstream) replAnswer(id int64, attrs []string) (out []*ber.Packet, handled bool) {
+	got := map[string][][]byte{}
+	for _, a := range attrs {
+		base, lo, _, star, isRange := splitRange(a)
+		key := strings.ToLower(base)
+		if !strings.HasPrefix(key, "msds-repl") {
+			continue
+		}
+		handled = true
+		if f.replDenied[key] {
+			return []*ber.Packet{resultCode(id, opSearchDone, 50)}, true
+		}
+		vals, ok := f.repl[key]
+		if !ok {
+			continue
+		}
+		if f.rangeSize <= 0 || (len(vals) <= f.rangeSize && !isRange && !f.rangeNoEnd) {
+			got[base] = vals
+			continue
+		}
+		_ = star
+		end := lo + f.rangeSize
+		if end >= len(vals) && !f.rangeNoEnd {
+			got[base+";range="+strconv.Itoa(lo)+"-*"] = vals[min(lo, len(vals)):]
+			continue
+		}
+		if end > len(vals) {
+			end = len(vals)
+		}
+		if lo >= end {
+			continue // a DC that stops answering ranges: nothing under any name
+		}
+		got[base+";range="+strconv.Itoa(lo)+"-"+strconv.Itoa(end-1)] = vals[lo:end]
+	}
+	if !handled {
+		return nil, false
+	}
+	out = append(out, entryMsg(id, "", got)) // a DC with nothing to say still returns the rootDSE entry
+	return out, true
 }
 
 func (f *fakeUpstream) modifyCount() int {
@@ -284,7 +373,17 @@ func (f *fakeUpstream) serve(c net.Conn) {
 		case opBindReq:
 			out = append(out, resultMsg(id, opBindResp))
 		case opSearchReq:
+			attrs, ctrls := searchDetail(pkt)
+			f.mu.Lock()
+			f.searches = append(f.searches, searchRec{base: base, attrs: attrs, controls: ctrls})
+			f.mu.Unlock()
+			replOut, isRepl := f.replAnswer(id, attrs)
 			switch {
+			case base == "" && isRepl:
+				out = append(out, replOut...)
+				if len(replOut) == 1 && replOut[0].Children[1].Tag == opSearchDone {
+					break // denied: the one message is the final result
+				}
 			case base == "":
 				out = append(out, entryMsg(id, "", map[string][][]byte{
 					"schemaNamingContext": {[]byte(fakeSchemaNC)}, "defaultNamingContext": {[]byte("DC=lab,DC=test")},
@@ -302,6 +401,12 @@ func (f *fakeUpstream) serve(c net.Conn) {
 				}
 				f.reads[base]++
 				f.mu.Unlock()
+				if f.dropOnParent[k] {
+					return
+				}
+				if f.missingParent[k] {
+					break
+				}
 				out = append(out, entryMsg(id, base, map[string][][]byte{"objectGUID": {parentGUID(k)}}))
 			case f.sdAttrs != nil && strings.HasPrefix(base, "<GUID="):
 				out = append(out, entryMsg(id, "CN=x,DC=lab,DC=test", f.sdAttrs))
@@ -309,8 +414,11 @@ func (f *fakeUpstream) serve(c net.Conn) {
 				for i := 0; i < f.entries; i++ {
 					g := make([]byte, 16)
 					g[0], g[14], g[15] = 0xA0, byte((i+1)>>8), byte(i+1)
-					out = append(out, entryMsg(id, "CN=u"+strconv.Itoa(i)+",OU=p"+strconv.Itoa(i%f.parents)+",DC=lab,DC=test",
-						map[string][][]byte{"objectGUID": {g}, "instanceType": {[]byte("4")}}))
+					attrs := map[string][][]byte{"objectGUID": {g}, "instanceType": {[]byte("4")}}
+					if i < f.noGUID {
+						delete(attrs, "objectGUID")
+					}
+					out = append(out, entryMsg(id, "CN=u"+strconv.Itoa(i)+",OU=p"+strconv.Itoa(i%f.parents)+",DC=lab,DC=test", attrs))
 				}
 			case strings.HasPrefix(base, "<GUID="):
 				for i := 0; i < f.entries; i++ {
@@ -319,7 +427,9 @@ func (f *fakeUpstream) serve(c net.Conn) {
 					out = append(out, entryMsg(id, "CN=u"+string(rune('a'+i))+",OU=root,DC=lab,DC=test", map[string][][]byte{"objectGUID": {g}}))
 				}
 			}
-			out = append(out, resultMsg(id, opSearchDone))
+			if !(len(out) > 0 && out[len(out)-1].Children[1].Tag == opSearchDone) {
+				out = append(out, resultMsg(id, opSearchDone))
+			}
 		case 6: // ModifyRequest: counted and acknowledged, never applied
 			f.mu.Lock()
 			f.modifies++
@@ -336,11 +446,13 @@ func (f *fakeUpstream) serve(c net.Conn) {
 	}
 }
 
-func resultMsg(id int64, op int) *ber.Packet {
+func resultMsg(id int64, op int) *ber.Packet { return resultCode(id, op, 0) }
+
+func resultCode(id int64, op int, code int64) *ber.Packet {
 	env := ber.Encode(ber.ClassUniversal, ber.TypeConstructed, ber.TagSequence, nil, "LDAP Message")
 	env.AppendChild(ber.NewInteger(ber.ClassUniversal, ber.TypePrimitive, ber.TagInteger, id, "MessageID"))
 	r := ber.Encode(ber.ClassApplication, ber.TypeConstructed, ber.Tag(op), nil, "Result")
-	r.AppendChild(ber.NewInteger(ber.ClassUniversal, ber.TypePrimitive, ber.TagEnumerated, 0, "resultCode"))
+	r.AppendChild(ber.NewInteger(ber.ClassUniversal, ber.TypePrimitive, ber.TagEnumerated, code, "resultCode"))
 	r.AppendChild(ber.NewString(ber.ClassUniversal, ber.TypePrimitive, ber.TagOctetString, "", "matchedDN"))
 	r.AppendChild(ber.NewString(ber.ClassUniversal, ber.TypePrimitive, ber.TagOctetString, "", "diagnostic"))
 	env.AppendChild(r)

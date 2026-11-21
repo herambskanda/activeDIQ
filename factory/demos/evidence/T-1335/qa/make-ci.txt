@@ -1,0 +1,727 @@
+tools/ci/gofmt-check.sh cmd internal tools
+go vet ./...
+go mod tidy -diff
+go mod verify
+all modules verified
+npm ci --prefix web
+
+added 333 packages, and audited 334 packages in 8s
+
+18 vulnerabilities (17 moderate, 1 high)
+
+To address issues that do not require attention, run:
+  npm audit fix
+
+To address all issues (including breaking changes), run:
+  npm audit fix --force
+
+Run `npm audit` for details.
+npm warn install-scripts 1 package has install scripts not yet covered by allowScripts:
+npm warn install-scripts   esbuild@0.28.2 (postinstall: node install.js)
+npm warn install-scripts
+npm warn install-scripts Run `npm install-scripts ls` to review, or `npm install-scripts approve <pkg>` to allow.
+npm --prefix web run --silent typecheck
+npm --prefix web run --silent lint
+npm --prefix web run --silent format:check
+Checking formatting...
+All matched files use Prettier code style!
+go run ./tools/gen/proto -check
+go run ./tools/gen/modules -check
+gen-modules: internal/platform/store/owners/owners.gen.tsv is current (74 tables)
+go run ./tools/gen/api -check
+cd tools/apitools && go tool vacuum lint -r ../../api/openapi/.vacuum.yaml ../../internal/platform/apihost/spec/openapi.gen.json
+   
+ ██╗   ██╗ █████╗  ██████╗██╗   ██╗██╗   ██╗███╗   ███╗ 《《《─═─═── ·* · ˙*
+ ██║   ██║██╔══██╗██╔════╝██║   ██║██║   ██║████╗ ████║《《《──═─═──· ··* ˙˙
+ ██║   ██║███████║██║     ██║   ██║██║   ██║██╔████╔██║《《《───═─═─··· ˙˙ ˙
+ ╚██╗ ██╔╝██╔══██║██║     ██║   ██║██║   ██║██║╚██╔╝██║《《──═─═──·* ·· ˙˙
+  ╚████╔╝ ██║  ██║╚██████╗╚██████╔╝╚██████╔╝██║ ╚═╝ ██║ 《《─═─═──* · · ˙
+   ╚═══╝  ╚═╝  ╚═╝ ╚═════╝ ╚═════╝  ╚═════╝ ╚═╝     ╚═╝ 《───═─═─· ··* ˙˙ ˙
+
+ version: v0.30.6 | compiled: Mon, 02 Nov 2026 21:32:31 UTC
+ https://quobix.com/vacuum/ | https://github.com/daveshanley/vacuum
+
+ using ruleset '../../api/openapi/.vacuum.yaml' (containing 52 rules)
+ vacuuming file '../../internal/platform/apihost/spec/openapi.gen.json' against 52 rules: https://quobix.com/vacuum/rulesets/recommended
+
+ category              ✗ errors      ▲ warnings    ● info                                                  
+ ────────────────────  ────────────  ────────────  ────────────────────────────────────────────────────────
+ Operations            0             1             0                                                       
+ Schemas               0             2             0                                                       
+ Descriptions          0             20            25                                                      
+ Examples              0             97            0                                                       
+ ────────────────────  ────────────  ────────────  ────────────────────────────────────────────────────────
+ total                 0             120           25                                                      
+
+ rule                                      violations    quality impact                                    
+ ────────────────────────────────────────  ────────────  ──────────────────────────────────────────────────
+ oas3-missing-example                      97            ██████████████████████████████████████████████████
+ description-duplication                   25            ████████████                                      
+ component-description                     20            ██████████                                        
+ circular-references                       2             █                                                 
+ no-http-verbs-in-path                     1                                                               
+ ────────────────────────────────────────  ────────────  ──────────────────────────────────────────────────
+ total                                     145         
+
+ --> use the <dashboard> command to be able to navigate results interactively <--
+
+ | Quality Score: 61/100 [F]
+
+ | ▲ Passed, but with 120 warnings and 25 informs.
+
+ use --debug if you want to enable developer logging
+
+go test -count=1 -p 3 -timeout 30m ./...
+?   	github.com/skenzeriq/activediq/cmd/agent	[no test files]
+ok  	github.com/skenzeriq/activediq/cmd/agentsetup	0.012s
+ok  	github.com/skenzeriq/activediq/cmd/auditverify	0.015s
+?   	github.com/skenzeriq/activediq/cmd/connector	[no test files]
+?   	github.com/skenzeriq/activediq/cmd/edge	[no test files]
+ok  	github.com/skenzeriq/activediq/cmd/server	6.342s
+?   	github.com/skenzeriq/activediq/internal/agenthost/hostapi	[no test files]
+?   	github.com/skenzeriq/activediq/internal/agentmodules	[no test files]
+ok  	github.com/skenzeriq/activediq/internal/agentmodules/addc	0.051s
+ok  	github.com/skenzeriq/activediq/internal/compose/agent	1.714s
+ok  	github.com/skenzeriq/activediq/internal/compose/config	0.009s
+ok  	github.com/skenzeriq/activediq/internal/compose/connector	0.226s
+ok  	github.com/skenzeriq/activediq/internal/compose/edge	0.011s
+ok  	github.com/skenzeriq/activediq/internal/compose/fleetproof	19.400s
+ok  	github.com/skenzeriq/activediq/internal/compose/profile	0.004s
+2026/11/02 21:32:50 INFO tenant created by first-run bootstrap tenant_id=161c2230-dd0c-4e02-9089-82ed4b81741d
+2026/11/02 21:32:54 INFO tenant created by first-run bootstrap tenant_id=c2b1a911-621a-4313-99ec-b4168b8dde29
+2026/11/02 21:32:55 INFO tenant created by first-run bootstrap tenant_id=be37d3d4-3c40-4118-97c0-1f0750d95ffb
+2026/11/02 21:32:56 INFO tenant created by first-run bootstrap tenant_id=a88cc18c-9cb0-4aef-95f4-ae7f39cb61f3
+2026/11/02 21:32:57 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/02 21:32:57 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/11/02 21:32:57 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/02 21:32:57 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/02 21:32:57 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/02 21:32:57 INFO api tag not mounted: no module contributes it tag=reports
+2026/11/02 21:32:58 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/02 21:32:58 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/11/02 21:32:58 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/02 21:32:58 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/02 21:32:58 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/02 21:32:58 INFO api tag not mounted: no module contributes it tag=reports
+2026/11/02 21:32:59 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/02 21:32:59 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/11/02 21:32:59 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/02 21:32:59 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/02 21:32:59 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/02 21:32:59 INFO api tag not mounted: no module contributes it tag=reports
+2026/11/02 21:33:00 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/02 21:33:00 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/11/02 21:33:00 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/02 21:33:00 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/02 21:33:00 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/02 21:33:00 INFO api tag not mounted: no module contributes it tag=reports
+2026/11/02 21:33:01 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/02 21:33:01 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/11/02 21:33:01 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/02 21:33:01 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/02 21:33:01 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/02 21:33:01 INFO api tag not mounted: no module contributes it tag=reports
+2026/11/02 21:33:02 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/02 21:33:02 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/11/02 21:33:02 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/02 21:33:02 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/02 21:33:02 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/02 21:33:02 INFO api tag not mounted: no module contributes it tag=reports
+2026/11/02 21:33:02 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/02 21:33:02 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/11/02 21:33:02 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/02 21:33:02 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/02 21:33:02 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/02 21:33:02 INFO api tag not mounted: no module contributes it tag=reports
+2026/11/02 21:33:02 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/02 21:33:02 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/11/02 21:33:02 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/02 21:33:02 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/02 21:33:02 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/02 21:33:02 INFO api tag not mounted: no module contributes it tag=reports
+--- FAIL: TestBootReportSealsHost (0.00s)
+    boot_internal_test.go:65: host datasets = [inventory.computers inventory.contacts inventory.group_members inventory.groups inventory.ous inventory.principals inventory.users], want [inventory.computers inventory.contacts inventory.group_members inventory.groups inventory.ous inventory.users]
+2026/11/02 21:33:09 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/02 21:33:09 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/02 21:33:09 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/11/02 21:33:09 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/02 21:33:09 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/02 21:33:09 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/02 21:33:09 INFO api tag not mounted: no module contributes it tag=reports
+2026/11/02 21:33:12 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/02 21:33:12 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/02 21:33:12 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/02 21:33:12 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/02 21:33:12 INFO api tag not mounted: no module contributes it tag=reports
+2026/11/02 21:33:12 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/02 21:33:12 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/02 21:33:12 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/02 21:33:12 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/02 21:33:12 INFO api tag not mounted: no module contributes it tag=reports
+2026/11/02 21:33:12 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/02 21:33:12 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/02 21:33:12 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/02 21:33:12 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/02 21:33:12 INFO api tag not mounted: no module contributes it tag=reports
+2026/11/02 21:33:12 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/02 21:33:12 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/02 21:33:12 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/02 21:33:12 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/02 21:33:12 INFO api tag not mounted: no module contributes it tag=reports
+2026/11/02 21:33:12 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/02 21:33:12 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/02 21:33:12 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/02 21:33:12 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/02 21:33:12 INFO api tag not mounted: no module contributes it tag=reports
+2026/11/02 21:33:13 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/02 21:33:13 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/02 21:33:13 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/02 21:33:13 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/02 21:33:13 INFO api tag not mounted: no module contributes it tag=reports
+2026/11/02 21:33:13 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/02 21:33:13 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/02 21:33:13 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/02 21:33:13 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/02 21:33:13 INFO api tag not mounted: no module contributes it tag=reports
+2026/11/02 21:33:13 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/02 21:33:13 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/02 21:33:13 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/02 21:33:13 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/02 21:33:13 INFO api tag not mounted: no module contributes it tag=reports
+2026/11/02 21:33:13 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/02 21:33:13 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/02 21:33:13 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/02 21:33:13 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/02 21:33:13 INFO api tag not mounted: no module contributes it tag=reports
+2026/11/02 21:33:13 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/02 21:33:13 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/02 21:33:13 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/02 21:33:13 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/02 21:33:13 INFO api tag not mounted: no module contributes it tag=reports
+2026/11/02 21:33:20 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/02 21:33:20 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/02 21:33:20 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/02 21:33:20 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/02 21:33:20 INFO api tag not mounted: no module contributes it tag=reports
+2026/11/02 21:33:21 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/02 21:33:21 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/02 21:33:21 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/02 21:33:21 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/02 21:33:21 INFO api tag not mounted: no module contributes it tag=reports
+2026/11/02 21:33:22 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/02 21:33:22 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/02 21:33:22 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/02 21:33:22 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/02 21:33:22 INFO api tag not mounted: no module contributes it tag=reports
+2026/11/02 21:33:23 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/02 21:33:23 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/02 21:33:23 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/02 21:33:23 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/02 21:33:23 INFO api tag not mounted: no module contributes it tag=reports
+2026/11/02 21:33:24 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/02 21:33:24 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/02 21:33:24 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/02 21:33:24 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/02 21:33:24 INFO api tag not mounted: no module contributes it tag=reports
+2026/11/02 21:33:26 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/02 21:33:26 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/02 21:33:26 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/02 21:33:26 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/02 21:33:26 INFO api tag not mounted: no module contributes it tag=reports
+2026/11/02 21:33:32 INFO server: first-run setup secret issued; read it as the installing administrator with `activediq-server setup show` file=/tmp/TestBuildSetupIssuesOnceAndShowPrintsIt3095390346/001/setup/setup-secret expires=2026-11-02T22:33:32Z
+2026/11/02 21:33:32 INFO server: first-run setup secret still valid expires=2026-11-02T22:33:32Z
+2026/11/02 21:33:32 INFO server: first-run setup was already claimed
+2026/11/02 21:33:32 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/02 21:33:32 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/02 21:33:32 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/11/02 21:33:32 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/02 21:33:32 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/02 21:33:32 INFO api tag not mounted: no module contributes it tag=reports
+2026/11/02 21:33:32 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/02 21:33:32 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/02 21:33:32 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/11/02 21:33:32 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/02 21:33:32 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/02 21:33:32 INFO api tag not mounted: no module contributes it tag=reports
+2026/11/02 21:33:32 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/02 21:33:32 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/02 21:33:32 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/11/02 21:33:32 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/02 21:33:32 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/02 21:33:32 INFO api tag not mounted: no module contributes it tag=reports
+2026/11/02 21:33:32 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/02 21:33:32 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/02 21:33:32 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/11/02 21:33:32 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/02 21:33:32 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/02 21:33:32 INFO api tag not mounted: no module contributes it tag=reports
+2026/11/02 21:33:34 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/02 21:33:34 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/02 21:33:34 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/11/02 21:33:34 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/02 21:33:34 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/02 21:33:34 INFO api tag not mounted: no module contributes it tag=reports
+2026/11/02 21:33:34 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/02 21:33:34 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/02 21:33:34 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/11/02 21:33:34 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/02 21:33:34 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/02 21:33:34 INFO api tag not mounted: no module contributes it tag=reports
+2026/11/02 21:33:34 WARN readiness check failed check=store error="store: ping: closed pool"
+2026/11/02 21:33:35 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/02 21:33:35 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/02 21:33:35 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/11/02 21:33:35 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/02 21:33:35 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/02 21:33:35 INFO api tag not mounted: no module contributes it tag=reports
+2026/11/02 21:33:35 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/02 21:33:35 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/02 21:33:35 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/11/02 21:33:35 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/02 21:33:35 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/02 21:33:35 INFO api tag not mounted: no module contributes it tag=reports
+2026/11/02 21:33:35 WARN readiness check failed check=store error="store: ping: closed pool"
+2026/11/02 21:33:35 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/02 21:33:35 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/02 21:33:35 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/11/02 21:33:35 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/02 21:33:35 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/02 21:33:35 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/02 21:33:35 INFO api tag not mounted: no module contributes it tag=reports
+2026/11/02 21:33:35 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/02 21:33:35 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/02 21:33:35 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/11/02 21:33:35 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/02 21:33:35 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/02 21:33:35 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/02 21:33:35 INFO api tag not mounted: no module contributes it tag=reports
+2026/11/02 21:33:36 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/02 21:33:36 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/02 21:33:36 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/11/02 21:33:36 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/02 21:33:36 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/02 21:33:36 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/02 21:33:36 INFO api tag not mounted: no module contributes it tag=reports
+2026/11/02 21:33:41 ERROR audit.record_failed kind=settings.thing.changed operation=op-ok principal=u1 target=row-1 outcome=failure reason=failed
+2026/11/02 21:33:43 ERROR audit.record_failed kind=settings.thing.changed operation=op-ok principal=u1 target=row-1 outcome=failure reason=failed
+2026/11/02 21:33:43 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/02 21:33:43 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/02 21:33:43 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/11/02 21:33:43 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/02 21:33:43 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/02 21:33:43 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/02 21:33:43 INFO api tag not mounted: no module contributes it tag=reports
+2026/11/02 21:33:43 INFO server: ops listening (TLS) addr=127.0.0.1:41955
+2026/11/02 21:33:43 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/02 21:33:43 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/02 21:33:43 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/11/02 21:33:43 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/02 21:33:43 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/02 21:33:43 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/02 21:33:43 INFO api tag not mounted: no module contributes it tag=reports
+2026/11/02 21:33:43 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/02 21:33:43 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/02 21:33:43 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/11/02 21:33:43 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/02 21:33:43 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/02 21:33:43 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/02 21:33:43 INFO api tag not mounted: no module contributes it tag=reports
+2026/11/02 21:33:43 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/02 21:33:43 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/02 21:33:43 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/11/02 21:33:43 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/02 21:33:43 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/02 21:33:43 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/02 21:33:43 INFO api tag not mounted: no module contributes it tag=reports
+2026/11/02 21:33:43 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/02 21:33:43 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/02 21:33:43 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/11/02 21:33:43 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/02 21:33:43 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/02 21:33:43 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/02 21:33:43 INFO api tag not mounted: no module contributes it tag=reports
+2026/11/02 21:33:50 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/02 21:33:50 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/02 21:33:50 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/11/02 21:33:50 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/02 21:33:50 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/02 21:33:50 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/02 21:33:51 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/02 21:33:51 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/02 21:33:51 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/11/02 21:33:51 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/02 21:33:51 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/02 21:33:51 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/02 21:33:53 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/02 21:33:53 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/02 21:33:53 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/11/02 21:33:53 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/02 21:33:53 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/02 21:33:53 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/02 21:33:53 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/02 21:33:53 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/02 21:33:53 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/11/02 21:33:53 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/02 21:33:53 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/02 21:33:53 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/02 21:33:55 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/02 21:33:55 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/02 21:33:55 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/02 21:33:55 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/02 21:33:55 INFO api tag not mounted: no module contributes it tag=reports
+2026/11/02 21:33:56 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/02 21:33:56 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/02 21:33:56 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/02 21:33:56 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/02 21:33:56 INFO api tag not mounted: no module contributes it tag=reports
+2026/11/02 21:33:58 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/02 21:33:58 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/02 21:33:58 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/02 21:33:58 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/02 21:33:58 INFO api tag not mounted: no module contributes it tag=reports
+2026/11/02 21:34:00 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/02 21:34:00 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/02 21:34:00 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/02 21:34:00 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/02 21:34:00 INFO api tag not mounted: no module contributes it tag=reports
+2026/11/02 21:34:04 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/02 21:34:04 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/02 21:34:04 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/02 21:34:04 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/02 21:34:04 INFO api tag not mounted: no module contributes it tag=reports
+2026/11/02 21:34:05 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/02 21:34:05 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/02 21:34:05 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/02 21:34:05 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/02 21:34:05 INFO api tag not mounted: no module contributes it tag=reports
+2026/11/02 21:34:07 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/02 21:34:07 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/02 21:34:07 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/02 21:34:07 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/02 21:34:07 INFO api tag not mounted: no module contributes it tag=reports
+2026/11/02 21:34:12 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/02 21:34:12 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/02 21:34:12 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/02 21:34:12 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/02 21:34:12 INFO api tag not mounted: no module contributes it tag=reports
+2026/11/02 21:34:17 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/02 21:34:17 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/02 21:34:17 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/02 21:34:17 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/02 21:34:17 INFO api tag not mounted: no module contributes it tag=reports
+2026/11/02 21:34:18 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/02 21:34:18 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/02 21:34:18 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/02 21:34:18 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/02 21:34:18 INFO api tag not mounted: no module contributes it tag=reports
+2026/11/02 21:34:20 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/02 21:34:20 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/02 21:34:20 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/02 21:34:20 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/02 21:34:20 INFO api tag not mounted: no module contributes it tag=reports
+2026/11/02 21:34:22 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/02 21:34:22 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/02 21:34:22 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/02 21:34:22 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/02 21:34:22 INFO api tag not mounted: no module contributes it tag=reports
+2026/11/02 21:34:24 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/02 21:34:24 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/02 21:34:24 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/02 21:34:24 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/02 21:34:24 INFO api tag not mounted: no module contributes it tag=reports
+2026/11/02 21:34:26 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/02 21:34:26 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/02 21:34:26 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/02 21:34:26 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/02 21:34:26 INFO api tag not mounted: no module contributes it tag=reports
+2026/11/02 21:34:29 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/02 21:34:29 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/02 21:34:29 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/02 21:34:29 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/02 21:34:29 INFO api tag not mounted: no module contributes it tag=reports
+2026/11/02 21:34:30 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/02 21:34:30 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/02 21:34:30 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/02 21:34:30 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/02 21:34:30 INFO api tag not mounted: no module contributes it tag=reports
+2026/11/02 21:34:32 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/02 21:34:32 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/02 21:34:32 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/02 21:34:32 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/02 21:34:32 INFO api tag not mounted: no module contributes it tag=reports
+2026/11/02 21:34:33 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/02 21:34:33 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/02 21:34:33 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/02 21:34:33 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/02 21:34:33 INFO api tag not mounted: no module contributes it tag=reports
+2026/11/02 21:34:35 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/02 21:34:35 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/02 21:34:35 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/02 21:34:35 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/02 21:34:35 INFO api tag not mounted: no module contributes it tag=reports
+2026/11/02 21:34:36 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/02 21:34:36 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/02 21:34:36 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/02 21:34:36 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/02 21:34:36 INFO api tag not mounted: no module contributes it tag=reports
+2026/11/02 21:34:36 INFO authn: purged dead sign-in throttle rows tenant=64354252-2450-4db5-8997-31c441259dff deleted=1
+2026/11/02 21:34:37 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/02 21:34:37 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/02 21:34:37 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/02 21:34:37 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/02 21:34:37 INFO api tag not mounted: no module contributes it tag=reports
+2026/11/02 21:34:37 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/02 21:34:37 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/02 21:34:37 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/02 21:34:37 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/02 21:34:37 INFO api tag not mounted: no module contributes it tag=reports
+2026/11/02 21:34:38 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/02 21:34:38 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/02 21:34:38 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/02 21:34:38 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/02 21:34:38 INFO api tag not mounted: no module contributes it tag=reports
+2026/11/02 21:34:39 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/02 21:34:39 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/02 21:34:39 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/02 21:34:39 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/02 21:34:39 INFO api tag not mounted: no module contributes it tag=reports
+2026/11/02 21:34:39 INFO authn: purged dead sign-in throttle rows tenant=e5fc8705-76b9-49a0-b024-94f5189f0e86 deleted=1
+2026/11/02 21:34:39 http: TLS handshake error from 127.0.0.1:50926: tls: client offered only unsupported versions: [302]
+2026/11/02 21:34:39 http: TLS handshake error from 127.0.0.1:50930: client sent an HTTP request to an HTTPS server
+2026/11/02 21:34:41 INFO server: job worker started
+2026/11/02 21:34:41 INFO server: job worker stopped
+2026/11/02 21:34:41 INFO server: job worker started
+2026/11/02 21:34:41 INFO server: job worker stopped
+2026/11/02 21:34:43 INFO server: job worker started
+2026/11/02 21:34:43 WARN jobs: shutdown deadline reached; cancelling running bodies, their claims are left for rescue
+2026/11/02 21:34:43 INFO server: job worker stopped
+2026/11/02 21:34:43 INFO server: job worker started
+2026/11/02 21:34:43 INFO server: job worker stopped
+2026/11/02 21:34:44 INFO server: job worker started
+2026/11/02 21:34:44 WARN jobs: shutdown deadline reached; cancelling running bodies, their claims are left for rescue
+2026/11/02 21:34:44 INFO server: job worker stopped
+2026/11/02 21:34:44 INFO server: job worker started
+2026/11/02 21:34:44 INFO server: job worker stopped
+2026/11/02 21:34:45 INFO server: job worker started
+2026/11/02 21:34:45 WARN jobs: shutdown deadline reached; cancelling running bodies, their claims are left for rescue
+2026/11/02 21:34:45 ERROR server: job worker did not drain; unfinished claims are left for the next process to rescue err="jobs: in-flight bodies did not stop before the shutdown deadline"
+2026/11/02 21:34:46 INFO server: job worker started
+2026/11/02 21:34:46 WARN jobs: shutdown deadline reached; cancelling running bodies, their claims are left for rescue
+2026/11/02 21:34:46 ERROR server: job worker did not drain; unfinished claims are left for the next process to rescue err="jobs: in-flight bodies did not stop before the shutdown deadline"
+FAIL
+FAIL	github.com/skenzeriq/activediq/internal/compose/server	129.365s
+ok  	github.com/skenzeriq/activediq/internal/compose/server/entra	0.037s
+ok  	github.com/skenzeriq/activediq/internal/compose/tunnelbind	0.012s
+?   	github.com/skenzeriq/activediq/internal/connector	[no test files]
+ok  	github.com/skenzeriq/activediq/internal/connector/ad	0.252s
+ok  	github.com/skenzeriq/activediq/internal/connector/ad/gssapi	0.008s
+ok  	github.com/skenzeriq/activediq/internal/connector/graph	8.691s
+?   	github.com/skenzeriq/activediq/internal/connector/graph/graphtest	[no test files]
+?   	github.com/skenzeriq/activediq/internal/connector/labadmin	[no test files]
+ok  	github.com/skenzeriq/activediq/internal/connector/read	0.078s
+ok  	github.com/skenzeriq/activediq/internal/connector/rights	13.203s
+ok  	github.com/skenzeriq/activediq/internal/connector/tier0	30.664s
+ok  	github.com/skenzeriq/activediq/internal/connector/write	0.959s
+?   	github.com/skenzeriq/activediq/internal/connector/write/ops	[no test files]
+?   	github.com/skenzeriq/activediq/internal/directory	[no test files]
+ok  	github.com/skenzeriq/activediq/internal/directory/attr/codec	0.008s
+ok  	github.com/skenzeriq/activediq/internal/directory/attr/filetime	0.014s
+ok  	github.com/skenzeriq/activediq/internal/directory/attr/flags	0.014s
+ok  	github.com/skenzeriq/activediq/internal/directory/attr/gentime	0.009s
+ok  	github.com/skenzeriq/activediq/internal/directory/attr/guid	0.011s
+ok  	github.com/skenzeriq/activediq/internal/directory/attr/secretattr	0.008s
+ok  	github.com/skenzeriq/activediq/internal/directory/attr/sid	0.010s
+ok  	github.com/skenzeriq/activediq/internal/directory/attr/unicodepwd	0.465s
+ok  	github.com/skenzeriq/activediq/internal/directory/client	0.224s
+?   	github.com/skenzeriq/activediq/internal/directory/client/clienttest	[no test files]
+ok  	github.com/skenzeriq/activediq/internal/directory/connection	127.521s
+?   	github.com/skenzeriq/activediq/internal/directory/connection/connectiontest	[no test files]
+ok  	github.com/skenzeriq/activediq/internal/directory/dn	0.019s
+ok  	github.com/skenzeriq/activediq/internal/directory/gplink	0.004s
+ok  	github.com/skenzeriq/activediq/internal/directory/inventory	1342.461s
+ok  	github.com/skenzeriq/activediq/internal/directory/invhost	17.233s
+ok  	github.com/skenzeriq/activediq/internal/directory/ldapfilter	0.042s
+ok  	github.com/skenzeriq/activediq/internal/directory/odata	0.020s
+?   	github.com/skenzeriq/activediq/internal/directory/odata/graphschema	[no test files]
+ok  	github.com/skenzeriq/activediq/internal/directory/odata/odatatest	0.008s
+ok  	github.com/skenzeriq/activediq/internal/directory/sd	0.143s
+?   	github.com/skenzeriq/activediq/internal/modules	[no test files]
+ok  	github.com/skenzeriq/activediq/internal/modules/agentfleet	0.010s
+ok  	github.com/skenzeriq/activediq/internal/modules/compliance	22.292s
+ok  	github.com/skenzeriq/activediq/internal/modules/connections	58.235s
+?   	github.com/skenzeriq/activediq/internal/modules/connections/api	[no test files]
+ok  	github.com/skenzeriq/activediq/internal/modules/delegation	20.071s
+?   	github.com/skenzeriq/activediq/internal/modules/delegation/api	[no test files]
+ok  	github.com/skenzeriq/activediq/internal/modules/directory	0.081s
+?   	github.com/skenzeriq/activediq/internal/modules/directory/api	[no test files]
+ok  	github.com/skenzeriq/activediq/internal/modules/inventory	12.647s
+ok  	github.com/skenzeriq/activediq/internal/modules/notify	20.227s
+ok  	github.com/skenzeriq/activediq/internal/modules/reports	51.244s
+?   	github.com/skenzeriq/activediq/internal/modules/reports/api	[no test files]
+ok  	github.com/skenzeriq/activediq/internal/modules/reports/export	61.252s
+ok  	github.com/skenzeriq/activediq/internal/modules/reports/library	10.515s
+ok  	github.com/skenzeriq/activediq/internal/modules/reports/run	42.468s
+?   	github.com/skenzeriq/activediq/internal/platform	[no test files]
+ok  	github.com/skenzeriq/activediq/internal/platform/agent	0.197s
+ok  	github.com/skenzeriq/activediq/internal/platform/agentingest	39.998s
+ok  	github.com/skenzeriq/activediq/internal/platform/agentpolicy	0.047s
+ok  	github.com/skenzeriq/activediq/internal/platform/agentpolicy/rotation	13.362s
+ok  	github.com/skenzeriq/activediq/internal/platform/agentpolicy/signer	21.018s
+ok  	github.com/skenzeriq/activediq/internal/platform/apihost	0.045s
+ok  	github.com/skenzeriq/activediq/internal/platform/apihost/apitest	0.007s
+ok  	github.com/skenzeriq/activediq/internal/platform/apihost/apitypes	0.006s
+ok  	github.com/skenzeriq/activediq/internal/platform/apitls	0.344s
+ok  	github.com/skenzeriq/activediq/internal/platform/audit	104.893s
+ok  	github.com/skenzeriq/activediq/internal/platform/audit/canon	0.007s
+ok  	github.com/skenzeriq/activediq/internal/platform/audit/chain	0.025s
+ok  	github.com/skenzeriq/activediq/internal/platform/authn	254.932s
+ok  	github.com/skenzeriq/activediq/internal/platform/authn/api	0.006s
+ok  	github.com/skenzeriq/activediq/internal/platform/authn/negotiate	0.013s
+?   	github.com/skenzeriq/activediq/internal/platform/authn/sso	[no test files]
+ok  	github.com/skenzeriq/activediq/internal/platform/authn/sso/oidc	0.560s
+ok  	github.com/skenzeriq/activediq/internal/platform/authn/sso/saml	40.607s
+?   	github.com/skenzeriq/activediq/internal/platform/authn/sso/saml/samltest	[no test files]
+ok  	github.com/skenzeriq/activediq/internal/platform/authn/sso/signin	22.368s
+?   	github.com/skenzeriq/activediq/internal/platform/authn/sso/signin/signintest	[no test files]
+--- FAIL: TestOnlyPermittedFilesImportTenantref (0.09s)
+    callers_test.go:106: files import tenantref without being permitted (add with security review): [internal/modules/reports/handlers.go]
+FAIL
+FAIL	github.com/skenzeriq/activediq/internal/platform/authn/tenantref	0.123s
+?   	github.com/skenzeriq/activediq/internal/platform/authn/throttlejob	[no test files]
+?   	github.com/skenzeriq/activediq/internal/platform/authority	[no test files]
+ok  	github.com/skenzeriq/activediq/internal/platform/authz	0.006s
+ok  	github.com/skenzeriq/activediq/internal/platform/authz/authztest	0.007s
+ok  	github.com/skenzeriq/activediq/internal/platform/blob	0.280s
+ok  	github.com/skenzeriq/activediq/internal/platform/capability	0.007s
+ok  	github.com/skenzeriq/activediq/internal/platform/corpus	0.044s
+ok  	github.com/skenzeriq/activediq/internal/platform/corpus/corpustest	0.008s
+ok  	github.com/skenzeriq/activediq/internal/platform/egress	0.205s
+ok  	github.com/skenzeriq/activediq/internal/platform/egress/oidchttp	0.008s
+ok  	github.com/skenzeriq/activediq/internal/platform/export	1.579s
+ok  	github.com/skenzeriq/activediq/internal/platform/export/cellsafe	0.108s
+ok  	github.com/skenzeriq/activediq/internal/platform/export/csv	0.022s
+ok  	github.com/skenzeriq/activediq/internal/platform/export/pdf	0.290s
+?   	github.com/skenzeriq/activediq/internal/platform/export/pdf/pdftest	[no test files]
+ok  	github.com/skenzeriq/activediq/internal/platform/export/xlsx	0.100s
+ok  	github.com/skenzeriq/activediq/internal/platform/fleet	1.619s
+ok  	github.com/skenzeriq/activediq/internal/platform/fleet/dial	0.752s
+ok  	github.com/skenzeriq/activediq/internal/platform/fleet/fleetsql	97.476s
+ok  	github.com/skenzeriq/activediq/internal/platform/fleet/gateway	36.454s
+ok  	github.com/skenzeriq/activediq/internal/platform/fleet/tunnelclient	0.011s
+ok  	github.com/skenzeriq/activediq/internal/platform/health	0.274s
+?   	github.com/skenzeriq/activediq/internal/platform/health/api	[no test files]
+ok  	github.com/skenzeriq/activediq/internal/platform/htmlx	0.039s
+ok  	github.com/skenzeriq/activediq/internal/platform/httpx	0.013s
+ok  	github.com/skenzeriq/activediq/internal/platform/httpx/authnhttp	0.019s
+ok  	github.com/skenzeriq/activediq/internal/platform/httpx/negotiatehttp	0.011s
+ok  	github.com/skenzeriq/activediq/internal/platform/httpx/ssohttp	0.014s
+ok  	github.com/skenzeriq/activediq/internal/platform/jobs	101.549s
+?   	github.com/skenzeriq/activediq/internal/platform/jobs/jobstest	[no test files]
+ok  	github.com/skenzeriq/activediq/internal/platform/keys	52.575s
+?   	github.com/skenzeriq/activediq/internal/platform/keys/keystest	[no test files]
+ok  	github.com/skenzeriq/activediq/internal/platform/limiter	53.010s
+ok  	github.com/skenzeriq/activediq/internal/platform/module	0.028s
+?   	github.com/skenzeriq/activediq/internal/platform/module/moduletest	[no test files]
+?   	github.com/skenzeriq/activediq/internal/platform/notify/api	[no test files]
+ok  	github.com/skenzeriq/activediq/internal/platform/notify/delivery	51.325s
+ok  	github.com/skenzeriq/activediq/internal/platform/notify/mail	0.097s
+ok  	github.com/skenzeriq/activediq/internal/platform/notify/mailaddr	0.005s
+?   	github.com/skenzeriq/activediq/internal/platform/notify/mailtest	[no test files]
+ok  	github.com/skenzeriq/activediq/internal/platform/notify/settings	18.835s
+ok  	github.com/skenzeriq/activediq/internal/platform/notify/syslog	45.722s
+ok  	github.com/skenzeriq/activediq/internal/platform/operation	181.375s
+ok  	github.com/skenzeriq/activediq/internal/platform/operation/step	0.005s
+ok  	github.com/skenzeriq/activediq/internal/platform/opsmetrics	0.010s
+ok  	github.com/skenzeriq/activediq/internal/platform/ownerfile	0.010s
+ok  	github.com/skenzeriq/activediq/internal/platform/personal	23.006s
+ok  	github.com/skenzeriq/activediq/internal/platform/prochardening	5.549s
+ok  	github.com/skenzeriq/activediq/internal/platform/rbac	58.186s
+ok  	github.com/skenzeriq/activediq/internal/platform/report	0.010s
+ok  	github.com/skenzeriq/activediq/internal/platform/searchkey	0.006s
+?   	github.com/skenzeriq/activediq/internal/platform/secret	[no test files]
+ok  	github.com/skenzeriq/activediq/internal/platform/secret/secretjson	0.007s
+ok  	github.com/skenzeriq/activediq/internal/platform/setup	0.026s
+?   	github.com/skenzeriq/activediq/internal/platform/setup/api	[no test files]
+ok  	github.com/skenzeriq/activediq/internal/platform/store	60.467s
+?   	github.com/skenzeriq/activediq/internal/platform/store/exempt	[no test files]
+ok  	github.com/skenzeriq/activediq/internal/platform/store/owners	0.004s
+ok  	github.com/skenzeriq/activediq/internal/platform/store/reportsql	22.189s
+ok  	github.com/skenzeriq/activediq/internal/platform/store/storetest	4.504s
+ok  	github.com/skenzeriq/activediq/internal/platform/tablekind	0.003s
+ok  	github.com/skenzeriq/activediq/internal/platform/tenant	0.015s
+ok  	github.com/skenzeriq/activediq/internal/platform/tenant/provision	35.481s
+?   	github.com/skenzeriq/activediq/internal/platform/tenant/tenanttest	[no test files]
+ok  	github.com/skenzeriq/activediq/internal/platform/updateverify	0.937s
+ok  	github.com/skenzeriq/activediq/internal/platform/updateverify/floorpg	26.671s
+ok  	github.com/skenzeriq/activediq/internal/platform/webhook	0.010s
+?   	github.com/skenzeriq/activediq/internal/proto/activediq/addc/v1	[no test files]
+ok  	github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1	0.007s
+ok  	github.com/skenzeriq/activediq/internal/proto/activediq/fleet/v1	0.008s
+?   	github.com/skenzeriq/activediq/internal/proto/skenzeriq/agent/v1	[no test files]
+ok  	github.com/skenzeriq/activediq/internal/testlab	0.008s
+ok  	github.com/skenzeriq/activediq/internal/testlab/harnessdocker	4.592s
+ok  	github.com/skenzeriq/activediq/internal/webui	0.004s
+ok  	github.com/skenzeriq/activediq/migrations	37.536s
+?   	github.com/skenzeriq/activediq/tools/analyzers	[no test files]
+ok  	github.com/skenzeriq/activediq/tools/analyzers/constdisp	1.441s
+ok  	github.com/skenzeriq/activediq/tools/analyzers/dnstring	1.186s
+ok  	github.com/skenzeriq/activediq/tools/analyzers/graphurl	1.903s
+ok  	github.com/skenzeriq/activediq/tools/analyzers/nestedtx	0.798s
+ok  	github.com/skenzeriq/activediq/tools/analyzers/odataname	1.309s
+ok  	github.com/skenzeriq/activediq/tools/analyzers/policy	0.006s
+ok  	github.com/skenzeriq/activediq/tools/analyzers/secretjson	1.420s
+ok  	github.com/skenzeriq/activediq/tools/analyzers/sqlconst	0.975s
+ok  	github.com/skenzeriq/activediq/tools/analyzers/stepescape	1.103s
+ok  	github.com/skenzeriq/activediq/tools/analyzers/tmplconst	1.043s
+?   	github.com/skenzeriq/activediq/tools/analyzers/util	[no test files]
+ok  	github.com/skenzeriq/activediq/tools/fitness/agenthost	7.906s
+ok  	github.com/skenzeriq/activediq/tools/fitness/api	6.386s
+ok  	github.com/skenzeriq/activediq/tools/fitness/audit	19.506s
+ok  	github.com/skenzeriq/activediq/tools/fitness/builtmsi	0.419s
+ok  	github.com/skenzeriq/activediq/tools/fitness/corpus	4.989s
+ok  	github.com/skenzeriq/activediq/tools/fitness/disclosure	0.037s
+ok  	github.com/skenzeriq/activediq/tools/fitness/domainkeys	28.089s
+ok  	github.com/skenzeriq/activediq/tools/fitness/fleetca	0.028s
+ok  	github.com/skenzeriq/activediq/tools/fitness/grantbootstrap	0.481s
+?   	github.com/skenzeriq/activediq/tools/fitness/host	[no test files]
+ok  	github.com/skenzeriq/activediq/tools/fitness/host/hostcheck	0.037s
+?   	github.com/skenzeriq/activediq/tools/fitness/internal/adr	[no test files]
+ok  	github.com/skenzeriq/activediq/tools/fitness/internal/boundtest	0.015s
+ok  	github.com/skenzeriq/activediq/tools/fitness/keycustody	20.619s
+ok  	github.com/skenzeriq/activediq/tools/fitness/modules	0.147s
+ok  	github.com/skenzeriq/activediq/tools/fitness/objectid	5.546s
+ok  	github.com/skenzeriq/activediq/tools/fitness/operation	5.770s
+ok  	github.com/skenzeriq/activediq/tools/fitness/oracles	7.207s
+ok  	github.com/skenzeriq/activediq/tools/fitness/packaging	32.170s
+?   	github.com/skenzeriq/activediq/tools/fitness/pgharness	[no test files]
+ok  	github.com/skenzeriq/activediq/tools/fitness/ports	25.378s
+ok  	github.com/skenzeriq/activediq/tools/fitness/profiles	0.709s
+ok  	github.com/skenzeriq/activediq/tools/fitness/proto	0.239s
+ok  	github.com/skenzeriq/activediq/tools/fitness/reports	2.590s
+?   	github.com/skenzeriq/activediq/tools/fitness/safeprim	[no test files]
+ok  	github.com/skenzeriq/activediq/tools/fitness/safeprim/scan	235.081s
+ok  	github.com/skenzeriq/activediq/tools/fitness/search	75.936s
+ok  	github.com/skenzeriq/activediq/tools/fitness/sso	0.113s
+ok  	github.com/skenzeriq/activediq/tools/fitness/stack	13.555s
+ok  	github.com/skenzeriq/activediq/tools/fitness/tenancy	111.141s
+?   	github.com/skenzeriq/activediq/tools/fitness/tenancy/registry	[no test files]
+ok  	github.com/skenzeriq/activediq/tools/fitness/tenancy/static	8.708s
+ok  	github.com/skenzeriq/activediq/tools/fitness/update	1.061s
+ok  	github.com/skenzeriq/activediq/tools/gen/api	1.056s
+ok  	github.com/skenzeriq/activediq/tools/gen/api/internal/fixture	0.010s
+?   	github.com/skenzeriq/activediq/tools/gen/api/internal/fixture/internal/modules/widgets/api	[no test files]
+?   	github.com/skenzeriq/activediq/tools/gen/api/internal/fixture/shared	[no test files]
+?   	github.com/skenzeriq/activediq/tools/gen/api/internal/fixture/stub/filter	[no test files]
+?   	github.com/skenzeriq/activediq/tools/gen/api/internal/fixture/stub/secret	[no test files]
+ok  	github.com/skenzeriq/activediq/tools/gen/modules	0.079s
+ok  	github.com/skenzeriq/activediq/tools/gen/policyjson	0.005s
+ok  	github.com/skenzeriq/activediq/tools/gen/proto	1.913s
+ok  	github.com/skenzeriq/activediq/tools/release/renewsecuritytxt	0.004s
+ok  	github.com/skenzeriq/activediq/tools/release/sbom	0.005s
+ok  	github.com/skenzeriq/activediq/tools/release/sign	0.006s
+?   	github.com/skenzeriq/activediq/tools/vettool	[no test files]
+ok  	github.com/skenzeriq/activediq/tools/vulnscan	0.006s
+?   	github.com/skenzeriq/activediq/web/node_modules/flatted/golang/pkg/flatted	[no test files]
+FAIL
+make: *** [tools/ci/ci.mk:45: test-go] Error 1
+exit=2

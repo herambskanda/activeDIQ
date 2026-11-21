@@ -33,7 +33,6 @@ Code: `internal/platform/rbac/`, `internal/modules/delegation/`; migrations `001
   root beneath it. `Authorizer.resolve` sets `OneLevel` from the kind whatever a `RootResolver` returns. Excludes
   of such an assignment are ordinary subtree excludes and beat the include. The object view fails closed on a
   root kind it does not know (a zero root: the scope covers nothing), so a new kind is never read as a subtree.
-  The OpenAPI `AssignmentRootKind` enum does not list `ou_one_level` yet (the API follows the store).
 - **Read scopes (T-0882):** `ReadScopes.For(ctx, tx, tenant, chain, perm)` is the one producer of directory
   read-scope predicates (`authz.ReadScope`); reports and search consume it and nothing else renders scope
   (modules/reports.md §4). `NewReadScopes(authorizer, evaluators, owner, conns)` reuses the Authorizer's
@@ -130,3 +129,31 @@ Code: `internal/platform/rbac/`, `internal/modules/delegation/`; migrations `001
 Actions with the runner; the group-member Actions that declare `GroupMembershipPermissions`; `control_plane` catalogue flags for the connections.* and inventory.tier0_* Actions (T-0616).
 
 **Control-plane flag (T-0472):** `operation.Descriptor.ControlPlane` marks an Action whose permission is in an `authz.NeverCrosses` family. The four `delegation.*` Actions carry it; `Test_control_plane_flag_catalogue_matches_never_crosses` (compose/server) holds the flag to the rule. Their input schemas (`RoleCreate`, `RoleUpdate`, `AssignmentGrant`, `AssignmentRevoke`) are in `api/openapi/modules/delegation.yaml`; the wire members are camelCase and `delegation/contract_test.go` keeps the Action input types and the generated contract types in step.
+
+## Assignment constraints: Templates and sites (T-1600, ADM-132, ADM-133)
+
+Two additive constraints ride on an assignment (`migrations/0077`, tables `authz_assignment_templates` and
+`authz_assignment_sites`, owner `authz`). They are not scope root kinds, and no row means no constraint.
+`GrantInput.Templates` and `.Sites` write them in the Grant transaction (`constraints.go`).
+
+- **Templates (ADM-132).** `Authorizer.CheckTemplate(ctx, chain, perm, templateID)` is the gate. An Action that
+  creates or modifies from a Template calls it in `Plan`, before any directory read, and blocks the item with the
+  returned `*TemplateError` (reason `template_not_permitted`, wraps `ErrDenied`). It is **deny-wins**: every
+  assignment of the chain's authority that grants `perm` must allow the Template, and at least one must grant it.
+  It is stricter than a per-scope match on purpose, so an unrestricted assignment elsewhere never lifts a
+  restriction. The gate does not decide scope, and the authoriser still runs. A source that cannot read constraints
+  returns `ErrNoConstraintSource` (fail closed).
+- **No escape by regranting (DM-36.I1).** A grantor whose assignments for the role's permissions are restricted
+  may only grant that role with a non-empty list inside the intersection of their lists (`ErrEscalation`
+  otherwise). A personal tenant-owner is exempt.
+- **Sites (ADM-133).** `Authorizer.PreferredSites(ctx, chain)` returns the sites of the chain's assignments in
+  order. The operation runner reads it once per plan (`operation.Config.Sites`, wired from the authorizer in
+  `compose/server`) and hands it to a `SitePinner`. The server's `dcPinner` sorts the reachable writable DCs by the
+  rank of their site (`WritableDC.Site` from `DcIdentity.site`). Unhealthy DCs are not listed, so the next site or
+  any DC is pinned, and a healthy `previous` pin still wins (ADR-0005 rule 5). The preference is not part of
+  `plan_hash`. A site-hint read error fails the plan; it is not dropped.
+
+The sites belong to the assignment, so they apply to every operation the assignment holder plans, not per OU.
+Template-consuming Actions do not import `rbac`: the Runner binds the request's chain into the kernel `TemplateGate`
+(`pc.Templates.CheckTemplate`), which `ad`'s create/modify Plans call first (ADR-0015 D1/D2). ADM-132's "blocked at Plan,
+before any directory read" is end-to-end once T-2142 lands the Action-level test.

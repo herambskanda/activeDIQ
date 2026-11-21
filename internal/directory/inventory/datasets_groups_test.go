@@ -170,6 +170,7 @@ func Test_primary_group_user_and_group_without_member_values(t *testing.T) {
 
 // Groups with 1,501 and 6,000 direct members count as many, with the measured times (AC-21).
 func Test_group_member_counts_at_scale(t *testing.T) {
+	requireScaleFull(t)
 	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
 		e := setup(t, s)
 		reg := e.registry(t)

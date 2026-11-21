@@ -138,7 +138,8 @@ root never imports generated protos. The listener that mounts it is T-0156.
   `IsCA`, `KeyUsageCertSign`), at most 8 rows and 64 KiB, SPKI hash matching, and the active CA present.
   Otherwise `Enroll` returns the generic `ErrTokenInvalid`, and an `Alerter` raises `fleet.ca.material_invalid`
   (plus `fleet.ca.suspected_key_exposure` when a private-key marker is seen).
-- **Pin.** `Enroller.CAPin` returns `sha256:<hex>` of the CA SPKI for the enrolment material (D1).
+- **Pin.** `Enroller.ServerPin` returns `sha256:<hex>` of the installation **server CA** SPKI for the enrolment material (D1; ADR-0008, T-0735): one value for every tenant. `CAPin` (the tenant CA's SPKI) is gone; a tenant CA is no longer what a component pins.
+- **Server CA (T-0735).** `fleet_server_ca` (migration `0084`, registered-global, no `tenant_id`): ECDSA P-384, `IsCA`, `MaxPathLen 0`, `KeyUsageCertSign` only, EKU ServerAuth; key sealed under the installation DEK (`keys.SealInstallation`), `sealed_key` CHECK and guard trigger as `fleet_ca` (key destroyed when the row leaves `active`). `Enroller.SignServerLeaf(ctx, names)` (`fleetsql/serverca.go`) is the only user of that key: names checked against `Enroller.Endpoints`, own P-256 key, ServerAuth-only leaf, 30-day cap, no URI SAN, ECDSA-SHA384, refused within 90 days of CA expiry, capped at 12 per node per hour, each issuance audited through `ServerCertAuditor` (`fleet.server_cert.issued`); returns `Certificate = [leaf, server CA]`. Not yet built: the `dial` roots split, `RotateServerCA`, the renewal timer and listener wiring (T-0716/T-0717).
 - **Rotation (DM-12.I3).** `Enroller.Rotate(leaf, csr)` takes the verified leaf, reads the identity from it and
   requires that one of the named tenant's own CAs (active or retired) signed it (a verified chain only proves
   some tenant's CA did; per-tenant CA isolation depends on this check); it requires an `enrolled` or `active` component of the same kind whose current `cert_serial` equals the
@@ -236,10 +237,14 @@ Threat-model links: TM-A11 (key never leaves the sealed column; unreachable here
 - **Persistence.** `ca-bundle.pem`, `ca-pin.txt`, `endpoints.txt`, `key.pem` (0600, PKCS#8), `leaf.pem`
   in a 0700 directory, each by temp+rename, leaf last; `Load` re-validates everything. Nothing is written on
   any failure. All of it goes through `internal/platform/ownerfile` (`Dir`, T-1315); `fleet/dial` has no owner-only code of its own.
-  - **One principal set** (decided T-1315): the **service identity** (the process token user) and **SYSTEM**, `FILE_ALL_ACCESS`,
-    in a PROTECTED DACL; the directory is owned by the service identity. Administrators are *not* granted: an administrator who
-    needs the state takes ownership deliberately (this leaves an audit trail only where the audit policy captures it, e.g. privilege use and object access, events 4674 and 4670) rather than reading `key.pem` by membership. On Unix: mode 0700
-    / 0600, owned by the euid. Typed ACL API, never SDDL.
+  - **One principal set** (T-1249; Administrators ACE accepted by the T-2215 ruling, which supersedes the T-1315 text): on Windows the
+    state directory is owned by `BUILTIN\Administrators` and its PROTECTED DACL grants `FILE_ALL_ACCESS` to **SYSTEM, Administrators and
+    the service account** (`NT SERVICE\activeDIQAgent`), nothing else; the invoking administrator's own user SID, `Users`,
+    `Authenticated Users` and `Everyone` are never granted. On a DC, local Administrators is Domain Admins, who can already run as SYSTEM, so the
+    ACE adds no capability ([ruling](../decisions/agent-state-dir-administrators-ace-ruling.md)). The service never holds SeBackup,
+    SeRestore or SeTakeOwnership; `TrustAdministrators` only widens what the service accepts on read, never what a plain write
+    produces. On Unix: mode 0700 / 0600, owned by the euid. Typed ACL API, never SDDL. A non-administrator is refused by the DACL
+    alone (lab-verified on dc1, T-1341), with no code gate.
   - **Handle-based, no check-by-path-then-use-by-path.** `Load`, `Enroll` and `Repin` call `ownerfile.OpenDir` / `CreateDir` once and then
     only `Dir.ReadFile` / `Dir.WriteFile` on that handle. Unix: the parent is opened `O_DIRECTORY|O_NOFOLLOW`, the directory is opened
     relative to it, and files are `openat`'d with `O_NOFOLLOW`; owner and mode are read with `fstat` on the open descriptor. Windows:
@@ -258,8 +263,9 @@ Threat-model links: TM-A11 (key never leaves the sealed column; unreachable here
   - **Created owner-only.** Every state file is written via a temp file created with an explicit PROTECTED descriptor in the
     `CreateFile` call (Windows) or `openat(O_CREAT|O_EXCL, 0600)` (Unix), then synced and renamed; no file exists with an inherited
     ACL, so the key is never in a readable file. A pre-existing directory is never adopted or repaired, only accepted if it passes.
-  - **Enrol identity:** the directory is owned by, and grants, the token user at enrol time, so enrol as the identity the service runs
-    as (gMSA or virtual account); enrolling as an interactive admin and running as another account fails closed on `Load`.
+  - **Enrol identity:** `agent enroll` and `agentsetup repin` are run by an elevated administrator and pass `ForAccount(NT SERVICE\activeDIQAgent)`:
+    the state is written for the service account, not for the caller, so the service's own `Load` accepts it and the audit event (4102/4103)
+    names the administrator who ran the verb. The account must resolve before the single-use token is spent. gMSA is not supported (ADR-0006).
   - **Residual risk, accepted:** a service identity shared with other services (LocalService, NetworkService, a shared domain
     account) lets every service on the host that runs as it read `key.pem`. Only a gMSA or a virtual account (`NT SERVICE\<name>`) is
     supported. Ancestors above the parent are followed (the checks are on the objects actually reached); a principal who controls an

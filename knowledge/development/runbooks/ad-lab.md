@@ -84,6 +84,8 @@ counts that `make lab-test-live` asserts against the live directory.
 
 The lockout, PSO and expiry cases the report engine must match, with expected results and which run on Samba, are the LAB-LK, LAB-PS, LAB-PW and LAB-AX rows of [`domain/account-state-lab-rows.md`](../domain/account-state-lab-rows.md) (T-1016). They are specified, not yet seeded or run.
 
+**Reports ground truth (T-1480, spec reports-2a AC-23):** `go test -tags lab ./internal/compose/server -run TestLabReportsMatchLDAPGroundTruth` syncs the lab through the real `sync.full` job, runs every USR-01/02/03/05 preset through the reports router, and compares each run's object GUIDs with a direct LDAP query of the lab (filters over `lastLogonTimestamp`, `accountExpires`, `userAccountControl`, `servicePrincipalName`, `whenCreated`; lockout from the DC's own `msDS-User-Account-Control-Computed`). It adds SPNs to three seeded users for the run (the seed has none) and removes them after. A mismatch prints GUIDs only. Samba logon behaviour it pins: the first successful bind writes `lastLogonTimestamp` at once and leaves `lastLogon` 0; a second bind seconds later changes neither. Presets blocked by a filed product bug (`knownBugs` in the test) are expected to differ and fail the run the moment they start matching.
+
 Ages ("stale", "expiring") are relative to the day the lab was **built** (`manifest.json` → `now`).
 A snapshot ages like a real directory: after about a month the "expiring" users have expired. Run
 `make lab-rebuild` to refresh, or write your own timestamps in tests. Set `LAB_SEED_NOW=<unix>` for a
@@ -132,6 +134,13 @@ tier (50k users) and a second DC (`2dc`) are not built yet — see §8.
   1600-member group, a deleted root), compares the bufconn RPC with an admin LDAP query and deletes its OUs.
   The 1600-user test takes ~5 min on a loaded host (`-short` skips it). Samba does not range `member`; the
   first-range `complete=false` it asserts is the handler's 1500 cap. DC-side ranging needs the Windows lab.
+
+- ChangeFeed RPC over a real session (T-1194): `go test -tags lab ./internal/connector/read -run TestLabFeed -v -timeout 10m`
+  (`internal/connector/read/feed_lab_test.go`). Covers prime, resume, the cookie pre-checks (CC-FEED-01/03/07-12), the
+  refusals and the tombstone mandatory set (CC-FEED-17/18), issuer-down is UNREACHABLE never STALE (CC-FEED-13, through a
+  TCP relay) and the stuck-DC bound (a relay that rewrites DirSync results to MoreData). Windows-only (not provable on
+  Samba): result code `0000203D` for a rejected cookie, MoreResults and mid-cycle cookies, non-admin tombstone reads,
+  Recycle Bin DELETED vs RECYCLED.
 
 ## 5. Entra lab (Microsoft 365 Developer sandbox) — T-0183
 
@@ -199,6 +208,7 @@ proven in a Windows lab.
 | **Name comparison rules** — AD ignores case, width, kana and accents (MS-ADTS sort keys); Samba may not. A uniqueness test can **false-pass** on Samba (José vs Jose) — see `knowledge/memory/lessons.md` | Uniqueness checks in the safe primitives and create/rename flows | any uniqueness or rename test |
 | **Unranged multi-valued reads (Measured):** a plain read of `member` on `GG-Big` returns all 3,000 values on Samba; Windows ranges a large attribute by itself (MaxValRange, default value `[UNVERIFIED]`). Explicit `member;range=0-1499` / `1500-*` paging works on Samba | A connector that forgets to page **passes on Samba and fails on Windows**. Test paging with explicit ranges, and review that code never reads multi-valued attributes unranged | the group-membership connector ticket |
 | Recycle Bin undelete parity, multi-domain forests and trusts, functional levels above 2008 R2 (opt-in), Windows LAPS, AD FS, AD CS | Lifecycle, cross-forest and CA features | respective tickets |
+| **DirSync (Measured, T-1193):** (1) the plain connector identity (`svc-activediq`) sees every live change but **no tombstone**: a delete arrives only for the lab Administrator (CC-FEED-20's Samba answer; Windows `[UNVERIFIED]`); (2) Samba includes deleted objects even without the show-deleted control, so a Samba pass does not prove the control is attached (CC-FEED-23 does, on the wire); (3) one cycle is one response (`MoreData` never set); (4) a removed member arrives as `member;range=0-0`, an added one as `member;range=1-1`; (5) `parentGUID` is returned on create, rename and move when `name` is requested, not on a plain modify; (6) a cleared attribute and a tombstone's stripped attributes arrive as the attribute with no values. Windows forms of (1), (3), (4) remain `[UNVERIFIED]` | DirSync / ChangeFeed | CC-FEED-04, 19 to 22 on Windows |
 | Domain Controller **replication** — the lab has one DC, so `uSNChanged`/DirSync tests see one USN space and no per-DC attributes | Sync correctness across DCs | the `2dc` tier (§8), then Windows |
 | **Scale** — 5k users is not 50k+ | Performance budgets | `scale` tier (§8) |
 
@@ -215,6 +225,7 @@ The Windows lab is built from local evaluation VMs on KVM (D-0003, free): see `w
 | LDAPS handshake fails with certificate errors | Use `lab/.lab-ca.pem` and connect as `localhost`, `127.0.0.1` or `dc1.lab.activediq.test` (add `127.0.0.1 dc1.lab.activediq.test` to `/etc/hosts` for the last) |
 | `Strong(er) authentication required` on port 389 | Intended: simple bind over plain LDAP is refused like on a hardened DC. Use LDAPS or StartTLS |
 | Container unhealthy | `make lab-logs`; if the state is damaged `make lab-reset`; as a last resort `make lab-rebuild` |
+| `lab-up` stalls at `loading seed offline into sam.ldb`, or `lab-destroy` cannot remove the network (T-1858) | A one-off `…-dc-run-…` container from an interrupted `make lab-up` is still holding the project network. `lab-up` and `lab-destroy` now remove such containers (compose label `oneoff=True`) automatically; re-run `make lab-destroy && make lab-up LAB_TIER=small`. Measured on a quiet 12-core host: `LAB_TIER=small` reaches healthy in ~62 s. With host load >10 (several worktree labs running) the seed load is CPU-bound and is much slower — stop idle labs (`make lab-down` in other worktrees) first |
 | Kerberos from the host | Samba's DNS is not exposed. Add the DC name to `/etc/hosts` and point `krb5.conf` `kdc = 127.0.0.1` (port `LAB_KRB_PORT`) |
 
 CI: the same commands work on a Linux runner with Docker; wiring `make lab-test` into the pipeline

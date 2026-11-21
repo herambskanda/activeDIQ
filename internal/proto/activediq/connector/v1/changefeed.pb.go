@@ -795,8 +795,9 @@ type ChangeBatch struct {
 	// stream that ends without it, or with an error, was cut off and the caller keeps its last
 	// committed cookie.
 	CycleComplete bool `protobuf:"varint,5,opt,name=cycle_complete,json=cycleComplete,proto3" json:"cycle_complete,omitempty"`
-	// Number of attribute values dropped because they were SecretAttrs. A diagnostic count; names
-	// and values never leave the connector.
+	// Number of attributes dropped because they were SecretAttrs: one per object per attribute,
+	// however many values each held. A diagnostic count; names and values never leave the
+	// connector.
 	SecretAttributesDropped uint32 `protobuf:"varint,6,opt,name=secret_attributes_dropped,json=secretAttributesDropped,proto3" json:"secret_attributes_dropped,omitempty"`
 	unknownFields           protoimpl.UnknownFields
 	sizeCache               protoimpl.SizeCache
