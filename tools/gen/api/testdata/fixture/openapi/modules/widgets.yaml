@@ -456,6 +456,11 @@ components:
         - $ref: modules/widgets.yaml#/components/schemas/RuleEquals
       discriminator:
         propertyName: kind
+        mapping:
+          and: "#/components/schemas/RuleAnd"
+          or: "#/components/schemas/RuleOr"
+          not: "#/components/schemas/RuleNot"
+          equals: "#/components/schemas/RuleEquals"
     RuleAnd:
       type: object
       required: [kind, rules]

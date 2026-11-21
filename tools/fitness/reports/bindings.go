@@ -36,7 +36,7 @@ var defaultBindings = []binding{
 		What: "every derived column matches its reference implementation (FR-09, AC-49)"},
 	{Check: "RP9", Name: "Test_run_read_bound_to_runner_and_scope", Pkg: "./internal/modules/reports/run", Landed: true, Owner: "B4",
 		What: "a run read is bound to the runner and the scope that produced it (reports contract §6.6; FR-07, FR-30)"},
-	{Check: "RP10", Name: "Test_delivery_link_authorised_by_delivery_row", Pkg: "./internal/modules/reports/schedule", Owner: "B11",
+	{Check: "RP10", Name: "Test_delivery_link_authorised_by_delivery_row", Pkg: "./internal/modules/reports/export", Landed: true, Owner: "B11",
 		What: "a delivery link is authorised by its Delivery row (reports contract §7.2; FR-24, AC-47)"},
 	{Check: "RP11", Name: "Test_dataset_reveals_nothing_outside_scope", PerDataset: true, Landed: true, Owner: "B3, B6",
 		What: "a dataset reveals no name, GUID or aggregate from outside the read scope, once per registered dataset (reports contract §3.3; LF-39, FR-07)"},

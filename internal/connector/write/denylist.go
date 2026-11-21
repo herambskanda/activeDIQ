@@ -21,6 +21,9 @@ var deniedAttrs = func() map[string]struct{} {
 		"msDS-SupportedEncryptionTypes", "accountExpires", "logonHours", "userWorkstations",
 		// group policy
 		"gPLink", "gPOptions",
+		// Terminal Services / RAS blob: TerminalServicesInitialProgram runs at RDS logon and a write
+		// destroys ReservedData (connector-contract v1.5 §5.9 T2). Also matched by OID below.
+		"userParameters",
 		// system-only or DC-maintained attributes of the schema snapshot
 		"whenCreated", "whenChanged", "uSNChanged", "uSNCreated", "instanceType", "adminCount",
 		"dSHeuristics", "wellKnownObjects", "fSMORoleOwner", "schemaIDGUID", "attributeSecurityGUID",
@@ -33,6 +36,17 @@ var deniedAttrs = func() map[string]struct{} {
 	return m
 }()
 
+// deniedOIDs are matched on the resolved attributeID, so a schema that renames the attribute, or a
+// numericoid request, is still refused.
+var deniedOIDs = map[string]struct{}{
+	"1.2.840.113556.1.4.138": {}, // userParameters
+}
+
+func isDeniedOID(oid string) bool {
+	_, ok := deniedOIDs[oid]
+	return ok
+}
+
 // Limits of OBJECT_UPDATE and OBJECT_CREATE.initial (contract §8.10.3). Constants, not settings.
 const (
 	maxEdits        = 64
@@ -42,6 +56,9 @@ const (
 )
 
 func isDenied(canonical string) bool {
+	if isDeniedOID(canonical) {
+		return true
+	}
 	_, ok := deniedAttrs[strings.ToLower(canonical)]
 	return ok
 }

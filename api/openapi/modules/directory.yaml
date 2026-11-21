@@ -222,7 +222,227 @@ paths:
           $ref: shared/problems.yaml#/components/responses/Internal
         "503":
           $ref: shared/problems.yaml#/components/responses/DirectoryUnavailable
+  /directory/explorer/roots:
+    get:
+      tags: [directory]
+      operationId: listExplorerRoots
+      summary: List the Explorer roots
+      description: >-
+        The top of the AD Explorer tree for the caller (ADM-004, spec ad-explorer-read-api.md section 3). A root is a live container the caller's
+        directory.read scope admits whose parent is absent, or is a live object the scope does not admit; a scoped technician's tree therefore starts at
+        their scope roots and never names a hidden ancestor. Read from the inventory, not the live directory; AD connections only. Returns containers
+        only, at most 500, with no cursor: when more exist, more is true and the console says to refine in Search. connection_id narrows to one
+        connection. A connection the caller may not read is simply absent. 403 when the caller has no directory.read producer.
+      x-permission: directory.read
+      x-activediq-stability: preview
+      x-activediq-limits:
+        class: read
+      x-activediq-parity: [ADM-004]
+      parameters:
+        - $ref: modules/directory.yaml#/components/parameters/ExplorerConnectionId
+      responses:
+        "200":
+          description: The roots the caller's scope admits
+          content:
+            application/json:
+              schema:
+                $ref: modules/directory.yaml#/components/schemas/ExplorerRoots
+              example:
+                asOf: "2026-11-14T09:11:04Z"
+                more: false
+                items:
+                  - objectGuid: 5d1c8e2a-3b7f-4c60-a9d4-0e1f2a3b4c5d
+                    connectionId: 0b6f2c9e-18a4-4d73-8e5a-7c3d9f1e2a64
+                    parentGuid: null
+                    kind: other
+                    objectClass: domainDNS
+                    name: corp
+                    isContainer: true
+                    hasChildren: true
+                    tier0: true
+                    readOnly: true
+                    samAccountName: ""
+                    upn: ""
+                    enabled: null
+                    whenChanged: "2026-11-12T16:40:11Z"
+        "400":
+          $ref: shared/problems.yaml#/components/responses/Validation
+        "401":
+          $ref: shared/problems.yaml#/components/responses/Unauthenticated
+        "403":
+          $ref: shared/problems.yaml#/components/responses/Forbidden
+        "429":
+          $ref: shared/problems.yaml#/components/responses/RateLimited
+        "500":
+          $ref: shared/problems.yaml#/components/responses/Internal
+        "501":
+          $ref: shared/problems.yaml#/components/responses/NotImplemented
+        "503":
+          $ref: shared/problems.yaml#/components/responses/ExplorerUnavailable
+  /directory/explorer/nodes/{objectGuid}:
+    get:
+      tags: [directory]
+      operationId: getExplorerNode
+      summary: Get one Explorer node and its path
+      description: >-
+        One live container or object by objectGUID, with path: the admitted live ancestors ending at its parent, root first, so a deep link can expand
+        the tree by GUID. If the parent is not admitted the node is itself a root and path is empty. A GUID that does not exist, is not live, is not an
+        AD object or is not admitted by the caller's scope answers the same 404 with the same body (hidden is absent). connection_id picks one row in
+        the transient case of a GUID live in two connections; without it ambiguous is true when two admitted live rows remained and the newest was
+        chosen. No DN is returned.
+      x-permission: directory.read
+      x-activediq-stability: preview
+      x-activediq-limits:
+        class: read
+      x-activediq-parity: [ADM-004]
+      parameters:
+        - $ref: modules/directory.yaml#/components/parameters/ExplorerObjectGuid
+        - $ref: modules/directory.yaml#/components/parameters/ExplorerConnectionId
+      responses:
+        "200":
+          description: The node, its path and the freshness of the inventory behind it
+          content:
+            application/json:
+              schema:
+                $ref: modules/directory.yaml#/components/schemas/ExplorerNode
+              example:
+                asOf: "2026-11-14T09:11:04Z"
+                node:
+                  objectGuid: 8a4e6f10-2c9b-4d35-b7e1-3f5a6b7c8d90
+                  connectionId: 0b6f2c9e-18a4-4d73-8e5a-7c3d9f1e2a64
+                  parentGuid: 5d1c8e2a-3b7f-4c60-a9d4-0e1f2a3b4c5d
+                  kind: ou
+                  objectClass: organizationalUnit
+                  name: Staff
+                  isContainer: true
+                  hasChildren: true
+                  tier0: false
+                  readOnly: false
+                  samAccountName: ""
+                  upn: ""
+                  enabled: null
+                  whenChanged: "2026-11-10T08:02:51Z"
+                path:
+                  - objectGuid: 5d1c8e2a-3b7f-4c60-a9d4-0e1f2a3b4c5d
+                    name: corp
+        "400":
+          $ref: shared/problems.yaml#/components/responses/Validation
+        "401":
+          $ref: shared/problems.yaml#/components/responses/Unauthenticated
+        "403":
+          $ref: shared/problems.yaml#/components/responses/Forbidden
+        "404":
+          $ref: shared/problems.yaml#/components/responses/NotFound
+        "429":
+          $ref: shared/problems.yaml#/components/responses/RateLimited
+        "500":
+          $ref: shared/problems.yaml#/components/responses/Internal
+        "501":
+          $ref: shared/problems.yaml#/components/responses/NotImplemented
+        "503":
+          $ref: shared/problems.yaml#/components/responses/ExplorerUnavailable
+  /directory/explorer/nodes/{objectGuid}/children:
+    get:
+      tags: [directory]
+      operationId: listExplorerChildren
+      summary: List the children of an Explorer node
+      description: >-
+        One keyset page of the live children the caller's scope admits, containers first, then by name (byte order), then objectGuid. view=containers
+        gives the tree level, view=all the table. Scope is applied before the limit, the more flag and hasChildren: none of them reveals what is hidden,
+        except that each request examines at most 5,000 child rows, so a page can be short with more true; the cursor then continues from the last row
+        examined. There is no total count. A cursor is opaque, bound to the node, view, sort position and the caller's scope; any mismatch is 400
+        with code cursor_invalid and reads nothing. A node that is missing, not live or not admitted answers 404 (hidden is absent). 503 when the
+        request cannot finish in 2 seconds, generic and with a trace ID.
+      x-permission: directory.read
+      x-activediq-stability: preview
+      x-activediq-limits:
+        class: read
+      x-activediq-parity: [ADM-004]
+      parameters:
+        - $ref: modules/directory.yaml#/components/parameters/ExplorerObjectGuid
+        - $ref: modules/directory.yaml#/components/parameters/ExplorerConnectionId
+        - name: view
+          in: query
+          required: false
+          description: containers (the default) answers the tree level; all answers every kind, for the table.
+          schema:
+            $ref: modules/directory.yaml#/components/schemas/ExplorerView
+        - name: limit
+          in: query
+          required: false
+          description: The page size. 100 when absent.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+        - name: cursor
+          in: query
+          required: false
+          description: The nextCursor of the previous page, with the same node, view and connection_id.
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 512
+      responses:
+        "200":
+          description: One page of admitted children
+          content:
+            application/json:
+              schema:
+                $ref: modules/directory.yaml#/components/schemas/ExplorerChildren
+              example:
+                asOf: "2026-11-14T09:11:04Z"
+                more: true
+                nextCursor: Y3Vyc29yLTAxLW9wYXF1ZS1leGFtcGxl
+                items:
+                  - objectGuid: 3f9c1e52-7a4b-4d0e-9b1a-0c5e8d2a6f10
+                    connectionId: 0b6f2c9e-18a4-4d73-8e5a-7c3d9f1e2a64
+                    parentGuid: 8a4e6f10-2c9b-4d35-b7e1-3f5a6b7c8d90
+                    kind: user
+                    objectClass: user
+                    name: Pat Example
+                    isContainer: false
+                    hasChildren: null
+                    tier0: false
+                    readOnly: false
+                    samAccountName: pexample
+                    upn: pexample@corp.example.test
+                    enabled: true
+                    whenChanged: "2026-11-09T13:20:00Z"
+        "400":
+          $ref: shared/problems.yaml#/components/responses/ExplorerCursorInvalid
+        "401":
+          $ref: shared/problems.yaml#/components/responses/Unauthenticated
+        "403":
+          $ref: shared/problems.yaml#/components/responses/Forbidden
+        "404":
+          $ref: shared/problems.yaml#/components/responses/NotFound
+        "429":
+          $ref: shared/problems.yaml#/components/responses/RateLimited
+        "500":
+          $ref: shared/problems.yaml#/components/responses/Internal
+        "501":
+          $ref: shared/problems.yaml#/components/responses/NotImplemented
+        "503":
+          $ref: shared/problems.yaml#/components/responses/ExplorerUnavailable
 components:
+  parameters:
+    ExplorerConnectionId:
+      name: connection_id
+      in: query
+      required: false
+      description: Narrows to one AD connection.
+      schema:
+        type: string
+        format: uuid
+    ExplorerObjectGuid:
+      name: objectGuid
+      in: path
+      required: true
+      description: The objectGUID of the container or object. A DN is never accepted.
+      schema:
+        type: string
+        format: uuid
   schemas:
     DirectorySearchRequest:
       description: >-
@@ -478,3 +698,128 @@ components:
           maxItems: 100
           items:
             $ref: modules/directory.yaml#/components/schemas/DirectoryUser
+    ExplorerView:
+      description: containers is the tree level (containers only); all is the table (every kind).
+      type: string
+      enum: [containers, all]
+    ExplorerKind:
+      description: What the object is. Domain heads and built-in containers are other or container; isContainer, not kind, says whether it can hold children.
+      type: string
+      x-activediq-enum: open
+      enum: [ou, container, user, inetorgperson, group, computer, contact, gmsa, fsp, other]
+    ExplorerEntry:
+      description: >-
+        One live AD object, the same shape in the tree and the table. Keyed by objectGuid; there is no DN. name is the RDN value (or the display name),
+        never a path. parentGuid is the row's own parent read in the same statement as the row.
+      type: object
+      required: [objectGuid, connectionId, parentGuid, kind, objectClass, name, isContainer, hasChildren, tier0, readOnly, samAccountName, upn, enabled, whenChanged]
+      properties:
+        objectGuid:
+          type: string
+          format: uuid
+        connectionId:
+          type: string
+          format: uuid
+        parentGuid:
+          type: [string, "null"]
+          format: uuid
+        kind:
+          $ref: modules/directory.yaml#/components/schemas/ExplorerKind
+        objectClass:
+          type: string
+          maxLength: 256
+        name:
+          type: string
+          maxLength: 1024
+        isContainer:
+          type: boolean
+        hasChildren:
+          type: [boolean, "null"]
+          description: For a container, whether an admitted live child exists; null for a leaf.
+        tier0:
+          type: boolean
+          description: True unless the inventory holds a classifier result saying otherwise (fails closed).
+        readOnly:
+          type: boolean
+          description: True for a Tier-0 object; the console disables write actions on it.
+        samAccountName:
+          type: string
+          maxLength: 256
+          description: Empty when absent.
+        upn:
+          type: string
+          maxLength: 1024
+          description: Empty when absent.
+        enabled:
+          type: [boolean, "null"]
+        whenChanged:
+          type: [string, "null"]
+          format: date-time
+    ExplorerPathItem:
+      description: One admitted live ancestor, for the breadcrumb and for expanding the tree by GUID.
+      type: object
+      required: [objectGuid, name]
+      properties:
+        objectGuid:
+          type: string
+          format: uuid
+        name:
+          type: string
+          maxLength: 1024
+    ExplorerRoots:
+      description: The containers the caller's scope admits as tree roots, with the freshness of the inventory behind them.
+      type: object
+      required: [items, more, asOf]
+      properties:
+        items:
+          type: array
+          maxItems: 500
+          items:
+            $ref: modules/directory.yaml#/components/schemas/ExplorerEntry
+        more:
+          type: boolean
+          description: True when more than 500 roots exist; the console says to refine in Search. There is no cursor.
+        asOf:
+          type: [string, "null"]
+          format: date-time
+          description: The oldest last-sync time of the connections the caller may read. Null when nothing has synced yet.
+    ExplorerNode:
+      description: One node, the admitted path to it, and the freshness of the inventory behind them.
+      type: object
+      required: [node, path, asOf]
+      properties:
+        node:
+          $ref: modules/directory.yaml#/components/schemas/ExplorerEntry
+        path:
+          type: array
+          maxItems: 128
+          description: Admitted live ancestors ending at the node's parent, root first. Empty when the node is a root.
+          items:
+            $ref: modules/directory.yaml#/components/schemas/ExplorerPathItem
+        ambiguous:
+          type: boolean
+          description: True when the GUID had more than one admitted live row and the newest was chosen. Absent otherwise.
+        asOf:
+          type: [string, "null"]
+          format: date-time
+    ExplorerChildren:
+      description: One keyset page of admitted children. No count is returned.
+      type: object
+      required: [items, nextCursor, more, asOf]
+      properties:
+        items:
+          type: array
+          maxItems: 200
+          items:
+            $ref: modules/directory.yaml#/components/schemas/ExplorerEntry
+        nextCursor:
+          type: [string, "null"]
+          minLength: 1
+          maxLength: 512
+          description: Pass back unchanged for the next page. Null on the last page.
+        more:
+          type: boolean
+          description: True when the page may not be the last, including a short page that stopped at the examination ceiling.
+        asOf:
+          type: [string, "null"]
+          format: date-time

@@ -7,9 +7,11 @@ import (
 	"encoding/json/jsontext"
 	jsonv2 "encoding/json/v2"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/skenzeriq/activediq/internal/platform/authority"
+	"github.com/skenzeriq/activediq/internal/platform/report"
 	"github.com/skenzeriq/activediq/internal/platform/store"
 )
 
@@ -66,6 +68,7 @@ type Run struct {
 	Attempt          int
 	ScopeApplied     ScopeApplied
 	Freshness        *FreshnessRecord
+	PerDC            *PerDCRecord // per-DC reports only (USR-04, PWD-03): progress while running, coverage once done
 	AsOf             *time.Time
 	RowCount         *int64
 	ObjectsChecked   *int64
@@ -76,6 +79,8 @@ type Run struct {
 	StartedAt        *time.Time
 	FinishedAt       *time.Time
 	ExpiresAt        *time.Time
+	// Zone is the IANA time zone the runner asked for (empty: UTC). PDF and HTML exports show Time cells in it.
+	Zone string
 }
 
 // ScopeApplied is the scope_applied document: what trimmed the rows, in words and reason codes.
@@ -146,24 +151,25 @@ type scanner interface{ Scan(dest ...any) error }
 // load then follows with selectRun so a locked read sees the committed latest version.
 const selectRun = `SELECT id::text, definition_id, definition_version, definition_sha256, preset, params, query_hash,
   scope_fingerprint, runner_account::text, chain, schedule_id::text, rerun_of::text, state, failure_reason, attempt,
-  scope_applied, freshness, as_of, row_count, objects_checked, hidden_counts, digest, columns,
-  created_at, started_at, finished_at, expires_at FROM public.report_runs WHERE id = $1::uuid`
+  scope_applied, freshness, per_dc, as_of, row_count, objects_checked, hidden_counts, digest, columns,
+  created_at, started_at, finished_at, expires_at, runner_zone FROM public.report_runs WHERE id = $1::uuid`
 
 const lockRun = `SELECT id FROM public.report_runs WHERE id = $1::uuid FOR UPDATE`
 
 func scanRun(row scanner) (Run, error) {
 	var (
-		r                                 Run
-		id, runner                        string
-		sched, rerun, failure             *string
-		state                             string
-		sha, qh, fp                       []byte
-		chain, scope, fresh, hidden, cols []byte
-		digest                            []byte
+		r                                        Run
+		id, runner                               string
+		sched, rerun, failure                    *string
+		state                                    string
+		sha, qh, fp                              []byte
+		chain, scope, fresh, perDC, hidden, cols []byte
+		digest                                   []byte
+		zone                                     *string
 	)
 	err := row.Scan(&id, &r.DefinitionID, &r.DefinitionVer, &sha, &r.Preset, &r.Params, &qh, &fp, &runner, &chain,
-		&sched, &rerun, &state, &failure, &r.Attempt, &scope, &fresh, &r.AsOf, &r.RowCount, &r.ObjectsChecked,
-		&hidden, &digest, &cols, &r.CreatedAt, &r.StartedAt, &r.FinishedAt, &r.ExpiresAt)
+		&sched, &rerun, &state, &failure, &r.Attempt, &scope, &fresh, &perDC, &r.AsOf, &r.RowCount, &r.ObjectsChecked,
+		&hidden, &digest, &cols, &r.CreatedAt, &r.StartedAt, &r.FinishedAt, &r.ExpiresAt, &zone)
 	if err != nil {
 		return Run{}, err
 	}
@@ -174,6 +180,9 @@ func scanRun(row scanner) (Run, error) {
 	copy(r.QueryHash[:], qh)
 	copy(r.ScopeFingerprint[:], fp)
 	r.Runner, r.State, r.Digest = runner, State(state), digest
+	if zone != nil {
+		r.Zone = *zone
+	}
 	if failure != nil {
 		r.Failure = FailureReason(*failure)
 	}
@@ -200,6 +209,12 @@ func scanRun(row scanner) (Run, error) {
 	if fresh != nil {
 		r.Freshness = new(FreshnessRecord)
 		if err := jsonv2.Unmarshal(fresh, r.Freshness); err != nil {
+			return Run{}, err
+		}
+	}
+	if perDC != nil {
+		r.PerDC = new(PerDCRecord)
+		if err := jsonv2.Unmarshal(perDC, r.PerDC); err != nil {
 			return Run{}, err
 		}
 	}
@@ -234,14 +249,14 @@ func load(ctx context.Context, tx store.Tx, id ID, lock bool) (Run, error) {
 
 const insertRun = `INSERT INTO public.report_runs
   (tenant_id, id, definition_id, definition_version, definition_sha256, preset, params, query_hash, scope_fingerprint,
-   runner_account, chain, rerun_of, state, columns)
+   runner_account, chain, rerun_of, state, columns, runner_zone, schedule_id)
 VALUES (NULLIF(current_setting('app.tenant_id', true), '')::uuid, $1::uuid, $2, $3, $4, $5, $6::jsonb, $7, $8,
-   $9::uuid, $10::jsonb, $11::uuid, 'queued', $12::jsonb)`
+   $9::uuid, $10::jsonb, $11::uuid, 'queued', $12::jsonb, $13, $14::uuid)`
 
 // findReusable returns a run of the same runner, query and scope created in the last window and still
 // queued, running or succeeded (ADR-0010 reuse window, §6.1 step 3).
 const findReusable = `SELECT id::text FROM public.report_runs
-WHERE runner_account = $1::uuid AND query_hash = $2 AND scope_fingerprint = $3
+WHERE runner_account = $1::uuid AND query_hash = $2 AND scope_fingerprint = $3 AND runner_zone IS NOT DISTINCT FROM $5::text
   AND created_at > now() - make_interval(secs => $4::double precision) AND state IN ('queued', 'running', 'succeeded')
   AND (state <> 'succeeded' OR expires_at > now())
 ORDER BY created_at DESC, id DESC LIMIT 1`
@@ -258,4 +273,55 @@ func randomSuffix() string {
 	var b [6]byte
 	_, _ = rand.Read(b[:])
 	return hex.EncodeToString(b[:])
+}
+
+// PerDCRecord is the per_dc document of a per-DC run (reports.md §6.5). While the run is reading it holds the
+// progress (Read of Total objects); when it succeeds it holds the coverage. Names are DC host names and codes
+// are the fixed lower-case connector codes; there is no object, account or driver text in it.
+type PerDCRecord struct {
+	Stage       string          `json:"stage,omitempty"` // reading_dcs, storing; empty once done
+	Total       int64           `json:"total"`           // candidates to read
+	Read        int64           `json:"read"`            // candidates read so far
+	DCsInScope  int             `json:"dcsInScope"`
+	DCsAnswered int             `json:"dcsAnswered"`
+	Complete    bool            `json:"complete"`
+	Scope       string          `json:"scope"` // all or writable
+	ReadAt      *time.Time      `json:"readAt,omitempty"`
+	Unreachable []UnreachableDC `json:"unreachable,omitempty"`
+}
+
+// UnreachableDC is a DC that did not answer, with the fixed code it gave.
+type UnreachableDC struct {
+	DC    string `json:"dc"`
+	Error string `json:"error"`
+}
+
+// AtLeast reports whether the run's per-DC values are lower bounds: a DC in scope did not answer.
+func (p *PerDCRecord) AtLeast() bool { return p != nil && p.Stage == "" && !p.Complete }
+
+// CoverageText is "Read from 2 of 3 DCs" (spec §6.5), plus the unreachable DCs with their errors.
+func (p *PerDCRecord) CoverageText() string {
+	if p == nil {
+		return ""
+	}
+	out := "Read from " + strconv.Itoa(p.DCsAnswered) + " of " + strconv.Itoa(p.DCsInScope) + " DCs"
+	if len(p.Unreachable) > 0 {
+		out += " · " + strconv.Itoa(len(p.Unreachable)) + " unreachable:"
+		for i, u := range p.Unreachable {
+			if i > 0 {
+				out += ","
+			}
+			out += " " + u.DC + ": " + u.Error
+		}
+	}
+	return out
+}
+
+// ColumnLabel is the label a column shows in this run: a per-DC aggregate of a partial read is a lower bound
+// and says so ("Real last logon (at least)", spec §6.5).
+func (r Run) ColumnLabel(c report.Column) string {
+	if src, ok := c.Source.(report.PerDC); ok && src.Part == report.PartValue && r.PerDC.AtLeast() {
+		return c.Label + report.AtLeastSuffix
+	}
+	return c.Label
 }

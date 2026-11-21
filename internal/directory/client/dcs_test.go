@@ -76,3 +76,20 @@ func TestWritableDCsRefusesUnknownNCAndBadIdentity(t *testing.T) {
 		}
 	}
 }
+
+// T-1600 (ADM-133): the site a DC reports in DcIdentity.site is what reaches WritableDC.Site, the field
+// the operation pinner ranks by; a DC that reports none yields an empty Site, not an error.
+func TestWritableDCsCarriesReportedSite(t *testing.T) {
+	f := connectorv1.TriState_TRI_STATE_FALSE
+	withSite := dcInfo("dc1.example.test", "11111111-2222-3333-4444-555555555555", dNC, f, true)
+	withSite.Identity.Site = "Default-First-Site-Name"
+	noSite := dcInfo("dc2.example.test", "66666666-7777-8888-9999-aaaaaaaaaaaa", dNC, f, true)
+	nc, _ := parseUUID(dNC)
+	got, err := writableDCsOf(describeOf(withSite, noSite), nc)
+	if err != nil || len(got) != 2 {
+		t.Fatalf("got %+v, %v", got, err)
+	}
+	if got[0].Host != "dc1.example.test" || got[0].Site != "Default-First-Site-Name" || got[1].Site != "" {
+		t.Fatalf("sites = %q, %q; want the reported site and empty", got[0].Site, got[1].Site)
+	}
+}

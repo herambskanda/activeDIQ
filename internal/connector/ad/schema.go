@@ -82,6 +82,11 @@ func DefaultSchema() *ldapfilter.Schema {
 			// dNSHostName: name-only. Its attributeID is also the lazy-commit control OID, which FF-SP2 lets
 			// only scope name; an OID-form descriptor for it stays unknown and fails closed.
 			ldapfilter.AttrInfo{Name: "dNSHostName", Syntax: s},
+			// The change feed (T-1194): the deleted object's last parent (name-only, a DN) and the forest's
+			// deletion lifetimes on CN=Directory Service.
+			ldapfilter.AttrInfo{Name: "lastKnownParent", Syntax: ldapfilter.SynDN},
+			ldapfilter.AttrInfo{Name: "tombstoneLifetime", Syntax: ldapfilter.SynInt32},
+			ldapfilter.AttrInfo{Name: "msDS-DeletedObjectLifetime", Syntax: ldapfilter.SynInt32},
 			ldapfilter.AttrInfo{Name: "servicePrincipalName", OID: "1.2.840.113556.1.4.771", Syntax: s},
 			ldapfilter.AttrInfo{Name: "msDS-AdditionalDnsHostName", OID: "1.2.840.113556.1.4.1717", Syntax: s},
 			// isDeleted: read with the show-deleted control for the OBJECT_DELETE retry check (T-1623); never writable (deny-list).
@@ -99,6 +104,55 @@ func DefaultSchema() *ldapfilter.Schema {
 			ldapfilter.AttrInfo{Name: "allowedAttributesEffective", OID: "1.2.840.113556.1.4.914", Syntax: s, Constructed: c},
 			ldapfilter.AttrInfo{Name: "allowedChildClassesEffective", OID: "1.2.840.113556.1.4.912", Syntax: s, Constructed: c},
 			ldapfilter.AttrInfo{Name: "sDRightsEffective", OID: "1.2.840.113556.1.4.1304", Syntax: ldapfilter.SynInt32, Constructed: c},
+			// The directory sync's closed attribute list (directory/sync.Attributes(), T-1189) beyond what
+			// is named above. Name-only like dNSHostName: an OID-form descriptor stays unknown and fails
+			// closed until the per-forest schema supplies verified OIDs. Test_DefaultSchema_covers_sync_list
+			// fails if a name is added to that list without an entry here.
+			ldapfilter.AttrInfo{Name: "mail", Syntax: s},
+			ldapfilter.AttrInfo{Name: "givenName", Syntax: s},
+			ldapfilter.AttrInfo{Name: "sn", Syntax: s},
+			ldapfilter.AttrInfo{Name: "title", Syntax: s},
+			ldapfilter.AttrInfo{Name: "department", Syntax: s},
+			ldapfilter.AttrInfo{Name: "physicalDeliveryOfficeName", Syntax: s},
+			ldapfilter.AttrInfo{Name: "proxyAddresses", Syntax: s},
+			ldapfilter.AttrInfo{Name: "mailNickname", Syntax: s},
+			ldapfilter.AttrInfo{Name: "employeeID", Syntax: s},
+			ldapfilter.AttrInfo{Name: "employeeNumber", Syntax: s},
+			// The user-attribute reports (T-1111, reports-2-second-slice D11). Name-only: no OID is verified
+			// in-repo. thumbnailPhoto, jpegPhoto and logonHours are binary; the sync reads only whether the
+			// photos have a value and the 21-byte logon schedule.
+			ldapfilter.AttrInfo{Name: "msNPAllowDialin", Syntax: ldapfilter.SynBool},
+			ldapfilter.AttrInfo{Name: "msRTCSIP-UserEnabled", Syntax: ldapfilter.SynBool},
+			ldapfilter.AttrInfo{Name: "logonHours", Syntax: ldapfilter.SynOctet},
+			ldapfilter.AttrInfo{Name: "thumbnailPhoto", Syntax: ldapfilter.SynOctet},
+			ldapfilter.AttrInfo{Name: "jpegPhoto", Syntax: ldapfilter.SynOctet},
+			ldapfilter.AttrInfo{Name: "telephoneNumber", Syntax: s},
+			ldapfilter.AttrInfo{Name: "mobile", Syntax: s},
+			ldapfilter.AttrInfo{Name: "manager", Syntax: ldapfilter.SynDN},
+			// The published-printers report (T-1719, D13), read for printQueue objects. Name-only.
+			ldapfilter.AttrInfo{Name: "printerName", Syntax: s},
+			ldapfilter.AttrInfo{Name: "serverName", Syntax: s},
+			ldapfilter.AttrInfo{Name: "uNCName", Syntax: s},
+			ldapfilter.AttrInfo{Name: "printShareName", Syntax: s},
+			ldapfilter.AttrInfo{Name: "location", Syntax: s},
+			ldapfilter.AttrInfo{Name: "driverName", Syntax: s},
+			ldapfilter.AttrInfo{Name: "printColor", Syntax: ldapfilter.SynBool},
+			ldapfilter.AttrInfo{Name: "printDuplexSupported", Syntax: ldapfilter.SynBool},
+			ldapfilter.AttrInfo{Name: "company", Syntax: s},
+			ldapfilter.AttrInfo{Name: "operatingSystem", Syntax: s},
+			ldapfilter.AttrInfo{Name: "managedBy", Syntax: ldapfilter.SynDN},
+			ldapfilter.AttrInfo{Name: "mS-DS-ConsistencyGuid", Syntax: ldapfilter.SynOctet},
+			// Integer8 (FILETIME): 0 and 0x7FFFFFFFFFFFFFFF are both "never" for accountExpires; pwdLastSet 0
+			// means must-change; lockoutTime 0 means not locked. Decoded by directory/attr/filetime.
+			ldapfilter.AttrInfo{Name: "lockoutTime", Syntax: ldapfilter.SynInt64},
+			ldapfilter.AttrInfo{Name: "pwdLastSet", Syntax: ldapfilter.SynInt64},
+			ldapfilter.AttrInfo{Name: "accountExpires", Syntax: ldapfilter.SynInt64},
+			ldapfilter.AttrInfo{Name: "lastLogonTimestamp", Syntax: ldapfilter.SynInt64},
+			// Deleted-object attributes: meaningful only on a search with the show-deleted control (the
+			// deleted-objects search is a separate ticket); on a live object isDeleted/isRecycled are absent.
+			ldapfilter.AttrInfo{Name: "isDeleted", Syntax: ldapfilter.SynBool},
+			ldapfilter.AttrInfo{Name: "isRecycled", Syntax: ldapfilter.SynBool},
+			ldapfilter.AttrInfo{Name: "lastKnownParent", Syntax: ldapfilter.SynDN},
 		)
 	})
 	return defaultSchema
