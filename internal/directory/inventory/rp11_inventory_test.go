@@ -32,6 +32,12 @@ func columnIDs(ds report.Dataset) []report.ColumnID {
 	for _, c := range ds.Columns {
 		out = append(out, c.ID)
 	}
+	// A definition lists at most report.MaxQueryCols columns (64); inventory.users registers more. The tail
+	// of the dataset is the plain JSON attribute reads (T-1111), which no anchor masks; the derived, anchored
+	// and scope-dependent columns come first and are all kept.
+	if len(out) > report.MaxQueryCols {
+		out = out[:report.MaxQueryCols]
+	}
 	return out
 }
 
