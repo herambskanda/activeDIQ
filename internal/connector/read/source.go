@@ -216,3 +216,36 @@ type ChildCounter interface {
 	// CountChildren counts the immediate children of the object, at most limit (ad.Session.CountChildren).
 	CountChildren(ctx context.Context, id guid.GUID, limit uint32) (n uint32, capped bool, err error)
 }
+
+// ChangeTimer is the optional per-attribute change-time half of a Source (T-2343, spec ENH-09 4.13).
+type ChangeTimer interface {
+	// AttrChangeTimes returns the last originating change time of each named attribute on the
+	// object. An attribute whose metadata is missing or undecodable is reported Known = false, never
+	// as a zero time.
+	AttrChangeTimes(ctx context.Context, id guid.GUID, attrs []string) (map[string]ad.AttrChange, error)
+}
+
+var _ ChangeTimer = (*ADSource)(nil)
+
+func (a *ADSource) AttrChangeTimes(ctx context.Context, id guid.GUID, attrs []string) (map[string]ad.AttrChange, error) {
+	if !a.ok() {
+		return nil, write.ErrNoBoundDC
+	}
+	return a.sess.AttrChangeTimes(ctx, id, attrs)
+}
+
+// SignInResolver is the optional exact sign-in-name half of a Source (T-2343): one user by
+// sAMAccountName or UPN, with the disabled, expired and must-change flags. A wildcard, ambiguous
+// or missing name is an ad.CodeObjectNotFound error.
+type SignInResolver interface {
+	ResolveSignInName(ctx context.Context, name string) (ad.SignInUser, error)
+}
+
+var _ SignInResolver = (*ADSource)(nil)
+
+func (a *ADSource) ResolveSignInName(ctx context.Context, name string) (ad.SignInUser, error) {
+	if !a.ok() {
+		return ad.SignInUser{}, write.ErrNoBoundDC
+	}
+	return a.sess.ResolveSignInName(ctx, name)
+}

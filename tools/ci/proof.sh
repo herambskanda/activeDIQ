@@ -536,6 +536,53 @@ import "github.com/skenzeriq/activediq/internal/connector/ad"
 var _ = ad.MintSecretReadGrant
 GO
 must_pass "fitness-safeprim: authz may mint a SecretReadGrant" safeprim -no-analyzers
+# P3 static half (ADR-0002 P3 bullets 2 and 3, T-1464): the same fixtures fail through `-p3` outside
+# internal/connector and pass inside it.
+p3lib() { # <rule> <import path>
+  fresh_sp_tree; sp_put internal/modules/users/u.go <<GO
+package users
+
+import _ "$2"
+GO
+  must_fail_with "P3 static: $2 imported outside the connector" "internal/modules/users/u.go:3: FF-SP1 \\[$1\\]" safeprim -p3
+  fresh_sp_tree; sp_put internal/connector/ad/a.go <<GO
+package ad
+
+import _ "$2"
+GO
+  must_pass "P3 static: $2 inside the connector" safeprim -p3
+}
+p3lib ldap-library github.com/go-ldap/ldap/v3
+p3lib kerberos-library github.com/go-krb5/krb5/client
+p3lib kerberos-library github.com/jcmturner/gokrb5/v8/client
+p3lib graph-library github.com/microsoftgraph/msgraph-sdk-go
+p3lib graph-library github.com/Azure/azure-sdk-for-go/sdk/azidentity
+p3cred() { # <dir of the offending file> <body>
+  fresh_sp_tree
+  sp_put internal/connector/credential/credential.go <<'GO'
+package credential
+
+type Keytab struct{ b []byte }
+
+type Source interface{ Describe() string }
+GO
+  sp_put "$1/c.go" <<GO
+package c
+
+import "github.com/skenzeriq/activediq/internal/connector/credential"
+
+$2
+GO
+}
+p3cred internal/modules/users 'type S struct{ k credential.Keytab }'
+must_fail_with "P3 static: a directory-credential type held as a field outside the connector" 'internal/modules/users/c.go:[0-9]+: FF-SP2 \[directory-credential-type\]' safeprim -p3
+p3cred internal/compose/server 'func f(s credential.Source) { s.Unseal() }'
+must_fail_with "P3 static: an unseal call in the server composition root" 'internal/compose/server/c.go:[0-9]+: FF-SP2 \[directory-credential-unseal\]' safeprim -p3
+p3cred internal/connector/ad 'type S struct{ k credential.Keytab }
+func f(s credential.Source) { s.Unseal() }'
+must_pass "P3 static: the same credential use inside the connector" safeprim -p3
+p3cred internal/compose/server 'func f(s credential.Source) credential.Source { return s }'
+must_pass "P3 static: the server root handing the source over as a value" safeprim -p3
 fresh_sp_tree
 sp_put internal/connector/ldap/c.go <<'GO'
 package ldap
@@ -1745,6 +1792,32 @@ fresh_kc; printf 'package a\n\nvar e = "ACTIVEDIQ_KEK_DIR"\n' >"$kct/internal/a/
 must_fail_with "fitness-keys FF-KEY-3 on ACTIVEDIQ_KEK_* read outside the composition root" 'FF-KEY-3 \[env-owner\]' "$kcbin" -root "$kct" -static-only
 fresh_kc; mkdir -p "$kct/packaging"; printf 'environment:\n  ACTIVEDIQ_KEK_PROVIDER: passphrase\n' >"$kct/packaging/compose.yaml"
 must_fail_with "fitness-keys FF-KEY-3 on a default ACTIVEDIQ_KEK_PROVIDER" 'FF-KEY-3 \[provider-default\]' "$kcbin" -root "$kct" -static-only
+fresh_kc; mkdir -p "$kct/packaging"; printf 'environment:\n  ACTIVEDIQ_KEK_PROVIDER: ${KP:-passphrase}\n' >"$kct/packaging/compose.yaml"
+must_fail_with "fitness-keys FF-KEY-3 on a \${KP:-passphrase} default ACTIVEDIQ_KEK_PROVIDER (T-1650)" 'packaging/compose.yaml:2 FF-KEY-3 \[provider-default\]' "$kcbin" -root "$kct" -static-only
+fresh_kc; mkdir -p "$kct/packaging"; printf 'ARG P=passphrase\nENV ACTIVEDIQ_KEK_PROVIDER=${P}\n' >"$kct/packaging/Dockerfile.server"
+must_fail_with "fitness-keys FF-KEY-3 on a Dockerfile ARG/ENV-indirected ACTIVEDIQ_KEK_PROVIDER (T-1650)" 'packaging/Dockerfile.server:2 FF-KEY-3 \[provider-default\]' "$kcbin" -root "$kct" -static-only
+fresh_kc; mkdir -p "$kct/packaging"; printf 'p=passphrase; export ACTIVEDIQ_KEK_PROVIDER="$p"\n' >"$kct/packaging/run.sh"
+must_fail_with "fitness-keys FF-KEY-3 on a shell-variable ACTIVEDIQ_KEK_PROVIDER (T-1650)" 'packaging/run.sh:1 FF-KEY-3 \[provider-default\]' "$kcbin" -root "$kct" -static-only
+fresh_kc; mkdir -p "$kct/packaging"; printf 'environment:\n  ACTIVEDIQ_KEK_PROVIDER: ${KP:?must choose}\n' >"$kct/packaging/compose.yaml"
+must_pass "fitness-keys accepts a required-without-default ACTIVEDIQ_KEK_PROVIDER" "$kcbin" -root "$kct" -static-only
+fresh_kc; mkdir -p "$kct/packaging"; printf ': "${ACTIVEDIQ_KEK_PROVIDER:?must choose}"\n' >"$kct/packaging/run.sh"
+must_pass "fitness-keys accepts a shell guard requiring ACTIVEDIQ_KEK_PROVIDER (T-1650)" "$kcbin" -root "$kct" -static-only
+fresh_kc; mkdir -p "$kct/packaging"; printf 'export ACTIVEDIQ_KEK_PROVIDER="${ACTIVEDIQ_KEK_PROVIDER:-passphrase}"\n' >"$kct/packaging/run.sh"
+must_fail_with "fitness-keys FF-KEY-3 on a shell self-reference default (T-1650)" 'packaging/run.sh:1 FF-KEY-3 \[provider-default\]' "$kcbin" -root "$kct" -static-only
+fresh_kc; mkdir -p "$kct/packaging"; printf 'ACTIVEDIQ_KEK_PROVIDER=${KP:?x}; ACTIVEDIQ_KEK_PROVIDER=passphrase\n' >"$kct/packaging/run.sh"
+must_fail_with "fitness-keys FF-KEY-3 on a default assigned after a compliant assignment on the same line (T-1650)" 'packaging/run.sh:1 FF-KEY-3 \[provider-default\]' "$kcbin" -root "$kct" -static-only
+fresh_kc; mkdir -p "$kct/packaging/windows/msi"; printf '<Wix><Component>\n  <Environment Id="e" Name="ACTIVEDIQ_KEK_PROVIDER" Value="passphrase" Action="set" />\n</Component></Wix>\n' >"$kct/packaging/windows/msi/Server.wxs"
+must_fail_with "fitness-keys FF-KEY-3 on a WiX <Environment Name=.. Value=..> ACTIVEDIQ_KEK_PROVIDER (T-1764)" 'packaging/windows/msi/Server.wxs:2 FF-KEY-3 \[provider-default\]' "$kcbin" -root "$kct" -static-only
+fresh_kc; mkdir -p "$kct/packaging/windows"; printf '[Environment]::SetEnvironmentVariable("ACTIVEDIQ_KEK_PROVIDER", "passphrase", "Machine")\n' >"$kct/packaging/windows/Set-Env.ps1"
+must_fail_with "fitness-keys FF-KEY-3 on SetEnvironmentVariable(name, value) for ACTIVEDIQ_KEK_PROVIDER (T-1764)" 'packaging/windows/Set-Env.ps1:1 FF-KEY-3 \[provider-default\]' "$kcbin" -root "$kct" -static-only
+fresh_kc; mkdir -p "$kct/packaging/windows/msi"; printf '<Wix><Environment Name="ACTIVEDIQ_KEK_PROVIDER" Value="" /></Wix>\n' >"$kct/packaging/windows/msi/Server.wxs"
+must_pass "fitness-keys accepts a WiX ACTIVEDIQ_KEK_PROVIDER with an empty Value" "$kcbin" -root "$kct" -static-only
+fresh_kc; mkdir -p "$kct/packaging/windows"; printf 'Set-ItemProperty -Path $k -Name ACTIVEDIQ_KEK_PROVIDER `\n  -Value passphrase\n' >"$kct/packaging/windows/Set-Env.ps1"
+must_fail_with "fitness-keys FF-KEY-3 on a backtick-continued Set-ItemProperty -Name/-Value (T-1764)" 'packaging/windows/Set-Env.ps1:1 FF-KEY-3 \[provider-default\]' "$kcbin" -root "$kct" -static-only
+fresh_kc; mkdir -p "$kct/packaging/windows"; printf "New-Item -Path Env:\\\\ACTIVEDIQ_KEK_PROVIDER -Value 'passphrase'\n" >"$kct/packaging/windows/Set-Env.ps1"
+must_fail_with "fitness-keys FF-KEY-3 on New-Item -Path Env:\\NAME -Value (T-1764)" 'packaging/windows/Set-Env.ps1:1 FF-KEY-3 \[provider-default\]' "$kcbin" -root "$kct" -static-only
+fresh_kc; mkdir -p "$kct/packaging/windows"; printf '$required = @("ACTIVEDIQ_KEK_PROVIDER", "ACTIVEDIQ_KEK_DIR")\n' >"$kct/packaging/windows/Test-Env.ps1"
+must_pass "fitness-keys accepts a preflight list that merely names ACTIVEDIQ_KEK_PROVIDER (T-1764)" "$kcbin" -root "$kct" -static-only
 fresh_kc; printf 'package keys\n\nfunc (k *KeySource) Lazy() { _ = `insert into tenant_keys (a) values (1)` }\n' >"$kct/internal/platform/keys/lazy.go"
 must_fail_with "fitness-keys FF-KEY-5 on an INSERT reachable from the KeySource" 'FF-KEY-5 \[insert-site\]' "$kcbin" -root "$kct" -static-only
 fresh_kc; printf 'package keys\n\nvar _ = tablekind.Declare(tablekind.Table{Name: "public.tenant_keys", Entity: "DM-02", Kind: tablekind.Tenant})\n\nfunc Provision() { _ = `INSERT INTO tenant_keys` }\n' >"$kct/internal/platform/keys/store.go"

@@ -24,11 +24,17 @@ type Row struct {
 	ActivatedBy []string // existing paths that activate it
 	Passed      bool     // the check ran and passed
 	Deferred    bool     // the subject exists, the check does not, and a valid deferral covers the gap
+	StaticRan   bool     // the row's static half ran
+	StaticPass  bool     // ... and passed
 }
 
 // State renders the row for the printed table.
 func (r Row) State() string {
 	switch {
+	case r.Deferred && r.StaticRan && r.StaticPass:
+		return fmt.Sprintf("ACTIVE, DEFERRED (%s until %s), static half passing", r.Deferral.Ticket, r.Deferral.Expires)
+	case r.Deferred && r.StaticRan:
+		return fmt.Sprintf("ACTIVE, DEFERRED (%s until %s), STATIC HALF FAILING", r.Deferral.Ticket, r.Deferral.Expires)
 	case r.Deferred:
 		return fmt.Sprintf("ACTIVE, DEFERRED (%s until %s)", r.Deferral.Ticket, r.Deferral.Expires)
 	case len(r.ActivatedBy) == 0 && len(r.Command) == 0:
@@ -94,6 +100,14 @@ func (c *Ctx) checkActivation() ([]Row, []Violation) {
 			continue
 		}
 		subject := strings.Join(r.ActivatedBy, ", ")
+		// The static half is part of the row, not of the deferral: it runs the moment the subject
+		// exists, and a failure is a violation whether or not the other half is deferred.
+		if len(a.Static) > 0 {
+			rows[last].StaticRan = true
+			if c.runCheck(a, a.Static, subject, "static half ", add) {
+				rows[last].StaticPass = true
+			}
+		}
 		if len(a.Command) == 0 && a.Deferral != nil && dok {
 			rows[last].Deferred = true
 			continue
@@ -102,19 +116,9 @@ func (c *Ctx) checkActivation() ([]Row, []Violation) {
 			add(a.Check, fmt.Sprintf("%s exists, which activates %s (%s), but the check is not implemented: the row has no command. A subject cannot merge without its check; implement %s and register its command in %s", subject, a.Check, a.Subject, a.Check, "tools/fitness/profiles/manifest.json"))
 			continue
 		}
-		if msg := c.commandProblem(a.Command); msg != "" {
-			add(a.Check, fmt.Sprintf("%s activates %s, but its command %q cannot run: %s", subject, a.Check, strings.Join(a.Command, " "), msg))
-			continue
+		if c.runCheck(a, a.Command, subject, "", add) {
+			rows[last].Passed = true
 		}
-		cmd := exec.Command(a.Command[0], a.Command[1:]...)
-		cmd.Dir = c.Root
-		var out bytes.Buffer
-		cmd.Stdout, cmd.Stderr = &out, &out
-		if err := cmd.Run(); err != nil {
-			add(a.Check, fmt.Sprintf("%s activates %s and its check %q fails: %v\n%s", subject, a.Check, strings.Join(a.Command, " "), err, tail(out.String(), 20)))
-			continue
-		}
-		rows[last].Passed = true
 	}
 	for _, id := range requiredActivation {
 		if !seen[id] {
@@ -122,6 +126,24 @@ func (c *Ctx) checkActivation() ([]Row, []Violation) {
 		}
 	}
 	return rows, vs
+}
+
+// runCheck runs one command of a row from the repository root and reports whether it passed; a command
+// that cannot run, or fails, is added as a violation.
+func (c *Ctx) runCheck(a Activation, argv []string, subject, what string, add func(check, msg string)) bool {
+	if msg := c.commandProblem(argv); msg != "" {
+		add(a.Check, fmt.Sprintf("%s activates %s, but its %scommand %q cannot run: %s", subject, a.Check, what, strings.Join(argv, " "), msg))
+		return false
+	}
+	cmd := exec.Command(argv[0], argv[1:]...)
+	cmd.Dir = c.Root
+	var out bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &out, &out
+	if err := cmd.Run(); err != nil {
+		add(a.Check, fmt.Sprintf("%s activates %s and its %scheck %q fails: %v\n%s", subject, a.Check, what, strings.Join(argv, " "), err, tail(out.String(), 20)))
+		return false
+	}
+	return true
 }
 
 var ticketRe = regexp.MustCompile(`^T-[0-9]{4,}$`)
