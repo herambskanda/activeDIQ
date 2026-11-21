@@ -5,7 +5,11 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"log/slog"
+	"maps"
 	"math/rand/v2"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/skenzeriq/activediq/internal/platform/audit"
@@ -46,16 +50,43 @@ type claimed struct {
 	plan      StepPlan
 	conn, dc  string
 	cred      bool
+	// credentialID is the DM-11 row of the connection's bound credential, resolved once at claim time
+	// before the write and stored on the step row (T-1629). It is stamped on the audit event of a
+	// directory-write step, never the bind name.
+	credentialID string
+	// unresolved marks a directory-write step that never wrote because its credential could not be
+	// named; its event carries no dc/credential_id, since nothing was transported.
+	unresolved bool
 }
 
 func (c *claimed) event(r *Runner, o audit.Outcome, reason string, recovered bool) audit.Event {
 	ev := audit.Event{ID: fmt.Sprintf("op-%s-i%d-s%d", c.key.Operation, c.key.Item, c.key.Step), Kind: c.d.AuditKind,
 		Actor: c.op.Chain, Target: c.plan.Target, Key: c.key, Outcome: o, Reason: reason, PlanHash: c.op.PlanHash,
 		Changes: changesOf(c.plan.Target, c.plan.Diff)}
+	// A step that writes to a directory (it has a pinned DC) names the DC and the credential it was
+	// transported by, so an auditor can join a DC log line to this event from the exported chain alone.
+	// Never the bind account name or SID: DM-11 metadata is their single source (T-1601 section 5).
+	if c.dc != "" && !c.unresolved {
+		ev.Details = detail("credential_id", c.credentialID, "dc", c.dc)
+	}
 	if recovered {
-		ev.Details = detail("recovered", true)
+		ev.Details = mergeDetails(ev.Details, detail("recovered", true))
 	}
 	return ev
+}
+
+// mergeDetails returns a and b as one slice in strictly increasing key order; on a duplicate key b wins.
+func mergeDetails(a, b []audit.Detail) []audit.Detail {
+	m := make(map[string]audit.Detail, len(a)+len(b))
+	for _, d := range a {
+		m[d.Key] = d
+	}
+	for _, d := range b {
+		m[d.Key] = d
+	}
+	out := slices.Collect(maps.Values(m))
+	slices.SortFunc(out, func(x, y audit.Detail) int { return strings.Compare(x.Key, y.Key) })
+	return out
 }
 
 // claimNext claims the next planned step of one chunk of one phase, or returns nil when none is left.
@@ -169,6 +200,15 @@ func (r *Runner) mintFor(c *claimed, attempt int, sec secret.Secret) (step.Step,
 
 // execute writes one claimed step and records the outcome.
 func (r *Runner) execute(ctx context.Context, t tenant.ID, tx txFunc, c *claimed) error {
+	// Name the credential before anything is written (T-1629): no credential, no write.
+	switch ok, err := r.ensureCredential(ctx, t, tx, c); {
+	case errors.Is(err, errCredentialUnresolved):
+		return r.noCredential(ctx, t, tx, c)
+	case err != nil:
+		return err
+	case !ok:
+		return nil // another attempt owns the step
+	}
 	var sec secret.Secret
 	if c.d.SecretInput {
 		err := tx(ctx, func(ctx context.Context, q store.Tx) (err error) {
@@ -183,7 +223,8 @@ func (r *Runner) execute(ctx context.Context, t tenant.ID, tx txFunc, c *claimed
 			return err
 		}
 	}
-	wctx, cancel := context.WithCancelCause(ctx)
+	// The Action's directory calls resolve their connection under the tenant on the context.
+	wctx, cancel := context.WithCancelCause(authority.WithTenant(ctx, c.op.Tenant.String()))
 	defer cancel(nil)
 	r.renewLoop(wctx, cancel, t, tx, c)
 	tries := 1
@@ -263,7 +304,7 @@ func (r *Runner) renewLoop(ctx context.Context, cancel context.CancelCauseFunc, 
 // after-state in place means the write landed and the step is applied, not failed; the before-state
 // means it did not; anything unreadable leaves the step claimed for the reconciler.
 func (r *Runner) afterRetries(ctx context.Context, t tenant.ID, tx txFunc, c *claimed) error {
-	obs, err := c.act.(Observer).Observe(ctx, c.op.Pins, c.plan, c.claimedAt)
+	obs, err := c.act.(Observer).Observe(authority.WithTenant(ctx, c.op.Tenant.String()), c.op.Pins, c.plan, c.claimedAt)
 	switch {
 	case err != nil:
 		return nil // stays applying; the lease lapses and the reconciler decides
@@ -285,7 +326,7 @@ func (r *Runner) verifyAndRecord(ctx context.Context, t tenant.ID, tx txFunc, c 
 	var verr error
 	stp, revoke, merr := r.mintFor(c, c.attempt, secret.Secret{})
 	if merr == nil {
-		v, verr = c.act.Verify(ctx, stp, c.plan, out)
+		v, verr = c.act.Verify(authority.WithTenant(ctx, c.op.Tenant.String()), stp, c.plan, out)
 		revoke()
 	}
 	// Source 1, the connector's step-9 report: it counts at once and outranks every other reason,
@@ -337,6 +378,63 @@ type recordSpec struct {
 	recovered    bool
 	out          Outcome
 	t0           *tier0Report // set with verifyFailed == ReasonTier0AfterWrite
+}
+
+// ensureCredential names the DM-11 credential of a directory-write step's connection and stores it on
+// the step row, fenced by the attempt. It runs BEFORE the write: if it fails the step does not write
+// (callers record credential_unresolved), so a write on the DC is never left without its credential_id.
+// A value already stored by the first claim wins, so a retry or takeover keeps the original. A false ok
+// means the attempt was superseded.
+func (r *Runner) ensureCredential(ctx context.Context, t tenant.ID, tx txFunc, c *claimed) (ok bool, err error) {
+	if c.dc == "" || c.credentialID != "" {
+		return true, nil
+	}
+	id, err := r.cfg.Credentials.CredentialOf(ctx, t, c.conn)
+	if err == nil && id == "" {
+		err = errors.New("connection has no credential")
+	}
+	if err != nil {
+		r.logCredentialUnresolved(ctx, c, err)
+		return true, fmt.Errorf("%w: %w", errCredentialUnresolved, err)
+	}
+	var stored string
+	err = tx(context.WithoutCancel(ctx), func(ctx context.Context, q store.Tx) error {
+		stored = ""
+		e := q.QueryRow(ctx, `UPDATE public.operation_steps SET credential_id = CASE WHEN credential_id = '' THEN $6 ELSE credential_id END
+WHERE tenant_id = $1::uuid AND operation_id = $2::uuid AND item_no = $3 AND step_no = $4 AND state = 'applying' AND attempt = $5
+RETURNING credential_id`, t.String(), string(c.key.Operation), c.key.Item, c.key.Step, c.attempt, id).Scan(&stored)
+		if store.IsNoRows(e) {
+			return nil
+		}
+		return e
+	})
+	if err != nil {
+		return true, fmt.Errorf("operation: storing the step's credential id: %w", err)
+	}
+	if stored == "" {
+		return false, nil
+	}
+	c.credentialID = stored
+	return true, nil
+}
+
+// logCredentialUnresolved tells operations why a step could not name its credential: the error class and
+// the step key, never the credential or the error's text (a store error can carry values).
+func (r *Runner) logCredentialUnresolved(ctx context.Context, c *claimed, err error) {
+	class := "lookup_failed"
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		class = "lookup_cancelled"
+	}
+	slog.WarnContext(ctx, "operation: step credential unresolved",
+		"operation", string(c.key.Operation), "item", c.key.Item, "step", c.key.Step, "class", class)
+}
+
+var errCredentialUnresolved = errors.New("operation: the connection's credential could not be resolved")
+
+// noCredential records a directory-write step that did not write because its credential is unresolved.
+func (r *Runner) noCredential(ctx context.Context, t tenant.ID, tx txFunc, c *claimed) error {
+	c.unresolved = true
+	return r.record(ctx, t, tx, c, recordSpec{failed: "credential_unresolved"})
 }
 
 // record is the second short transaction: state, item, event and secret deletion commit together,
@@ -408,7 +506,7 @@ func (r *Runner) recordIn(ctx context.Context, q store.Tx, t tenant.ID, c *claim
 				return err
 			}
 			item, ev = ItemFailed, c.event(r, audit.Failure, s.verifyFailed, s.recovered)
-			ev.Details = append(ev.Details, s.t0.details(c)...)
+			ev.Details = mergeDetails(ev.Details, s.t0.details(c))
 		default: // deferred: the write is done; the read-back is driven later
 			ev = c.event(r, audit.Success, "applied_verification_pending", s.recovered)
 			ev.ID += "-pending"

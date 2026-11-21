@@ -20,6 +20,7 @@ import (
 	"github.com/skenzeriq/activediq/internal/connector/read"
 	"github.com/skenzeriq/activediq/internal/connector/write"
 	"github.com/skenzeriq/activediq/internal/directory/attr/guid"
+	"github.com/skenzeriq/activediq/internal/directory/ldapfilter"
 	"github.com/skenzeriq/activediq/internal/platform/secret"
 	connectorv1 "github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1"
 )
@@ -41,9 +42,13 @@ type searchLab struct {
 	client connectorv1.ConnectorClient
 	ident  *connectorv1.DirectoryIdentity
 	stamp  string
+	src    *read.ADSource
 }
 
-func newSearchLab(t *testing.T) *searchLab {
+func newSearchLab(t *testing.T) *searchLab { return newSearchLabSchema(t, nil) }
+
+// newSearchLabSchema opens the lab with the connector's default allowlist plus extra attributes.
+func newSearchLabSchema(t *testing.T, extra []ldapfilter.AttrInfo) *searchLab {
 	t.Helper()
 	env := labEnv(t)
 	pem, err := os.ReadFile(filepath.Join("..", "..", "..", "lab", ".lab-ca.pem"))
@@ -55,7 +60,7 @@ func newSearchLab(t *testing.T) *searchLab {
 	port := env["LAB_LDAPS_PORT"]
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
-	sess, err := ad.Open(ctx, ad.Config{Servers: []string{"localhost:" + port}, RootCAs: pool, PageSize: searchPage,
+	sess, err := ad.Open(ctx, ad.Config{Servers: []string{"localhost:" + port}, RootCAs: pool, PageSize: searchPage, Schema: ad.DefaultSchema().With(extra...),
 		Credential: ad.Credential{BindName: "svc-activediq@lab.activediq.test", Password: secret.FromBytes([]byte(env["LAB_SVC_PASSWORD"]))}})
 	if err != nil {
 		t.Fatal(err)
@@ -77,6 +82,7 @@ func newSearchLab(t *testing.T) *searchLab {
 	if err != nil {
 		t.Fatal(err)
 	}
+	l.src = src
 	l.client = start(t, src)
 	return l
 }

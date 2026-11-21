@@ -76,7 +76,7 @@ type SubjectInput struct {
 
 // RootInput is one scope root of an assignment (DM-35).
 type RootInput struct {
-	Kind         string `json:"kind"` // naming_context | ou_subtree | entra_tenant | tier0_scope | tenant
+	Kind         string `json:"kind"` // naming_context | ou_subtree | ou_one_level | entra_tenant | tier0_scope | tenant
 	ConnectionID string `json:"connectionId"`
 	GUID         string `json:"guid"`
 	Exclude      bool   `json:"exclude,omitempty"`
@@ -352,6 +352,7 @@ func grant(g *rbac.Grants) (operation.Action, error) {
 			}
 			diff := []operation.Change{
 				{Attribute: "role", After: []string{role.Name}},
+				// i2:exempt the grantee is the object of this Store Action, not the initiator, and no directory is written
 				{Attribute: "subject", After: []string{in.Subject.label()}},
 				{Attribute: "scope", After: rootLabels(in.roots())},
 			}
@@ -419,6 +420,7 @@ func revoke(g *rbac.Grants) (operation.Action, error) {
 					Target: ref(TargetClassAssignment, in.AssignmentID), Kind: "delegation.assignment.revoke",
 					Diff: []operation.Change{
 						{Attribute: "role", Before: []string{a.RoleName}, After: []string{a.RoleName}},
+						// i2:exempt the revoked grantee is the object of this Store Action, not the initiator
 						{Attribute: "subject", Before: []string{SubjectInput{Kind: string(a.Subject.Kind), AccountID: a.Subject.Account, ConnectionID: a.Subject.Connection, GroupGUID: a.Subject.Group, PolicyID: a.Subject.Automation}.label()}, After: []string{"revoked"}},
 						{Attribute: "scope", Before: rootLabels(a.Roots), After: nil},
 					},

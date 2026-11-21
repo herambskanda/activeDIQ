@@ -2,7 +2,7 @@
 name: devops-engineer
 description: "Use for build systems, CI pipelines and fitness functions, lint and secret scanning, dependency and licence checks, packaging and the signing/release pipeline, and the AD lab environments (Samba AD in CI, Windows lab VMs). Owns how code becomes a verified, signed, shippable artifact and the labs everyone tests against. Not for authoring Windows-native components or their MSI contents (use windows-engineer), test cases themselves (use test-engineer), or architecture decisions (use solution-architect)."
 model: sonnet
-effort: high
+effort: medium
 skills:
   - factory-protocol
   - handoff

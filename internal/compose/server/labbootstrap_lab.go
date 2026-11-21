@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
 	"path/filepath"
 	"sort"
@@ -42,23 +43,31 @@ import (
 //
 // Environment (nothing configured = nothing seeded):
 //
-//	Windows lab (VM 119): WIN_LAB_DC_ADDR [WIN_LAB_TLS_NAME] WIN_LAB_SVC_PASSWORD WIN_LAB_CA (CA PEM path)
+//	Windows lab (VM 119): WIN_LAB_DC_ADDR [WIN_LAB_TLS_NAME] WIN_LAB_SVC_KEYTAB (keytab path) WIN_LAB_CA (CA PEM path)
 //	Samba lab:            LAB_LDAPS_PORT LAB_SVC_PASSWORD LAB_CA (CA PEM path)
+//
+// The Windows lab binds like the shipping connector (T-1267): SASL GSSAPI from a keytab over verified
+// LDAPS with channel binding (internal/compose/connector adConfig). The Samba lab keeps a simple bind
+// over verified LDAPS: the Samba lab's KDC is not reachable the way the connector needs (no keytab or
+// channel-binding lab on the CI Samba), and the shipping bind is proven against Samba by T-0560.
 //
 // A lab that is partly configured fails boot, naming the missing variable; it never half-seeds.
 // Passwords are read into a secret.Secret and are never logged.
 
 type labSpec struct {
-	Name       string // display name suffix: "win" or "samba"
-	Server     string // host:port
-	ServerName string // certificate name; "" = host
-	BindName   string
-	Password   secret.Secret
+	Name       string        // display name suffix: "win" or "samba"
+	Server     string        // host:port
+	ServerName string        // certificate name; "" = host
+	BindName   string        // the account's UPN: identity lookup, and the simple-bind name of the Samba lab
+	Password   secret.Secret // Samba lab only; the win lab has none
+	Kerberos   *ad.Kerberos  // win lab: keytab identity (GSSAPI + channel binding); nil for Samba
 	CAPath     string
 }
 
 const (
 	winLabBind   = "svc-activediq@win.activediq.test"
+	winLabPrinc  = "svc-activediq"
+	winLabRealm  = "WIN.ACTIVEDIQ.TEST"
 	winLabTLS    = "dc1.win.activediq.test"
 	sambaLabBind = "svc-activediq@lab.activediq.test"
 )
@@ -72,8 +81,8 @@ func errLabConfig(lab, missing string) error {
 func labSpecs(getenv func(string) string) ([]labSpec, error) {
 	var out []labSpec
 	if addr := getenv("WIN_LAB_DC_ADDR"); addr != "" {
-		if getenv("WIN_LAB_SVC_PASSWORD") == "" {
-			return nil, errLabConfig("windows", "WIN_LAB_SVC_PASSWORD")
+		if getenv("WIN_LAB_SVC_KEYTAB") == "" {
+			return nil, errLabConfig("windows", "WIN_LAB_SVC_KEYTAB")
 		}
 		if getenv("WIN_LAB_CA") == "" {
 			return nil, errLabConfig("windows", "WIN_LAB_CA")
@@ -85,8 +94,13 @@ func labSpecs(getenv func(string) string) ([]labSpec, error) {
 		if tls == "" {
 			tls = winLabTLS
 		}
-		out = append(out, labSpec{Name: "win", Server: addr, ServerName: tls, BindName: winLabBind,
-			Password: secret.FromBytes([]byte(getenv("WIN_LAB_SVC_PASSWORD"))), CAPath: getenv("WIN_LAB_CA")})
+		kt, err := readKeytab(getenv("WIN_LAB_SVC_KEYTAB"))
+		if err != nil {
+			return nil, err
+		}
+		host, _, _ := net.SplitHostPort(addr)
+		out = append(out, labSpec{Name: "win", Server: addr, ServerName: tls, BindName: winLabBind, CAPath: getenv("WIN_LAB_CA"),
+			Kerberos: &ad.Kerberos{Principal: winLabPrinc, Realm: winLabRealm, Keytab: kt, KDCs: []string{host}}})
 	}
 	if port := getenv("LAB_LDAPS_PORT"); port != "" {
 		if getenv("LAB_SVC_PASSWORD") == "" {
@@ -99,6 +113,19 @@ func labSpecs(getenv func(string) string) ([]labSpec, error) {
 			Password: secret.FromBytes([]byte(getenv("LAB_SVC_PASSWORD"))), CAPath: getenv("LAB_CA")})
 	}
 	return out, nil
+}
+
+// readKeytab loads the keytab file as a secret; the error names the variable, never the path's content.
+func readKeytab(path string) (secret.Secret, error) {
+	fi, err := os.Stat(path)
+	if err != nil || !fi.Mode().IsRegular() || fi.Size() == 0 || fi.Size() > 64<<10 {
+		return secret.Secret{}, errors.New("server: lab bootstrap (windows): WIN_LAB_SVC_KEYTAB is not a usable keytab file")
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return secret.Secret{}, errors.New("server: lab bootstrap (windows): WIN_LAB_SVC_KEYTAB is unreadable")
+	}
+	return secret.FromBytes(b), nil
 }
 
 // labPinStore is the in-memory write.PinStore of a lab connector.
@@ -198,8 +225,13 @@ func openLabServer(ctx context.Context, sp labSpec) (*labServer, func(), error) 
 	if !pool.AppendCertsFromPEM(pem) {
 		return nil, nil, errors.New("CA file is not valid PEM")
 	}
-	sess, err := ad.Open(ctx, ad.Config{Servers: []string{sp.Server}, ServerName: sp.ServerName, RootCAs: pool, PageSize: 500,
-		Credential: ad.Credential{BindName: sp.BindName, Password: sp.Password}})
+	cfg := ad.Config{Servers: []string{sp.Server}, ServerName: sp.ServerName, RootCAs: pool, PageSize: 500}
+	if sp.Kerberos != nil {
+		cfg.Kerberos = sp.Kerberos
+	} else {
+		cfg.Credential = ad.Credential{BindName: sp.BindName, Password: sp.Password}
+	}
+	sess, err := ad.Open(ctx, cfg)
 	if err != nil {
 		return nil, nil, fmt.Errorf("open directory session: code %s", ad.CodeOf(err))
 	}
@@ -233,6 +265,7 @@ func openLabServer(ctx context.Context, sp labSpec) (*labServer, func(), error) 
 		return nil, nil, err
 	}
 	prov := write.NewADProvider(sess, nil, ident, &labPinStore{})
+	prov.Self = self
 	src, err := read.NewADSource(sess, prov)
 	if err != nil {
 		return nil, nil, errors.New("read source")
@@ -381,6 +414,10 @@ func (s *labServer) Read(req *connectorv1.ReadRequest, st grpc.ServerStreamingSe
 
 func (s *labServer) ScopedSearch(req *connectorv1.ScopedSearchRequest, st grpc.ServerStreamingServer[connectorv1.ScopedSearchResponse]) error {
 	return s.read.ScopedSearch(req, st)
+}
+
+func (s *labServer) ChangeFeed(req *connectorv1.ChangeFeedRequest, st grpc.ServerStreamingServer[connectorv1.ChangeFeedResponse]) error {
+	return s.read.ChangeFeed(req, st)
 }
 
 func (s *labServer) Describe(ctx context.Context, req *connectorv1.DescribeRequest) (*connectorv1.DescribeResponse, error) {

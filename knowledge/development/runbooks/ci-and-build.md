@@ -13,7 +13,7 @@ Standard: `knowledge/development/standards/ci-gates.md`. Layout: blueprint §1.
 
 ## Prerequisites
 
-`go` (any 1.21+; it downloads the pinned 1.27.3 toolchain on first use, so the machine needs
+`go` (any 1.21+; it downloads the pinned 1.27.4 toolchain on first use, so the machine needs
 network access once), `node` ≥ 22 with `npm`, `python3`, `make`, `bash`. Everything else is installed
 by the targets: web packages by `npm ci`, gitleaks by `make secrets-install`.
 
@@ -24,7 +24,10 @@ by the targets: web packages by `npm ci`, gitleaks by `make secrets-install`.
 | The full gate (what the merge needs) | `make ci` (about 25 s warm) |
 | Just lint / tests / fitness / build | `make lint`, `make test`, `make fitness`, `make build` |
 | Format everything in place | `make fmt` |
+| The cheap checks first (T-2313, <= 5 min, no Docker) | `make prescreen`: lint-go, gen-check, gen-modules-check, gen-api-check, lint-api, the Docker-free fitness rules (sso, proto, safeprim, corpus, objectid, grantbootstrap, disclosure, fleet-ca-scope, merge-order), workflows-check, secrets-scan, vuln-scan and the repo-scanning Go tests (`prescreen-gotests`). It runs every check and lists all red ones. Not part of `make ci`; `make ci` still runs everything |
+| Prove each prescreen check goes red on a violation | `make prescreen-proof` (clean tree needed, ~5 min, mutates and restores the tree) |
 | Prove the gates still fail on violations | `make ci-proof` |
+| The opt-in scale job (T-2008) | `make test-scale` (sets `ADIQ_SCALE_FULL=1`; `SCALE_TIMEOUT=45m` by default) |
 | List all targets | `make help` |
 
 ## Fresh clone
@@ -232,10 +235,18 @@ If `make ci` fails on a fresh clone, that is a bug in the scaffold; file an `ops
     import)` means the row of `operation` itself.
   - `pending` packages are not checked until they exist; a `self-test` finding means the
     `internal/platform/<name>` mapping found none of the listed packages while the tree has them
-    elsewhere. O1 (step escape) also runs `tools/analyzers/stepescape` type-aware: the module must build first. To exempt a deliberate smuggle in a test, put `//fitness:allow-step-escape <reason>` on or above the line (test files only). O2 (write surface) and the SQL half of O4 (state column) run on every invocation; violations read `file:line: O2 [rule 2] …` / `O4 [rule 3] …`. O3 and O5–O7 print `pending <id> … (owner T-…)` until their code lands (T-0391, T-0392); the owner replaces the pending entry in `pendingChecks` (tools/fitness/operation/main.go) with the check. A pending line is not a pass.
+    elsewhere. O1 (step escape) also runs `tools/analyzers/stepescape` type-aware: the module must build first. To exempt a deliberate smuggle in a test, put `//fitness:allow-step-escape <reason>` on or above the line (test files only). O2 (write surface) also runs `tools/analyzers/connwrite` type-aware in the same load as stepescape (a violation reads `file:line: O2 [rule 2] …` like the syntactic ones; to hold a read-only view of the client, declare a narrow interface without Plan/Apply, never an alias of `ConnectorClient`; the exemptions apply to the top-level `internal/proto` and `internal/directory/client` only, judged by the path below the module root, so a nested `cmd/<x>/internal/…` directory of the same name is checked like any other package; the `_test` suffix is dropped only for a genuine external test package — `package x_test`, `_test.go` files only, in the directory of `x` — so a real directory named `internal/proto_test` or `internal/directory/client_test` is checked like any other package; the `_test.go` allowances use the file's real name, never a `//line`-adjusted one, so a non-test file cannot pose as a test). O2 (write surface) and the SQL half of O4 (state column) run on every invocation; violations read `file:line: O2 [rule 2] …` / `O4 [rule 3] …`. O3 and O5–O7 print `pending <id> … (owner T-…)` until their code lands (T-0391, T-0392); the owner replaces the pending entry in `pendingChecks` (tools/fitness/operation/main.go) with the check. A pending line is not a pass.
   - **O8 (pipeline behaviour, T-0393)** reads `internal/platform/operation/o8_manifest_test.go` (it parses the Go source; the list is never copied into the tool), then runs every test the manifest names with `go test -json -count=1` and fails, as `<dir> <Test>: O8 [pipeline behaviour] …`, when a named test is missing (renamed or deleted), fails, is skipped, or has a skipped subtest. **No Docker is a failure, not a skip**: the Postgres tests need the Docker daemon, exactly as `fitness-audit` does. A clause the manifest lists as a `Gap` prints `pending O8 <id>: T-nnnn …` (today the non-ancestry scope roots on T-0824, undo of a failed item T-0830, the Provenance implementation T-0831); when the ticket lands, the manifest owner moves the clause to `Tests`. Tests in `lab`-tagged files must exist but are listed `not run` unless you pass `-o8-lab` (`make lab-up` first, then `go run ./tools/fitness/operation -o8-lab`); a failing run of the lab arm fails the check. Proof: `go test ./tools/fitness/operation` (o8_test.go runs a real `go test` in a throw-away module: failing, skipped, subtest-skipped, renamed, deleted, unbuildable and gap-without-ticket each fail; the clean tree passes).
 - **`fitness-safeprim`** (FF-SP1 to FF-SP3, safe-primitives §8): each finding reads
   `file:line: FF-SPn [rule] message`. `make fitness-safeprim` re-runs it alone;
+  `go run ./tools/fitness/safeprim -p3` runs only the static half of activation row P3 (ADR-0002: the
+  `ldap-library`, `kerberos-library`, `graph-library`, `credential-sealed-import`, `credential-local-import`,
+  `directory-credential-type` and `directory-credential-unseal` rules); the fitness-profiles activation table runs
+  it as the P3 row's `static` command. The library lists are `LDAPLibraries`, `KerberosLibraries` and
+  `GraphLibraries` in `tools/analyzers/policy/policy.go`: add a new directory, Kerberos or Entra library there and
+  nowhere else. The credential types are read from `internal/connector/credential` (every exported type except
+  `policy.CredentialPassable`), so a type added there is fenced with no edit to the checker. A lab test outside
+  `internal/connector` that needs a keytab uses `internal/connector/ad/adtest`.
   `go run ./tools/fitness/safeprim -checks FF-SP1,FF-SP3 -no-analyzers` runs a subset without the
   type-aware passes. The same passes run as `go vet -vettool=$(go build -o /tmp/safeprim-vet ./tools/vettool && echo /tmp/safeprim-vet) ./...`.
   The web half is `eslint` (rule names `no-hand-built-security-string`, `no-quote-doubling`,
@@ -341,6 +352,39 @@ What it enforces: a booted install is judged on eight named cases (threat-model 
   `HOST-SETUP-SECRET-SINGLE-USE` are INACTIVE until their product subject exists. The positive verify-full DSN control needs a TLS
   PostgreSQL and is covered by `store.CheckTransport`'s own tests.
 
+## `fitness-host p2-oci` (T-1462: ADR-0002 P2, OCI half, erratum E-3)
+
+What it enforces: the `P2-oci` row of the `fitness-profiles` activation table runs
+`go run ./tools/fitness/host p2-oci` (`make fitness-p2-oci` runs the same command alone; it is not in `make fitness`
+because `make fitness-profiles` already runs it). For each OCI manifest from `internal/compose/profile` (`linux-oci`,
+`saas`) it:
+
+1. **manifest**: checks the manifest is an `oci` service host, and that only `saas` enables `tenant-provisioning`;
+2. **build**: builds `cmd/server` statically for `linux/amd64` and `linux/arm64` (`-trimpath`, `CGO_ENABLED=0`), checks the
+   ELF machine, builds `packaging/linux-oci/Dockerfile.server` with `--platform` and checks the image's architecture.
+   The Dockerfile has no `RUN`, so the foreign-architecture **build never needs emulation and is never skipped**;
+3. **emulation**: runs the real image with `kek` (prints usage). `exec format error` means the Docker host cannot run that
+   architecture. The **boot** of that architecture is then skipped with a printed `SKIP ... step=boot` line, or fails when
+   `P2_OCI_REQUIRE_BOOT=1` (set it on any CI host that has qemu-user binfmt handlers; install them with
+   `docker run --privileged --rm tonistiigi/binfmt --install arm64`);
+4. for PostgreSQL **16 and 18** (the pinned images of `pgharness`): applies every `migrations/*.sql` under the owner role
+   (**migrations**), provisions the KEK, boots the image with TLS on loopback (**boot**), requires
+   `GET /api/v1/health/ready` to answer `200 {"status":"ok"}` (**health**) and counts `public.tenants` (**tenants**): exactly one for
+   `linux-oci`; exactly one for `saas`, created by the platform provisioning path (`provision.FirstRun`).
+
+A failure prints `P2-oci FAIL profile=<p> arch=<a> postgres=<v> step=<s>: ...` and the run exits 1 after trying every other leg.
+Flags for a fixture run: `-profile`, `-arch`, `-pg`, `-migrations <dir>`.
+
+- **Proof it fails:** `hostcheck/p2oci_test.go` (a 503, a wrong body and a refused connection fail the health step; the error
+  names profile and step; a broken migration fixture, `tools/fitness/host/testdata/p2oci-broken-migrations/`, fails the
+  migrations step against a real PostgreSQL) and `make ci-proof` (`host p2-oci` on the broken fixture must fail with
+  `step=migrations`).
+- **Known limit (follow-up ticket):** the server has no multi-tenant provisioning entry point yet (`provision` holds only
+  `FirstRun`; the comment there says SaaS provisioning "will add its entry point here"), so the `saas` leg proves the
+  composed manifest enables the capability and that the booted install holds one provisioned tenant. When the entry
+  point lands, that leg must provision a second tenant through it.
+- **Runtime cost:** about 10 minutes on a loaded host (four server boots plus two PostgreSQL starts).
+
 ## `fitness-agent-host` (T-0554: ADR-0006 A1/A4, ADR-0007 P1-P8, contract R1-R5, F1)
 
 `make fitness-agent-host` (part of `make fitness` and `make ci`). Run a subset: `go run ./tools/fitness/agenthost -checks A1,P`. It prints one line per check; `inactive (<missing input>)` means the subject does not exist yet and the check did not run (exit 0). **ADR-0006 and ADR-0007 become `accepted` only when no line is inactive** and the lab items in ADR-0006 "Verification owed" are confirmed.
@@ -359,7 +403,7 @@ A core MSI with no agent in it is still judged by rules 2-4 and the LocalSystem/
 
 **A1 walker fails closed (T-0677).** A1 does not guess what MSBuild evaluates (`%XX` escapes, properties, globs, `Directory.Build.props`/imports), and it does not trust file names: WiX compiles any file and `<?include?>` takes any name. It scans every WiX-named file (`.wxs/.wxi/.wxl/.wixproj` and their templates) **and, by content, every other text file in the repo (except `.git`; **no extension, binary ones included, exempts a file**, a real binary has NULs and is not text; UTF-16 and UTF-32 are decoded) that is an XML document rooted at `Wix`, `Include` or `WixLocalization`**, wherever it sits; Go/shell files holding a snippet in a string are not XML documents and pass. Consequence: test fixtures must never be WiX on disk (keep them as Go strings written to `t.TempDir()`); WiX under `tools/fitness` fails A1. Prebuilt WiX intermediates (`.wixlib/.wixipl/.wixobj`, or any zip holding `wix-ir.json`) anywhere are violations: we build from source only. A path the walk cannot read (e.g. a mode-000 directory) is a violation. A symbolic link anywhere (except `.git`) is a violation if it is WiX-named, dangling or looping, leaves the repo root, resolves to a directory, or targets a WiX file (by name or content); plain in-repo file links (`node_modules/.bin/*`) pass. Proofs: `TestA1Installer` and `tools/ci/proof.sh` (one fixture per bypass; the unreadable-directory case is skipped as root). **Residual risk:** a Compile Include of an absolute path or one leaving the repo root cannot be checked statically; and so is WiX generated at build time (MSBuild `Exec`/`UsingTask` inline tasks, `WixExtension`/`PackageReference`); that is judged on the built artefact by **`make fitness-built-msi`** (T-0697, below), not by A1's source scan.
 
-**Built-MSI check, `make fitness-built-msi` (T-0697).** After the build, `go run ./tools/fitness/builtmsi -glob 'dist/*.msi'` dumps each MSI with `msidump -t` (msitools) and judges the tables Windows Installer executes: every `ServiceInstall` row must have `StartName` = `NT SERVICE\<its own Name>` (the agent: `NT SERVICE\activeDIQAgent`, exactly one row, no `Password`; empty `StartName` is LocalSystem and fails), every installed service needs an `MsiServiceConfig` row `ConfigType 3` with `Argument 3` (restricted SID) and `ConfigType 4` with exactly `SeChangeNotifyPrivilege`, and any other row for those config types that differs fails; a `ServiceConfig` (util) table with rows fails; every `CustomAction` row must be in both `tools/fitness/agenthost/installer-allow.txt` and `tools/fitness/builtmsi/pinned-actions.txt` with the same Type/Source/Target (the Type numbers there are derived from the flags; verify them against the first real WiX build, and a mismatch is a review item, never a loosening); any `Binary` row fails; every `MsiLockPermissionsEx`/`LockPermissions` row fails (no DACL is reviewed; `installer-allow.txt` lists CustomAction Ids and never vouches for a permission, because MSI keys are per table; a future reviewed DACL needs its own pin keyed by Table+LockObject with the exact SDDL); the `ConfigType 3`/`4` rows count only when `Event` includes install (bit 1), their `Component_` is the one that installs the service, and that component has no `Condition`; any `MsiEmbeddedChainer`/`MsiEmbeddedUI` row fails, `MsiServiceConfigFailureActions` may only restart (0/1, no reboot, no `Command`), and `ServiceControl` may name only the agent service; `Registry`/`RemoveRegistry` rows under HKLM\SYSTEM (or built from a property) fail. Each message names the table and row key. With no MSI the check prints `inactive` (never a pass); the release job runs it on `dist/*.msi` and the ticket that makes the pipeline build the MSI must add `-require` there (`make fitness-built-msi` takes `BUILT_MSI=<glob>`). **Prerequisite:** `apt-get install msitools` (LGPL-2.1+, CI tooling only, never shipped; `wixl` from the same family is needed only by `make ci-proof` and the `TestRealMSI` test, which build real throw-away MSIs). Proof: `tools/ci/proof.sh` builds MSIs whose `.wxs` is generated into `obj/` at build time (as an MSBuild inline task would) and requires the clean one to pass and LocalSystem, an unrestricted SID, an extra privilege, an unreviewed custom action, a service-keyed DACL row, uninstall-only settings and a missing required MSI to fail.
+**Built-MSI check, `make fitness-built-msi` (T-0697).** After the build, `go run ./tools/fitness/builtmsi -glob 'dist/*.msi'` dumps each MSI with `msidump -t` (msitools) and judges the tables Windows Installer executes: every `ServiceInstall` row must have `StartName` = `NT SERVICE\<its own Name>` (the agent: `NT SERVICE\activeDIQAgent`, exactly one row, no `Password`; empty `StartName` is LocalSystem and fails), every installed service needs an `MsiServiceConfig` row `ConfigType 5` (SERVICE_CONFIG_SERVICE_SID_INFO) with `Argument 3` (restricted SID) and `ConfigType 6` (REQUIRED_PRIVILEGES_INFO) with exactly `SeChangeNotifyPrivilege`, and any other row for those config types that differs fails; a `ServiceConfig` (util) table with rows fails; every `CustomAction` row must be in both `tools/fitness/agenthost/installer-allow.txt` and `tools/fitness/builtmsi/pinned-actions.txt` with the same Type/Source/Target (the Type numbers there are derived from the flags; verify them against the first real WiX build, and a mismatch is a review item, never a loosening); any `Binary` row fails; every `MsiLockPermissionsEx`/`LockPermissions` row fails (no DACL is reviewed; `installer-allow.txt` lists CustomAction Ids and never vouches for a permission, because MSI keys are per table; a future reviewed DACL needs its own pin keyed by Table+LockObject with the exact SDDL); the `ConfigType 5`/`6` rows count only when `Event` includes install (bit 1), their `Component_` is the one that installs the service, and that component has no `Condition`; any `MsiEmbeddedChainer`/`MsiEmbeddedUI` row fails, `MsiServiceConfigFailureActions` may only restart (0/1, no reboot, no `Command`), and `ServiceControl` may name only the agent service; `Registry`/`RemoveRegistry` rows under HKLM\SYSTEM (or built from a property) fail. Each message names the table and row key. With no MSI the check prints `inactive` (never a pass); the release workflow (T-0724) builds the agent MSI on a Windows runner (`tools/release/build-agent-msi.sh`, WiX 5.0.2), downloads it into `dist/` in the publish job and runs `go run ./tools/fitness/builtmsi -require -glob 'dist/*.msi'` (`make fitness-built-msi-release`) before the checksums, then refuses an MSI without an Authenticode signature (signing is deferred, D-0010, so a release fails there until a signer exists). Plain `make fitness-built-msi` stays non-`-require` in `make ci` because WiX is Windows-only (`BUILT_MSI=<glob>` overrides the glob). The Type numbers in `pinned-actions.txt` were checked against a real `msidump` of the lab-built MSI (T-0724); the check once used ConfigType 3/4 where Windows Installer uses 5/6 ([MsiServiceConfig](https://learn.microsoft.com/en-us/windows/win32/msi/msiserviceconfig-table)). To judge a lab build locally: `lab/windows/bin/agent-verify --build-only --msi-out <dir>`, copy the MSI to `dist/`, run the command above. **Prerequisite:** `apt-get install msitools` (LGPL-2.1+, CI tooling only, never shipped; `wixl` from the same family is needed only by `make ci-proof` and the `TestRealMSI` test, which build real throw-away MSIs). Proof: `tools/ci/proof.sh` builds MSIs whose `.wxs` is generated into `obj/` at build time (as an MSBuild inline task would) and requires the clean one to pass and LocalSystem, an unrestricted SID, an extra privilege, an unreviewed custom action, a service-keyed DACL row, uninstall-only settings and a missing required MSI to fail.
 
 **If it fails.** The line names the rule and the file. A4: the import path is in the message; the agent has no directory or network-identity client, so remove the import, never the ban. P/F1: the test name is printed; fix the verifier or the bound, never the test. A missing test means a rename: P1-P8 are found by the prefixes `TestP1`…`TestP8`, `TestF1`, `FuzzF1`. A `FuzzF1` crasher is written to `internal/platform/agentpolicy/testdata/fuzz/`: commit it as a regression seed. `make fitness-agent-host AGENT_POLICY_FUZZ_TIME=2s` for a quick local run.
 
@@ -371,6 +415,8 @@ A core MSI with no agent in it is still judged by rules 2-4 and the LocalSystem/
 (`<worktree_root>/.premerge/`) and runs `dispatcher.pre_merge.argv` (default `make -k ci`) there before
 it merges. Settings: `factory/config.json` `dispatcher.pre_merge` (`enabled`, `argv`,
 `timeout_minutes`, `baseline_reuse_roots`). Logs and the baseline cache: `factory/state/premerge/`.
+
+**Findings from repo refs (T-1422).** P7 lists the branches of the checkout, and the scratch worktree shares the main repo's refs, so a branch another session creates after the baseline was cached would read as a finding the merge result "adds". `excuseRefFindings` drops `branch X: P7 …` findings (and the `FAILED fitness-profiles` line, when no other profiles finding remains) from the comparison; the summary says `not counted, they come from the repository's refs`. The candidate's own `factory/<id>` branch is never excused, and P7 itself still fails in CI on `main`.
 
 **The baseline is reused, not re-run per `main` commit (T-1378).** When the merge result is red, the gate
 needs `make -k ci` findings of `main`. It takes them from a cached run (`baseline-*.json`) on the same
@@ -419,3 +465,36 @@ checkout (a failed `merge --abort`, for example "Unable to write index"). `merge
 that as an error and retries, instead of calling it the next ticket's conflict and reopening it
 (T-0941 was reopened twice that way). Finish or abort that merge by hand (`git -C <root> merge --abort`
 once its index is writable); every pending merge then proceeds on the next pass.
+
+## fitness-merge-order (T-1707, ADR-0012)
+
+`make fitness-merge-order` is part of `make fitness`, so of `make ci` and the pre-merge gate.
+
+- **Checker tests** (`factory/test/fitness-merge-order.test.mjs`): a history where a dependent merged before its dependency fails M5; a clean one, a dependency without a branch (spec/docs) and a fast-forwarded dependency pass; a stacked dependent that carries its dependency's commits but lands first still fails.
+- **M1-M4** are bound tests: subtests titled `M1 …` to `M3 …` in `factory/test/stacking.test.mjs` and `M4 …` in `factory/test/premerge.test.mjs` (T-1706 writes them). Until `max_depth` exists in `factory/lib` they print `pending (not a pass)`; afterwards a missing, failed or skipped one fails the build.
+- **M5** (`factory/bin/fitness-merge-order`) scans `git log --first-parent main` against `depends_on` in `factory/state/tickets/` (found via `FACTORY_STATE_DIR`, this tree, or the primary checkout). Without ticket data it prints `inactive`, not a pass. History up to `GRANDFATHER_UNTIL` (main at ratification, `6cb96d24d`) is not judged: it holds dependents merged before their dependency and reused ticket numbers. `KNOWN_EXCEPTIONS` records the exact (merge, dependency) pairs that landed after that, before T-1706 existed (T-1191 on T-1189, stacked by hand); each is exact and tested, and none is added without an ADR note.
+- **Accepting ADR-0012** needs every line green (no `pending`, no `inactive`) on main; flip the ADR then.
+- A violation line names the ticket, the merge SHA and the dependency; fix by landing the dependency first, never by editing the boundary.
+
+## fitness-modules (T-1869, ADR-0013)
+
+`make fitness-modules` is its own target and the first prerequisite of `make ci` and `make fitness`, so a failing earlier gate cannot hide it. It runs the import-rule checker (M3 rule 2.5, M7, and M11: an `exempt.json` entry targeting 2.5, M1, M2, M3, M6 or M9 fails, as does one without reason, ticket or a future expiry) and the M14 Boot test `Test_M14_*` in `internal/compose/server`. M14's `m14Pending` map lists the tags whose builder move (T-1865, T-1866, T-1867) has not landed; delete each entry in the move's change (a stale entry fails).
+## Scale tests are a separate, opt-in job (T-2008)
+
+`internal/directory/inventory` runs about 93 database tests on PostgreSQL 16 and 18; with the three scale tests it hit the 600 s
+test timeout. `Test_group_member_counts_at_scale`, `Test_group_closure_fanout_is_bounded` and `Test_reports_library_batch2_at_scale`
+skip unless `ADIQ_SCALE_FULL=1` (`requireScaleFull` in `scale_gate_test.go`). `make ci` does not set it; the package currently takes ~900 s wall (wait-bound, not scale-test-bound; T-2047 trims the search_* tests; `make ci` uses -timeout 30m) and the 400 s target
+applies once T-2047 lands. Run the scale job with `make test-scale` (own timeout, `SCALE_TIMEOUT`); it is a prerequisite of `make fitness-nightly`, so the nightly job runs it (run it by hand before a release too)
+on the runner that has Docker or the embedded PostgreSQL. A new test that loads more than a few thousand objects calls `requireScaleFull`.
+
+## `make prescreen` (T-2313, merge plan step 3.1)
+
+A fast first pass over the checks that need no Docker, so a simple mistake shows in minutes, not after
+the 35-50 minute `make ci`. Each check is a target `make ci` also runs, so prescreen only reorders work;
+it is deliberately not a prerequisite of `ci`, `ci-fast` or `ci-full` (it would run twice). Left out of
+prescreen because they need Docker or pwsh, or exceed the 5-minute budget: fitness-stack (cross-build
+matrix, 70-170 s), fitness-packaging, -tenancy, -domain-keys, -keys, -search, -operation, -audit,
+-host, -update-offline, -api, -reports, -agent-host, fuzz, lab tests, ci-proof, and `make test`.
+The check list is `PRESCREEN_FITNESS` and the `prescreen` recipe in `tools/ci/ci.mk`; add a check there
+only with a case in `tools/ci/prescreen-proof.sh` that makes it red. Judge a prescreen result against
+main's: `fitness-merge-order` is red on main today (M5: T-1101 merged before T-1100).

@@ -58,6 +58,32 @@ const (
 		" ELSE '(manager outside your scope)' END"
 	hasManagerSQL = "COALESCE(jsonb_typeof({t}.attributes -> 'managedBy') = 'string', false)" // a missing key is false, not NULL
 
+	// T-1477. A user's manager: manager holds the manager's DN. The GUID is the manager's identity key and is
+	// shown whatever the scope (a GUID names nothing readable); the display name only when the manager is in
+	// the caller's scope. A DN with no inventory row on the same connection is its own text, never a guess.
+	managerGUIDSQL = "CASE WHEN jsonb_typeof({t}.attributes -> 'manager') IS DISTINCT FROM 'string' THEN NULL ELSE" +
+		" (SELECT mgr.object_guid FROM {rel.mgr} WHERE mgr.connection_id = {t}.connection_id AND mgr.state = 'live'" +
+		" AND mgr.dn_key = {t}.manager_key LIMIT 1) END"
+	managerNameSQL = "CASE WHEN jsonb_typeof({t}.attributes -> 'manager') IS DISTINCT FROM 'string' THEN NULL ELSE COALESCE((" +
+		"SELECT CASE WHEN {in_scope.mgr} THEN COALESCE(NULLIF(mgr.display_name, ''), substring(mgr.rdn from position('=' in mgr.rdn) + 1))" +
+		" ELSE '(manager outside your scope)' END FROM {rel.mgr} WHERE mgr.connection_id = {t}.connection_id AND mgr.state = 'live'" +
+		" AND mgr.dn_key = {t}.manager_key LIMIT 1), '(manager not in inventory)') END"
+	hasManagerUserSQL = "COALESCE(jsonb_typeof({t}.attributes -> 'manager') = 'string', false)"
+
+	// T-1477. The OU path is the chain of organizational units and containers above the object, the domain
+	// root first, walked up the parent links the sync keeps (DM-16.I10) and bounded at the 128-level ancestry
+	// limit. A name outside the caller's scope is masked; an incomplete ancestry is unknown, never a short
+	// path. A domain-root object has an empty path. The names are joined with '/' as they are: the exact chain
+	// is the dn column.
+	ouName    = "CASE WHEN {in_scope.anc} THEN substring(anc.rdn from position('=' in anc.rdn) + 1) ELSE '(outside your scope)' END"
+	ouPathSQL = "CASE WHEN NOT {t}.ancestry_complete THEN NULL ELSE COALESCE((WITH RECURSIVE p(up, path, depth) AS (" +
+		"SELECT anc.parent_guid, " + ouName + ", 1 FROM {rel.anc} WHERE anc.connection_id = {t}.connection_id AND anc.object_guid = {t}.parent_guid" +
+		" AND anc.kind IN ('ou', 'container')" +
+		" UNION ALL " +
+		"SELECT anc.parent_guid, " + ouName + " || '/' || p.path, p.depth + 1 FROM p JOIN {rel.anc} ON anc.connection_id = {t}.connection_id" +
+		" AND anc.object_guid = p.up AND anc.kind IN ('ou', 'container') WHERE p.depth < 128" +
+		") SELECT p.path FROM p ORDER BY p.depth DESC LIMIT 1), '') END"
+
 	// A group whose nesting is deeper than the closure follows: some effective members are not listed.
 	nestingCutSQL = "EXISTS (SELECT 1 FROM {rel.clo} WHERE clo.connection_id = {t}.connection_id AND clo.group_guid = {t}.object_guid AND clo.cut)"
 
@@ -250,17 +276,20 @@ func contactsDataset() report.Dataset {
 	}
 }
 
-// viaHopSQL names the group at position idx (1-based) of the row's via array.
-func viaHopSQL(idx string) string {
-	return "COALESCE((SELECT CASE WHEN {in_scope.via} THEN via.sam_account_name ELSE " + outsideGroup + " END FROM {rel.via}" +
-		" WHERE via.connection_id = {t}.connection_id AND via.object_guid = {t}.via[" + idx + "]), " + outsideGroup + ")"
-}
+// viaHop1SQL and viaHopNextSQL name the group at via-array position 1 and at the recursive walk's
+// current position, the only two positions this fragment ever names (RP1: report.SQL takes a
+// compile-time constant, so the two instances are spelled out rather than built by a shared
+// function — a function call is never a Go constant expression).
+const (
+	viaHop1SQL = "COALESCE((SELECT CASE WHEN {in_scope.via} THEN via.sam_account_name ELSE " + outsideGroup + " END FROM {rel.via}" +
+		" WHERE via.connection_id = {t}.connection_id AND via.object_guid = {t}.via[1]), " + outsideGroup + ")"
+	viaHopNextSQL = "COALESCE((SELECT CASE WHEN {in_scope.via} THEN via.sam_account_name ELSE " + outsideGroup + " END FROM {rel.via}" +
+		" WHERE via.connection_id = {t}.connection_id AND via.object_guid = {t}.via[hop.i + 1]), " + outsideGroup + ")"
 
-var (
 	// The hops between group and member, by name: a hop outside the scope is named only as such. A fragment
 	// may not call unnest or string_agg, so the path is built by a recursive walk down the via array.
-	viaPathSQL = "(WITH RECURSIVE hop(i, path) AS (SELECT 1, " + viaHopSQL("1") + " WHERE cardinality({t}.via) > 0" +
-		" UNION ALL SELECT hop.i + 1, hop.path || ' → ' || " + viaHopSQL("hop.i + 1") + " FROM hop WHERE hop.i < cardinality({t}.via))" +
+	viaPathSQL = "(WITH RECURSIVE hop(i, path) AS (SELECT 1, " + viaHop1SQL + " WHERE cardinality({t}.via) > 0" +
+		" UNION ALL SELECT hop.i + 1, hop.path || ' → ' || " + viaHopNextSQL + " FROM hop WHERE hop.i < cardinality({t}.via))" +
 		" SELECT hop.path FROM hop WHERE hop.i = cardinality({t}.via))"
 	findingSQL = "CASE WHEN {t}.edge_kind = 'cycle' THEN 'Circular nesting: ' || {rel.grp}.sam_account_name || COALESCE(' → ' || (" + viaPathSQL + "), '') || ' → ' || {rel.grp}.sam_account_name" +
 		" WHEN {t}.edge_kind = 'over_budget' THEN 'Membership too large to list: the members of ' || {rel.grp}.sam_account_name || ' are not expanded'" +

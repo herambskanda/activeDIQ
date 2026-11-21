@@ -13,6 +13,8 @@ import (
 	"unsafe"
 
 	"golang.org/x/sys/windows"
+
+	"github.com/skenzeriq/activediq/internal/platform/fleet/dial"
 	"golang.org/x/sys/windows/svc/eventlog"
 )
 
@@ -29,7 +31,8 @@ func run(args []string) int {
 			fmt.Fprintln(os.Stderr, "agentsetup:", err)
 			return 1
 		}
-		return runRepin(filepath.Join(root, "enrol"), pin, invokingActor(), openRepinAudit)
+		// The enrolment state names the service identity, not the administrator running this (T-1249).
+		return runRepin(filepath.Join(root, "enrol"), pin, invokingActor(), openRepinAudit, dial.ForAccount(serviceAccount))
 	}
 	verb, ok := parseVerb(args)
 	if !ok {
@@ -43,6 +46,10 @@ func run(args []string) int {
 		err = changeChannel(false)
 	case "write-config":
 		err = writeConfig()
+	case "configure-service":
+		err = configureService()
+	case "unconfigure-service":
+		err = unconfigureService()
 	case "prepare-datadir":
 		var dir string
 		if dir, err = dataRoot(); err == nil {

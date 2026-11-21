@@ -50,6 +50,12 @@ func main() {
 		os.Exit(2)
 	}
 	rep.Violations = append(rep.Violations, o4...)
+	i2, err := CheckI2(*root)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "fitness-operation:", err)
+		os.Exit(2)
+	}
+	rep.Violations = append(rep.Violations, i2...)
 	o8, o8rep, err := CheckO8(ctx, *root, *o8Lab, GoTestRunner)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "fitness-operation:", err)
@@ -63,7 +69,7 @@ func main() {
 	for _, l := range o8rep.LabNotRun {
 		fmt.Printf("  not run   O8     %s (needs the Samba lab: make lab-up, then -o8-lab; not a pass)\n", l)
 	}
-	o1t, err := CheckO1Types(*root)
+	typed, err := CheckTyped(*root)
 	if err != nil {
 		// Fail closed: a tree that cannot be type-checked never passes. When violations are already
 		// known (an import cycle is itself an O9 violation) report them, with the reason O1's
@@ -72,14 +78,14 @@ func main() {
 			fmt.Fprintln(os.Stderr, "fitness-operation:", err)
 			os.Exit(2)
 		}
-		fmt.Fprintln(os.Stderr, "fitness-operation: type-aware O1 did not run:", err)
+		fmt.Fprintln(os.Stderr, "fitness-operation: type-aware O1/O2 did not run:", err)
 	}
-	rep.Violations = append(rep.Violations, o1t...)
+	rep.Violations = append(rep.Violations, typed...)
 	for _, p := range pendingChecks {
 		fmt.Printf("  pending   %-6s %s (owner %s; not yet checked, not a pass)\n", p.id, p.what, p.ticket)
 	}
 	if len(rep.Violations) == 0 {
-		fmt.Println("fitness-operation: ok (O1, O2, O4 SQL half, O8, O9; pending checks listed above)")
+		fmt.Println("fitness-operation: ok (O1, O2, I2, O4 SQL half, O8, O9; pending checks listed above)")
 		return
 	}
 	for _, v := range rep.Violations {

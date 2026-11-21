@@ -5,9 +5,1090 @@ package api
 import (
 	"encoding/json/jsontext"
 	json "encoding/json/v2"
+	"regexp"
 
 	"github.com/skenzeriq/activediq/internal/platform/apihost/apitypes"
 )
+
+// Connection: One directory connection (DM-10). Nothing here is a credential or a bind identity. transport is absent for an Entra tenant.
+type Connection struct {
+	CreatedAt    apitypes.Timestamp `json:"createdAt"`
+	CredentialID apitypes.UUID      `json:"credentialId"`
+	// The forest root NC objectGUID or the Entra tenant id, in lower-case UUID text. Null until a verification has read it.
+	DirectoryIdentity  *apitypes.UUID           `json:"directoryIdentity"`
+	DisplayName        string                   `json:"displayName"`
+	ID                 apitypes.UUID            `json:"id"`
+	Kind               ConnectionKind           `json:"kind"`
+	LastVerificationID *apitypes.UUID           `json:"lastVerificationId"`
+	State              ConnectionLifecycleState `json:"state"`
+	Transport          *ConnectionTransport     `json:"transport,omitzero"`
+	UpdatedAt          apitypes.Timestamp       `json:"updatedAt"`
+	// When the last recorded verification completed, UTC. Null when none has.
+	VerifiedAt *apitypes.Timestamp `json:"verifiedAt"`
+
+	p apitypes.Presence
+}
+
+// UnmarshalJSONFrom decodes the object strictly: member names match exactly and an unknown
+// member is an error. Nested values decode through the caller's options.
+func (v *Connection) UnmarshalJSONFrom(d *jsontext.Decoder) error {
+	*v = Connection{}
+	v.p.Begin()
+	if err := apitypes.ObjectStart(d); err != nil {
+		return err
+	}
+	for {
+		name, ok, err := apitypes.NextMember(d)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+		switch name {
+		case "createdAt":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(0, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.CreatedAt); err != nil {
+				return err
+			}
+		case "credentialId":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(1, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.CredentialID); err != nil {
+				return err
+			}
+		case "directoryIdentity":
+			v.p.Mark(2, false)
+			if err := json.UnmarshalDecode(d, &v.DirectoryIdentity); err != nil {
+				return err
+			}
+		case "displayName":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(3, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.DisplayName); err != nil {
+				return err
+			}
+		case "id":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(4, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.ID); err != nil {
+				return err
+			}
+		case "kind":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(5, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Kind); err != nil {
+				return err
+			}
+		case "lastVerificationId":
+			v.p.Mark(6, false)
+			if err := json.UnmarshalDecode(d, &v.LastVerificationID); err != nil {
+				return err
+			}
+		case "state":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(7, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.State); err != nil {
+				return err
+			}
+		case "transport":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(8, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Transport); err != nil {
+				return err
+			}
+		case "updatedAt":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(9, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.UpdatedAt); err != nil {
+				return err
+			}
+		case "verifiedAt":
+			v.p.Mark(10, false)
+			if err := json.UnmarshalDecode(d, &v.VerifiedAt); err != nil {
+				return err
+			}
+		default:
+			return apitypes.UnknownMember(d)
+		}
+	}
+}
+
+// Validate records every violation of the object's schema under at: missing required members,
+// null on a non-nullable member, bounds, patterns and closed enums.
+func (v *Connection) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
+	// createdAt
+	if v.p.Decoded() {
+		if !v.p.Has(0) {
+			errs.Required(at, "createdAt")
+		}
+		if v.p.IsNull(0) {
+			errs.NullNotAllowed(at, "createdAt")
+		}
+	}
+	// credentialId
+	if v.p.Decoded() {
+		if !v.p.Has(1) {
+			errs.Required(at, "credentialId")
+		}
+		if v.p.IsNull(1) {
+			errs.NullNotAllowed(at, "credentialId")
+		}
+	}
+	// directoryIdentity
+	if v.p.Decoded() && !v.p.Has(2) {
+		errs.Required(at, "directoryIdentity")
+	}
+	// displayName
+	if v.p.Decoded() {
+		if !v.p.Has(3) {
+			errs.Required(at, "displayName")
+		}
+		if v.p.IsNull(3) {
+			errs.NullNotAllowed(at, "displayName")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(3) && !v.p.IsNull(3)) {
+		apitypes.CheckLen(errs, apitypes.InBody, at.AppendToken("displayName"), string(v.DisplayName), 0, 200)
+	}
+	// id
+	if v.p.Decoded() {
+		if !v.p.Has(4) {
+			errs.Required(at, "id")
+		}
+		if v.p.IsNull(4) {
+			errs.NullNotAllowed(at, "id")
+		}
+	}
+	// kind
+	if v.p.Decoded() {
+		if !v.p.Has(5) {
+			errs.Required(at, "kind")
+		}
+		if v.p.IsNull(5) {
+			errs.NullNotAllowed(at, "kind")
+		}
+	}
+	// lastVerificationId
+	if v.p.Decoded() && !v.p.Has(6) {
+		errs.Required(at, "lastVerificationId")
+	}
+	// state
+	if v.p.Decoded() {
+		if !v.p.Has(7) {
+			errs.Required(at, "state")
+		}
+		if v.p.IsNull(7) {
+			errs.NullNotAllowed(at, "state")
+		}
+	}
+	// transport
+	if v.p.Decoded() && v.p.IsNull(8) {
+		errs.NullNotAllowed(at, "transport")
+	}
+	// updatedAt
+	if v.p.Decoded() {
+		if !v.p.Has(9) {
+			errs.Required(at, "updatedAt")
+		}
+		if v.p.IsNull(9) {
+			errs.NullNotAllowed(at, "updatedAt")
+		}
+	}
+	// verifiedAt
+	if v.p.Decoded() && !v.p.Has(10) {
+		errs.Required(at, "verifiedAt")
+	}
+}
+
+// ConnectionCreate: What createConnection needs. transport is required for ad_forest and must be absent for entra_tenant. There is no field for a secret.
+type ConnectionCreate struct {
+	// The directory credential to bind, by id. A reference, never material.
+	CredentialID apitypes.UUID             `json:"credentialId"`
+	DisplayName  string                    `json:"displayName"`
+	Kind         ConnectionKindInput       `json:"kind"`
+	Transport    *ConnectionTransportInput `json:"transport,omitzero"`
+
+	p apitypes.Presence
+}
+
+// UnmarshalJSONFrom decodes the object strictly: member names match exactly and an unknown
+// member is an error. Nested values decode through the caller's options.
+func (v *ConnectionCreate) UnmarshalJSONFrom(d *jsontext.Decoder) error {
+	*v = ConnectionCreate{}
+	v.p.Begin()
+	if err := apitypes.ObjectStart(d); err != nil {
+		return err
+	}
+	for {
+		name, ok, err := apitypes.NextMember(d)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+		switch name {
+		case "credentialId":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(0, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.CredentialID); err != nil {
+				return err
+			}
+		case "displayName":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(1, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.DisplayName); err != nil {
+				return err
+			}
+		case "kind":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(2, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Kind); err != nil {
+				return err
+			}
+		case "transport":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(3, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Transport); err != nil {
+				return err
+			}
+		default:
+			return apitypes.UnknownMember(d)
+		}
+	}
+}
+
+// Validate records every violation of the object's schema under at: missing required members,
+// null on a non-nullable member, bounds, patterns and closed enums.
+func (v *ConnectionCreate) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
+	// credentialId
+	if v.p.Decoded() {
+		if !v.p.Has(0) {
+			errs.Required(at, "credentialId")
+		}
+		if v.p.IsNull(0) {
+			errs.NullNotAllowed(at, "credentialId")
+		}
+	}
+	// displayName
+	if v.p.Decoded() {
+		if !v.p.Has(1) {
+			errs.Required(at, "displayName")
+		}
+		if v.p.IsNull(1) {
+			errs.NullNotAllowed(at, "displayName")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(1) && !v.p.IsNull(1)) {
+		apitypes.CheckLen(errs, apitypes.InBody, at.AppendToken("displayName"), string(v.DisplayName), 1, 200)
+	}
+	// kind
+	if v.p.Decoded() {
+		if !v.p.Has(2) {
+			errs.Required(at, "kind")
+		}
+		if v.p.IsNull(2) {
+			errs.NullNotAllowed(at, "kind")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(2) && !v.p.IsNull(2)) {
+		if !v.Kind.Valid() {
+			errs.Add(apitypes.InBody, at.AppendToken("kind"), apitypes.CodeEnum, "value is not one of the allowed values")
+		}
+	}
+	// transport
+	if v.p.Decoded() && v.p.IsNull(3) {
+		errs.NullNotAllowed(at, "transport")
+	}
+	if v.Transport != nil {
+		if !(*v.Transport).Valid() {
+			errs.Add(apitypes.InBody, at.AppendToken("transport"), apitypes.CodeEnum, "value is not one of the allowed values")
+		}
+	}
+}
+
+// ConnectionHealth: The health of one connection. Nothing here is a credential or an identity the connection binds as.
+type ConnectionHealth struct {
+	// Domain controllers that answered the last probe.
+	DcReachable int64 `json:"dcReachable"`
+	// Domain controllers known for the connection.
+	DcTotal     int64         `json:"dcTotal"`
+	DisplayName string        `json:"displayName"`
+	ID          apitypes.UUID `json:"id"`
+	// Seconds since the last successful sync, at the time of the answer. Null when it has never synced.
+	LagSeconds *int64 `json:"lagSeconds"`
+	// The last successful sync, UTC. Null when the connection has never synced.
+	LastSyncAt *apitypes.Timestamp   `json:"lastSyncAt"`
+	State      ConnectionHealthState `json:"state"`
+
+	p apitypes.Presence
+}
+
+// UnmarshalJSONFrom decodes the object strictly: member names match exactly and an unknown
+// member is an error. Nested values decode through the caller's options.
+func (v *ConnectionHealth) UnmarshalJSONFrom(d *jsontext.Decoder) error {
+	*v = ConnectionHealth{}
+	v.p.Begin()
+	if err := apitypes.ObjectStart(d); err != nil {
+		return err
+	}
+	for {
+		name, ok, err := apitypes.NextMember(d)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+		switch name {
+		case "dcReachable":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(0, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.DcReachable); err != nil {
+				return err
+			}
+		case "dcTotal":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(1, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.DcTotal); err != nil {
+				return err
+			}
+		case "displayName":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(2, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.DisplayName); err != nil {
+				return err
+			}
+		case "id":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(3, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.ID); err != nil {
+				return err
+			}
+		case "lagSeconds":
+			v.p.Mark(4, false)
+			if err := json.UnmarshalDecode(d, &v.LagSeconds); err != nil {
+				return err
+			}
+		case "lastSyncAt":
+			v.p.Mark(5, false)
+			if err := json.UnmarshalDecode(d, &v.LastSyncAt); err != nil {
+				return err
+			}
+		case "state":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(6, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.State); err != nil {
+				return err
+			}
+		default:
+			return apitypes.UnknownMember(d)
+		}
+	}
+}
+
+// Validate records every violation of the object's schema under at: missing required members,
+// null on a non-nullable member, bounds, patterns and closed enums.
+func (v *ConnectionHealth) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
+	// dcReachable
+	if v.p.Decoded() {
+		if !v.p.Has(0) {
+			errs.Required(at, "dcReachable")
+		}
+		if v.p.IsNull(0) {
+			errs.NullNotAllowed(at, "dcReachable")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(0) && !v.p.IsNull(0)) {
+		apitypes.CheckInt(errs, apitypes.InBody, at.AppendToken("dcReachable"), int64(v.DcReachable), 0, 1000)
+	}
+	// dcTotal
+	if v.p.Decoded() {
+		if !v.p.Has(1) {
+			errs.Required(at, "dcTotal")
+		}
+		if v.p.IsNull(1) {
+			errs.NullNotAllowed(at, "dcTotal")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(1) && !v.p.IsNull(1)) {
+		apitypes.CheckInt(errs, apitypes.InBody, at.AppendToken("dcTotal"), int64(v.DcTotal), 0, 1000)
+	}
+	// displayName
+	if v.p.Decoded() {
+		if !v.p.Has(2) {
+			errs.Required(at, "displayName")
+		}
+		if v.p.IsNull(2) {
+			errs.NullNotAllowed(at, "displayName")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(2) && !v.p.IsNull(2)) {
+		apitypes.CheckLen(errs, apitypes.InBody, at.AppendToken("displayName"), string(v.DisplayName), 0, 256)
+	}
+	// id
+	if v.p.Decoded() {
+		if !v.p.Has(3) {
+			errs.Required(at, "id")
+		}
+		if v.p.IsNull(3) {
+			errs.NullNotAllowed(at, "id")
+		}
+	}
+	// lagSeconds
+	if v.p.Decoded() && !v.p.Has(4) {
+		errs.Required(at, "lagSeconds")
+	}
+	if v.LagSeconds != nil {
+		apitypes.CheckInt(errs, apitypes.InBody, at.AppendToken("lagSeconds"), int64((*v.LagSeconds)), 0, 9007199254740991)
+	}
+	// lastSyncAt
+	if v.p.Decoded() && !v.p.Has(5) {
+		errs.Required(at, "lastSyncAt")
+	}
+	// state
+	if v.p.Decoded() {
+		if !v.p.Has(6) {
+			errs.Required(at, "state")
+		}
+		if v.p.IsNull(6) {
+			errs.NullNotAllowed(at, "state")
+		}
+	}
+}
+
+// ConnectionHealthList: One row per readable connection. Not paged, because a tenant has few connections; at most 256.
+type ConnectionHealthList struct {
+	Items []ConnectionHealth `json:"items"`
+
+	p apitypes.Presence
+}
+
+// UnmarshalJSONFrom decodes the object strictly: member names match exactly and an unknown
+// member is an error. Nested values decode through the caller's options.
+func (v *ConnectionHealthList) UnmarshalJSONFrom(d *jsontext.Decoder) error {
+	*v = ConnectionHealthList{}
+	v.p.Begin()
+	if err := apitypes.ObjectStart(d); err != nil {
+		return err
+	}
+	for {
+		name, ok, err := apitypes.NextMember(d)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+		switch name {
+		case "items":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(0, null)
+			if null {
+				continue
+			}
+			if err := apitypes.DecodeArray(d, &v.Items); err != nil {
+				return err
+			}
+		default:
+			return apitypes.UnknownMember(d)
+		}
+	}
+}
+
+// Validate records every violation of the object's schema under at: missing required members,
+// null on a non-nullable member, bounds, patterns and closed enums.
+func (v *ConnectionHealthList) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
+	// items
+	if v.p.Decoded() {
+		if !v.p.Has(0) {
+			errs.Required(at, "items")
+		}
+		if v.p.IsNull(0) {
+			errs.NullNotAllowed(at, "items")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(0) && !v.p.IsNull(0)) {
+		apitypes.CheckCount(errs, apitypes.InBody, at.AppendToken("items"), len(v.Items), 0, 256, apitypes.CodeMaxItems)
+		for i := range v.Items {
+			v.Items[i].Validate(apitypes.Index(at.AppendToken("items"), i), errs)
+		}
+	}
+}
+
+// ConnectionHealthState: synced, lagging (last sync older than its interval, or some DCs unreachable), dc_unreachable (no DC reachable) or suspended (paused by an administrator).
+type ConnectionHealthState string
+
+const (
+	ConnectionHealthStateSynced        ConnectionHealthState = "synced"
+	ConnectionHealthStateLagging       ConnectionHealthState = "lagging"
+	ConnectionHealthStateDcUnreachable ConnectionHealthState = "dc_unreachable"
+	ConnectionHealthStateSuspended     ConnectionHealthState = "suspended"
+)
+
+// Valid reports whether v is a value this build knows. Clients and responses may carry others
+// (the enum is open), so no generated code rejects an unknown value.
+func (v ConnectionHealthState) Valid() bool {
+	switch v {
+	case ConnectionHealthStateSynced, ConnectionHealthStateLagging, ConnectionHealthStateDcUnreachable, ConnectionHealthStateSuspended:
+		return true
+	}
+	return false
+}
+
+// ConnectionKind: ad_forest (a whole AD forest) or entra_tenant.
+type ConnectionKind string
+
+const (
+	ConnectionKindADForest    ConnectionKind = "ad_forest"
+	ConnectionKindEntraTenant ConnectionKind = "entra_tenant"
+)
+
+// Valid reports whether v is a value this build knows. Clients and responses may carry others
+// (the enum is open), so no generated code rejects an unknown value.
+func (v ConnectionKind) Valid() bool {
+	switch v {
+	case ConnectionKindADForest, ConnectionKindEntraTenant:
+		return true
+	}
+	return false
+}
+
+// ConnectionKindInput: The kinds createConnection accepts.
+type ConnectionKindInput string
+
+const (
+	ConnectionKindInputADForest    ConnectionKindInput = "ad_forest"
+	ConnectionKindInputEntraTenant ConnectionKindInput = "entra_tenant"
+)
+
+// Valid reports whether v is one of the closed set of values.
+func (v ConnectionKindInput) Valid() bool {
+	switch v {
+	case ConnectionKindInputADForest, ConnectionKindInputEntraTenant:
+		return true
+	}
+	return false
+}
+
+// Validate records a violation when v is not in the set.
+func (v ConnectionKindInput) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
+	if !v.Valid() {
+		errs.AddBody(at, apitypes.CodeEnum, "value is not one of the allowed values")
+	}
+}
+
+// ConnectionLifecycleState: The DM-10 lifecycle state. Health is a separate reading (ConnectionHealthState).
+type ConnectionLifecycleState string
+
+const (
+	ConnectionLifecycleStateDraft           ConnectionLifecycleState = "draft"
+	ConnectionLifecycleStateVerifying       ConnectionLifecycleState = "verifying"
+	ConnectionLifecycleStateActive          ConnectionLifecycleState = "active"
+	ConnectionLifecycleStateSuspended       ConnectionLifecycleState = "suspended"
+	ConnectionLifecycleStateDecommissioning ConnectionLifecycleState = "decommissioning"
+	ConnectionLifecycleStateRemoved         ConnectionLifecycleState = "removed"
+	ConnectionLifecycleStateDiscarded       ConnectionLifecycleState = "discarded"
+)
+
+// Valid reports whether v is a value this build knows. Clients and responses may carry others
+// (the enum is open), so no generated code rejects an unknown value.
+func (v ConnectionLifecycleState) Valid() bool {
+	switch v {
+	case ConnectionLifecycleStateDraft, ConnectionLifecycleStateVerifying, ConnectionLifecycleStateActive, ConnectionLifecycleStateSuspended, ConnectionLifecycleStateDecommissioning, ConnectionLifecycleStateRemoved, ConnectionLifecycleStateDiscarded:
+		return true
+	}
+	return false
+}
+
+// ConnectionSummary: How many connections the tenant has. A count only; no connection is identified.
+type ConnectionSummary struct {
+	ConnectionCount int64 `json:"connectionCount"`
+
+	p apitypes.Presence
+}
+
+// UnmarshalJSONFrom decodes the object strictly: member names match exactly and an unknown
+// member is an error. Nested values decode through the caller's options.
+func (v *ConnectionSummary) UnmarshalJSONFrom(d *jsontext.Decoder) error {
+	*v = ConnectionSummary{}
+	v.p.Begin()
+	if err := apitypes.ObjectStart(d); err != nil {
+		return err
+	}
+	for {
+		name, ok, err := apitypes.NextMember(d)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+		switch name {
+		case "connectionCount":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(0, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.ConnectionCount); err != nil {
+				return err
+			}
+		default:
+			return apitypes.UnknownMember(d)
+		}
+	}
+}
+
+// Validate records every violation of the object's schema under at: missing required members,
+// null on a non-nullable member, bounds, patterns and closed enums.
+func (v *ConnectionSummary) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
+	// connectionCount
+	if v.p.Decoded() {
+		if !v.p.Has(0) {
+			errs.Required(at, "connectionCount")
+		}
+		if v.p.IsNull(0) {
+			errs.NullNotAllowed(at, "connectionCount")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(0) && !v.p.IsNull(0)) {
+		apitypes.CheckInt(errs, apitypes.InBody, at.AppendToken("connectionCount"), int64(v.ConnectionCount), 0, 256)
+	}
+}
+
+// ConnectionTransport: How an AD connection secures LDAP. There is no third value and no way to skip certificate validation.
+type ConnectionTransport string
+
+const (
+	ConnectionTransportLdaps    ConnectionTransport = "ldaps"
+	ConnectionTransportStarttls ConnectionTransport = "starttls"
+)
+
+// Valid reports whether v is a value this build knows. Clients and responses may carry others
+// (the enum is open), so no generated code rejects an unknown value.
+func (v ConnectionTransport) Valid() bool {
+	switch v {
+	case ConnectionTransportLdaps, ConnectionTransportStarttls:
+		return true
+	}
+	return false
+}
+
+// ConnectionTransportInput: The transports createConnection accepts.
+type ConnectionTransportInput string
+
+const (
+	ConnectionTransportInputLdaps    ConnectionTransportInput = "ldaps"
+	ConnectionTransportInputStarttls ConnectionTransportInput = "starttls"
+)
+
+// Valid reports whether v is one of the closed set of values.
+func (v ConnectionTransportInput) Valid() bool {
+	switch v {
+	case ConnectionTransportInputLdaps, ConnectionTransportInputStarttls:
+		return true
+	}
+	return false
+}
+
+// Validate records a violation when v is not in the set.
+func (v ConnectionTransportInput) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
+	if !v.Valid() {
+		errs.AddBody(at, apitypes.CodeEnum, "value is not one of the allowed values")
+	}
+}
+
+// ConnectionVerification: One recorded onboarding run (DM-24), without its findings.
+type ConnectionVerification struct {
+	CheckListVersion int64               `json:"checkListVersion"`
+	Checks           []VerificationCheck `json:"checks"`
+	CompletedAt      apitypes.Timestamp  `json:"completedAt"`
+	ID               apitypes.UUID       `json:"id"`
+	Kind             VerificationKind    `json:"kind"`
+	StartedAt        apitypes.Timestamp  `json:"startedAt"`
+	Verdict          VerificationVerdict `json:"verdict"`
+
+	p apitypes.Presence
+}
+
+// UnmarshalJSONFrom decodes the object strictly: member names match exactly and an unknown
+// member is an error. Nested values decode through the caller's options.
+func (v *ConnectionVerification) UnmarshalJSONFrom(d *jsontext.Decoder) error {
+	*v = ConnectionVerification{}
+	v.p.Begin()
+	if err := apitypes.ObjectStart(d); err != nil {
+		return err
+	}
+	for {
+		name, ok, err := apitypes.NextMember(d)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+		switch name {
+		case "checkListVersion":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(0, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.CheckListVersion); err != nil {
+				return err
+			}
+		case "checks":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(1, null)
+			if null {
+				continue
+			}
+			if err := apitypes.DecodeArray(d, &v.Checks); err != nil {
+				return err
+			}
+		case "completedAt":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(2, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.CompletedAt); err != nil {
+				return err
+			}
+		case "id":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(3, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.ID); err != nil {
+				return err
+			}
+		case "kind":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(4, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Kind); err != nil {
+				return err
+			}
+		case "startedAt":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(5, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.StartedAt); err != nil {
+				return err
+			}
+		case "verdict":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(6, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Verdict); err != nil {
+				return err
+			}
+		default:
+			return apitypes.UnknownMember(d)
+		}
+	}
+}
+
+// Validate records every violation of the object's schema under at: missing required members,
+// null on a non-nullable member, bounds, patterns and closed enums.
+func (v *ConnectionVerification) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
+	// checkListVersion
+	if v.p.Decoded() {
+		if !v.p.Has(0) {
+			errs.Required(at, "checkListVersion")
+		}
+		if v.p.IsNull(0) {
+			errs.NullNotAllowed(at, "checkListVersion")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(0) && !v.p.IsNull(0)) {
+		apitypes.CheckInt(errs, apitypes.InBody, at.AppendToken("checkListVersion"), int64(v.CheckListVersion), 1, 1000)
+	}
+	// checks
+	if v.p.Decoded() {
+		if !v.p.Has(1) {
+			errs.Required(at, "checks")
+		}
+		if v.p.IsNull(1) {
+			errs.NullNotAllowed(at, "checks")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(1) && !v.p.IsNull(1)) {
+		apitypes.CheckCount(errs, apitypes.InBody, at.AppendToken("checks"), len(v.Checks), 0, 16, apitypes.CodeMaxItems)
+		for i := range v.Checks {
+			v.Checks[i].Validate(apitypes.Index(at.AppendToken("checks"), i), errs)
+		}
+	}
+	// completedAt
+	if v.p.Decoded() {
+		if !v.p.Has(2) {
+			errs.Required(at, "completedAt")
+		}
+		if v.p.IsNull(2) {
+			errs.NullNotAllowed(at, "completedAt")
+		}
+	}
+	// id
+	if v.p.Decoded() {
+		if !v.p.Has(3) {
+			errs.Required(at, "id")
+		}
+		if v.p.IsNull(3) {
+			errs.NullNotAllowed(at, "id")
+		}
+	}
+	// kind
+	if v.p.Decoded() {
+		if !v.p.Has(4) {
+			errs.Required(at, "kind")
+		}
+		if v.p.IsNull(4) {
+			errs.NullNotAllowed(at, "kind")
+		}
+	}
+	// startedAt
+	if v.p.Decoded() {
+		if !v.p.Has(5) {
+			errs.Required(at, "startedAt")
+		}
+		if v.p.IsNull(5) {
+			errs.NullNotAllowed(at, "startedAt")
+		}
+	}
+	// verdict
+	if v.p.Decoded() {
+		if !v.p.Has(6) {
+			errs.Required(at, "verdict")
+		}
+		if v.p.IsNull(6) {
+			errs.NullNotAllowed(at, "verdict")
+		}
+	}
+}
+
+// ConnectionVerificationResult: The completed run and the connection after it.
+type ConnectionVerificationResult struct {
+	Connection   Connection             `json:"connection"`
+	Verification ConnectionVerification `json:"verification"`
+
+	p apitypes.Presence
+}
+
+// UnmarshalJSONFrom decodes the object strictly: member names match exactly and an unknown
+// member is an error. Nested values decode through the caller's options.
+func (v *ConnectionVerificationResult) UnmarshalJSONFrom(d *jsontext.Decoder) error {
+	*v = ConnectionVerificationResult{}
+	v.p.Begin()
+	if err := apitypes.ObjectStart(d); err != nil {
+		return err
+	}
+	for {
+		name, ok, err := apitypes.NextMember(d)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+		switch name {
+		case "connection":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(0, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Connection); err != nil {
+				return err
+			}
+		case "verification":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(1, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Verification); err != nil {
+				return err
+			}
+		default:
+			return apitypes.UnknownMember(d)
+		}
+	}
+}
+
+// Validate records every violation of the object's schema under at: missing required members,
+// null on a non-nullable member, bounds, patterns and closed enums.
+func (v *ConnectionVerificationResult) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
+	// connection
+	if v.p.Decoded() {
+		if !v.p.Has(0) {
+			errs.Required(at, "connection")
+		}
+		if v.p.IsNull(0) {
+			errs.NullNotAllowed(at, "connection")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(0) && !v.p.IsNull(0)) {
+		v.Connection.Validate(at.AppendToken("connection"), errs)
+	}
+	// verification
+	if v.p.Decoded() {
+		if !v.p.Has(1) {
+			errs.Required(at, "verification")
+		}
+		if v.p.IsNull(1) {
+			errs.NullNotAllowed(at, "verification")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(1) && !v.p.IsNull(1)) {
+		v.Verification.Validate(at.AppendToken("verification"), errs)
+	}
+}
 
 // TakeoverAttestationMaxAge: The new attestation_max_age.
 type TakeoverAttestationMaxAge struct {
@@ -126,3 +1207,228 @@ func (v *TakeoverAttestationStart) Validate(at jsontext.Pointer, errs *apitypes.
 		apitypes.CheckLen(errs, apitypes.InBody, at.AppendToken("authorizeUrl"), string(v.AuthorizeURL), 0, 2048)
 	}
 }
+
+// VerificationCheck: One check of the run (V1 to V9 for an AD forest, EV1 to EV5 for an Entra tenant). reason is a stable code, null on a pass; message is a fixed text for that code. Neither carries a DN, an object or account name, a directory result text or a secret.
+type VerificationCheck struct {
+	Check string `json:"check"`
+	// Findings the run recorded under this check. The findings themselves are not in this answer.
+	FindingCount int64               `json:"findingCount"`
+	Message      *string             `json:"message"`
+	Outcome      VerificationOutcome `json:"outcome"`
+	Reason       *string             `json:"reason"`
+	Title        string              `json:"title"`
+
+	p apitypes.Presence
+}
+
+// UnmarshalJSONFrom decodes the object strictly: member names match exactly and an unknown
+// member is an error. Nested values decode through the caller's options.
+func (v *VerificationCheck) UnmarshalJSONFrom(d *jsontext.Decoder) error {
+	*v = VerificationCheck{}
+	v.p.Begin()
+	if err := apitypes.ObjectStart(d); err != nil {
+		return err
+	}
+	for {
+		name, ok, err := apitypes.NextMember(d)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+		switch name {
+		case "check":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(0, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Check); err != nil {
+				return err
+			}
+		case "findingCount":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(1, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.FindingCount); err != nil {
+				return err
+			}
+		case "message":
+			v.p.Mark(2, false)
+			if err := json.UnmarshalDecode(d, &v.Message); err != nil {
+				return err
+			}
+		case "outcome":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(3, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Outcome); err != nil {
+				return err
+			}
+		case "reason":
+			v.p.Mark(4, false)
+			if err := json.UnmarshalDecode(d, &v.Reason); err != nil {
+				return err
+			}
+		case "title":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(5, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Title); err != nil {
+				return err
+			}
+		default:
+			return apitypes.UnknownMember(d)
+		}
+	}
+}
+
+// Validate records every violation of the object's schema under at: missing required members,
+// null on a non-nullable member, bounds, patterns and closed enums.
+func (v *VerificationCheck) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
+	// check
+	if v.p.Decoded() {
+		if !v.p.Has(0) {
+			errs.Required(at, "check")
+		}
+		if v.p.IsNull(0) {
+			errs.NullNotAllowed(at, "check")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(0) && !v.p.IsNull(0)) {
+		if !pattern1.MatchString(string(v.Check)) {
+			errs.Add(apitypes.InBody, at.AppendToken("check"), apitypes.CodePattern, "value does not match the required pattern")
+		}
+	}
+	// findingCount
+	if v.p.Decoded() {
+		if !v.p.Has(1) {
+			errs.Required(at, "findingCount")
+		}
+		if v.p.IsNull(1) {
+			errs.NullNotAllowed(at, "findingCount")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(1) && !v.p.IsNull(1)) {
+		apitypes.CheckInt(errs, apitypes.InBody, at.AppendToken("findingCount"), int64(v.FindingCount), 0, 50000)
+	}
+	// message
+	if v.p.Decoded() && !v.p.Has(2) {
+		errs.Required(at, "message")
+	}
+	if v.Message != nil {
+		apitypes.CheckLen(errs, apitypes.InBody, at.AppendToken("message"), string((*v.Message)), 0, 512)
+	}
+	// outcome
+	if v.p.Decoded() {
+		if !v.p.Has(3) {
+			errs.Required(at, "outcome")
+		}
+		if v.p.IsNull(3) {
+			errs.NullNotAllowed(at, "outcome")
+		}
+	}
+	// reason
+	if v.p.Decoded() && !v.p.Has(4) {
+		errs.Required(at, "reason")
+	}
+	if v.Reason != nil {
+		if !pattern2.MatchString(string((*v.Reason))) {
+			errs.Add(apitypes.InBody, at.AppendToken("reason"), apitypes.CodePattern, "value does not match the required pattern")
+		}
+	}
+	// title
+	if v.p.Decoded() {
+		if !v.p.Has(5) {
+			errs.Required(at, "title")
+		}
+		if v.p.IsNull(5) {
+			errs.NullNotAllowed(at, "title")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(5) && !v.p.IsNull(5)) {
+		apitypes.CheckLen(errs, apitypes.InBody, at.AppendToken("title"), string(v.Title), 0, 128)
+	}
+}
+
+// VerificationKind: Why the run happened. verifyConnection records onboarding runs.
+type VerificationKind string
+
+const (
+	VerificationKindOnboarding VerificationKind = "onboarding"
+)
+
+// Valid reports whether v is a value this build knows. Clients and responses may carry others
+// (the enum is open), so no generated code rejects an unknown value.
+func (v VerificationKind) Valid() bool {
+	switch v {
+	case VerificationKindOnboarding:
+		return true
+	}
+	return false
+}
+
+// VerificationOutcome: The result of one check. warn is shown and does not block; could_not_verify blocks where the answer decides a security verdict.
+type VerificationOutcome string
+
+const (
+	VerificationOutcomePass           VerificationOutcome = "pass"
+	VerificationOutcomeWarn           VerificationOutcome = "warn"
+	VerificationOutcomeFail           VerificationOutcome = "fail"
+	VerificationOutcomeCouldNotVerify VerificationOutcome = "could_not_verify"
+	VerificationOutcomeNotRun         VerificationOutcome = "not_run"
+)
+
+// Valid reports whether v is a value this build knows. Clients and responses may carry others
+// (the enum is open), so no generated code rejects an unknown value.
+func (v VerificationOutcome) Valid() bool {
+	switch v {
+	case VerificationOutcomePass, VerificationOutcomeWarn, VerificationOutcomeFail, VerificationOutcomeCouldNotVerify, VerificationOutcomeNotRun:
+		return true
+	}
+	return false
+}
+
+// VerificationVerdict: pass, refused (over-privilege only, overridable), could_not_verify or failed.
+type VerificationVerdict string
+
+const (
+	VerificationVerdictPass           VerificationVerdict = "pass"
+	VerificationVerdictRefused        VerificationVerdict = "refused"
+	VerificationVerdictCouldNotVerify VerificationVerdict = "could_not_verify"
+	VerificationVerdictFailed         VerificationVerdict = "failed"
+)
+
+// Valid reports whether v is a value this build knows. Clients and responses may carry others
+// (the enum is open), so no generated code rejects an unknown value.
+func (v VerificationVerdict) Valid() bool {
+	switch v {
+	case VerificationVerdictPass, VerificationVerdictRefused, VerificationVerdictCouldNotVerify, VerificationVerdictFailed:
+		return true
+	}
+	return false
+}
+
+var (
+	pattern1 = regexp.MustCompile("^(V[1-9]|EV[1-5])$")
+	pattern2 = regexp.MustCompile("^[a-z0-9_.]{1,64}$")
+)

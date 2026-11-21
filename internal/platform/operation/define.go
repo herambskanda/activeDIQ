@@ -28,6 +28,10 @@ type Typed[In, P, Out any] struct {
 	// Touched returns the objects besides the target that the step's typed change touches; the
 	// server's Tier-0 re-read covers each of them (ADR-0005 rule 7).
 	Touched func(p TypedStep[P]) []authority.TargetRef
+	// AlsoAuthorize returns further objects the pipeline must authorise, live, for the same permission
+	// at Plan and again immediately before Apply (ADR-0005 rule 7), besides the step's target: a
+	// move's destination parent. Each is refused or allowed exactly like the target, tier0 included.
+	AlsoAuthorize func(p TypedStep[P]) []authority.TargetRef
 }
 
 // TypedStep is a StepPlan with a typed payload.
@@ -128,6 +132,18 @@ func (d defined[In, P, Out]) Touched(p StepPlan) []authority.TargetRef {
 		return nil
 	}
 	return d.t.Touched(ts)
+}
+
+// AlsoAuthorize implements AlsoAuthorizer.
+func (d defined[In, P, Out]) AlsoAuthorize(p StepPlan) []authority.TargetRef {
+	if d.t.AlsoAuthorize == nil {
+		return nil
+	}
+	ts, err := d.unpack(p)
+	if err != nil {
+		return nil
+	}
+	return d.t.AlsoAuthorize(ts)
 }
 
 func (d defined[In, P, Out]) Verify(ctx context.Context, s step.Step, p StepPlan, o Outcome) (Verdict, error) {

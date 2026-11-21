@@ -1340,6 +1340,11 @@ var pinnedActions = func() map[string]map[string]string {
 		"GrantChannel":         a("deferred", "check", "grant-channel"),
 		"RollbackGrantChannel": a("rollback", "ignore", "revoke-channel"),
 		"RevokeChannel":        a("deferred", "ignore", "revoke-channel"),
+		// T-0724: service recovery and the event source, which neither core WiX nor the util extension can
+		// carry past fitness-built-msi (see Agent.wxs).
+		"ConfigureService":         a("deferred", "check", "configure-service"),
+		"RollbackConfigureService": a("rollback", "ignore", "unconfigure-service"),
+		"UnconfigureService":       a("deferred", "ignore", "unconfigure-service"),
 	}
 }()
 

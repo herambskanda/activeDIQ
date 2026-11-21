@@ -16,14 +16,14 @@ const config = JSON.parse(fs.readFileSync(path.join(REAL_FACTORY, 'config.json')
 const agentsDir = path.join(REAL_FACTORY, '..', '.claude', 'agents');
 const aboveCeiling = (effort) => RUNGS.indexOf(effort) > RUNGS.indexOf(CEILING) || !RUNGS.includes(effort);
 
-test('live policy: no model family allows an effort above high, and nothing is escalation-only', () => {
+test('live policy: no model family allows an effort above high, and high is escalation-only', () => {
   const { allowed, escalation_only: only, effort_ladder: ladder } = config.models;
-  assert.deepEqual(Object.keys(allowed).sort(), ['opus', 'sonnet']);
+  assert.deepEqual(Object.keys(allowed).sort(), ['sonnet']); // CEO decision: Sonnet only, no Opus, never Haiku
   for (const [family, efforts] of Object.entries(allowed)) {
     assert.ok(efforts.length > 0, `${family} allows at least one effort`);
     assert.deepEqual(efforts.filter(aboveCeiling), [], `${family} allowed efforts must not exceed ${CEILING}`);
   }
-  assert.deepEqual(only, {}, 'no effort rung is reserved for escalation roles');
+  assert.deepEqual(only, { sonnet: ['high'] }, 'high is the one escalation-only rung; medium is the default (CLAUDE.md rule 2)');
   for (const [family, rungs] of Object.entries(ladder)) {
     assert.deepEqual(rungs.filter(aboveCeiling), [], `${family} effort_ladder must not exceed ${CEILING}`);
     assert.ok(rungs.every((r) => allowed[family].includes(r)), `${family} ladder rungs are all allowed`);

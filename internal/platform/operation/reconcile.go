@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	"github.com/skenzeriq/activediq/internal/platform/audit"
+	"github.com/skenzeriq/activediq/internal/platform/authority"
 	"github.com/skenzeriq/activediq/internal/platform/jobs"
 	"github.com/skenzeriq/activediq/internal/platform/operation/step"
 	"github.com/skenzeriq/activediq/internal/platform/secret"
@@ -28,7 +29,7 @@ func (r *Runner) Reconcile(ctx context.Context, t tenant.ID, tx txFunc, limit in
 	var taken []*claimed
 	err := tx(ctx, func(ctx context.Context, q store.Tx) error {
 		taken = nil
-		rows, err := q.Query(ctx, `SELECT operation_id::text, item_no, step_no, attempt, claimed_at, plan, connection_id, COALESCE(dc_host, ''), credential
+		rows, err := q.Query(ctx, `SELECT operation_id::text, item_no, step_no, attempt, claimed_at, plan, connection_id, COALESCE(dc_host, ''), credential, credential_id
 FROM public.operation_steps WHERE tenant_id = $1::uuid AND state = 'applying' AND claimed_until < now()
 ORDER BY claimed_until LIMIT $2 FOR UPDATE SKIP LOCKED`, t.String(), limit)
 		if err != nil {
@@ -43,7 +44,7 @@ ORDER BY claimed_until LIMIT $2 FOR UPDATE SKIP LOCKED`, t.String(), limit)
 		for rows.Next() {
 			var l lapsed
 			var op string
-			if err := rows.Scan(&op, &l.c.key.Item, &l.c.key.Step, &l.prev, &l.c.claimedAt, &l.plan, &l.c.conn, &l.c.dc, &l.c.cred); err != nil {
+			if err := rows.Scan(&op, &l.c.key.Item, &l.c.key.Step, &l.prev, &l.c.claimedAt, &l.plan, &l.c.conn, &l.c.dc, &l.c.cred, &l.c.credentialID); err != nil {
 				rows.Close()
 				return err
 			}
@@ -89,13 +90,29 @@ ORDER BY claimed_until LIMIT $2 FOR UPDATE SKIP LOCKED`, t.String(), limit)
 }
 
 func (r *Runner) reconcileOne(ctx context.Context, t tenant.ID, tx txFunc, c *claimed) error {
-	obs, err := c.act.(Observer).Observe(ctx, c.op.Pins, c.plan, c.claimedAt)
+	// A step whose credential_id is stored has not been named yet if it is empty: either it never reached
+	// its write, or it was left applying before the id was stored (a deployment of migration 0082). The
+	// two cannot be told apart, so when the credential cannot be resolved the target is observed first
+	// and a write that landed is recorded as applied, without dc or credential_id on its event.
+	unresolved := false
+	switch ok, err := r.ensureCredential(ctx, t, tx, c); {
+	case errors.Is(err, errCredentialUnresolved):
+		unresolved = true
+	case err != nil:
+		return err
+	case !ok:
+		return nil
+	}
+	obs, err := c.act.(Observer).Observe(authority.WithTenant(ctx, c.op.Tenant.String()), c.op.Pins, c.plan, c.claimedAt)
 	if err != nil {
 		return nil // unreadable: the new lease lapses and the next pass tries again
 	}
 	switch {
 	case obs == ObservedAfter:
+		c.unresolved = unresolved
 		return r.verifyAndRecord(ctx, t, tx, c, Outcome{AlreadyApplied: true}, true)
+	case unresolved:
+		return r.noCredential(ctx, t, tx, c) // not written: nothing to re-apply without a credential
 	case c.cred:
 		return r.record(ctx, t, tx, c, recordSpec{failed: "outcome_unknown"})
 	case obs == ObservedBefore && c.op.State == OpCancelling:
@@ -120,7 +137,7 @@ func (r *Runner) Verify(ctx context.Context, t tenant.ID, tx txFunc, opID string
 		if !ok {
 			return fmt.Errorf("%w: %q", ErrUnknown, op.Action)
 		}
-		rows, err := q.Query(ctx, `SELECT item_no, step_no, attempt, plan, connection_id, COALESCE(dc_host, ''), credential
+		rows, err := q.Query(ctx, `SELECT item_no, step_no, attempt, plan, connection_id, COALESCE(dc_host, ''), credential, credential_id
 FROM public.operation_steps WHERE tenant_id = $1::uuid AND operation_id = $2::uuid AND state = 'applied' ORDER BY item_no, step_no`, t.String(), opID)
 		if err != nil {
 			return err
@@ -130,7 +147,7 @@ FROM public.operation_steps WHERE tenant_id = $1::uuid AND operation_id = $2::uu
 			c := &claimed{op: op, act: act, d: act.Describe()}
 			var plan []byte
 			c.key.Operation = step.OperationID(opID)
-			if err := rows.Scan(&c.key.Item, &c.key.Step, &c.attempt, &plan, &c.conn, &c.dc, &c.cred); err != nil {
+			if err := rows.Scan(&c.key.Item, &c.key.Step, &c.attempt, &plan, &c.conn, &c.dc, &c.cred, &c.credentialID); err != nil {
 				return err
 			}
 			if err := json.Unmarshal(plan, &c.plan); err != nil {
@@ -154,11 +171,14 @@ FROM public.operation_steps WHERE tenant_id = $1::uuid AND operation_id = $2::uu
 }
 
 func (r *Runner) verifyApplied(ctx context.Context, t tenant.ID, tx txFunc, c *claimed) error {
+	// credential_id comes from the step row (the claim-time value). A row with none predates the column:
+	// its event names no dc/credential_id rather than a guess, and never blocks the other steps.
+	c.unresolved = c.dc != "" && c.credentialID == ""
 	stp, revoke, err := r.mintFor(c, c.attempt, secret.Secret{})
 	if err != nil {
 		return err
 	}
-	v, verr := c.act.Verify(ctx, stp, c.plan, Outcome{})
+	v, verr := c.act.Verify(authority.WithTenant(ctx, c.op.Tenant.String()), stp, c.plan, Outcome{})
 	revoke()
 	if errors.Is(verr, ErrDeferVerify) {
 		return nil

@@ -2,10 +2,39 @@
 # Standard: knowledge/development/standards/ci-gates.md · Runbook: knowledge/development/runbooks/ci-and-build.md
 # Every gate below has a failing run proving it catches a violation: `make ci-proof` (part of `make ci`).
 
-.PHONY: fitness-modules gen-modules gen-modules-check fitness-sso fitness-reports fitness-search fitness-search-nightly fitness-fleet-ca-scope fitness-objectid fitness-grantbootstrap ci gen-proto gen-check lint lint-go lint-web fmt test test-go test-web fitness fitness-stack fitness-tenancy fitness-domain-keys fitness-profiles fitness-proto fitness-safeprim fitness-corpus fitness-oracles fitness-api fitness-oracles-windows fitness-oracles-lab fitness-fuzz-nightly fitness-nightly fuzz-saml build build-web web-install ci-proof fitness-operation fitness-audit fitness-disclosure fitness-packaging fitness-host fitness-agent-host fitness-built-msi fitness-update fitness-update-offline fitness-keys fitness-fleet-ca-scope workflows-check
+.PHONY: fitness-modules prescreen prescreen-proof test-scale fitness-p2-oci gen-modules gen-modules-check fitness-sso fitness-reports fitness-search fitness-search-nightly fitness-fleet-ca-scope fitness-objectid fitness-grantbootstrap ci ci-fast ci-full gen-proto gen-check lint lint-go lint-web fmt test test-go test-web fitness fitness-stack fitness-tenancy fitness-domain-keys fitness-profiles fitness-proto fitness-safeprim fitness-corpus fitness-oracles fitness-api fitness-oracles-windows fitness-oracles-lab fitness-fuzz-nightly fitness-nightly search-latency search-latency-pg16 search-latency-pg18 fuzz-saml build build-web web-install ci-proof fitness-operation fitness-audit fitness-disclosure fitness-packaging fitness-host fitness-agent-host fitness-built-msi fitness-built-msi-release fitness-update fitness-update-offline fitness-keys fitness-fleet-ca-scope workflows-check fitness-merge-order fitness-group-member
 
-ci: lint gen-check gen-modules-check gen-api-check lint-api test fitness workflows-check build secrets-scan vuln-scan fuzz-saml lab-test-unit lab-test-windows-unit ci-proof ## Everything a merge needs: lint, generated-code freshness (connector proto, table ownership map and the API contract), API lint, tests, fitness functions (incl. the ADR-0001 build matrix), web build, secret scan, dependency vulnerability scan, gate proofs
+# T-2313 (merge plan step 3.1): the cheap, Docker-free checks first. NOT a prerequisite of ci, ci-fast or
+# ci-full (it would run twice); every check below is also run by `make ci`. Nothing is removed from ci.
+# Not included on purpose (need Docker or pwsh, or too slow for 5 minutes): fitness-stack (cross-build matrix, 70-170 s), fitness-packaging, fitness-tenancy, -domain-keys,
+# -keys, -search, -operation, -audit, -host, -update-offline, -api, -reports, -agent-host, fuzz, lab tests, ci-proof.
+PRESCREEN_FITNESS = fitness-sso fitness-proto fitness-safeprim fitness-corpus fitness-objectid fitness-grantbootstrap fitness-disclosure fitness-fleet-ca-scope fitness-merge-order
+PRESCREEN_GOTESTS = TestOnlyPermitted|ImportedOnlyBy|TestRepository|TestMigrationNumbersAreUniqueAndContiguous
+
+prescreen: ## T-2313: the cheap Docker-free checks in <= 5 minutes, run before the 35-50 minute `make ci` (lint-go, generated-file checks, lint-api, static fitness rules, secrets-scan, vuln-scan, workflows-check, the repo-scanning Go tests); keeps going after a failure and lists every red check, exits non-zero if any. Not part of `make ci`
+	@fail=""; \
+	for t in lint-go gen-check gen-modules-check gen-api-check lint-api $(PRESCREEN_FITNESS) workflows-check secrets-scan vuln-scan prescreen-gotests; do \
+	  s=$$(date +%s); echo "== prescreen: $$t"; \
+	  if $(MAKE) --no-print-directory $$t; then r=ok; else r=FAILED; fail="$$fail $$t"; fi; \
+	  echo "== prescreen: $$t $$r ($$(( $$(date +%s) - s ))s)"; \
+	done; \
+	if [ -n "$$fail" ]; then echo "make prescreen: FAILED:$$fail"; exit 1; fi; echo "make prescreen: passed"
+
+.PHONY: prescreen-gotests
+prescreen-gotests: ## T-2313: the repo-scanning Go tests (TestOnlyPermitted*, *ImportedOnlyBy*, TestRepository*) and the migration-numbering test; package tests that need Docker skip or are not matched
+	go test -count=1 -p 3 -timeout 10m -run '$(PRESCREEN_GOTESTS)' ./internal/... ./tools/... ./migrations/...
+
+prescreen-proof: ## T-2313: prove every prescreen check goes red on a deliberate violation (mutates the work tree, restores it); ~10-15 min, run on demand and after changing prescreen; not part of `make ci`
+	tools/ci/prescreen-proof.sh
+
+ci: fitness-modules ci-fast ci-full ## Everything a merge needs: see ci-fast and ci-full
 	@echo "make ci: passed"
+
+ci-fast: lint gen-check gen-modules-check gen-api-check lint-api test ## The quick half of `make ci` (T-2xxx, merge-queue throughput): lint, generated-code freshness (connector proto, table ownership map and the API contract), API lint, unit tests. Not yet the merge gate on its own — it runs alongside the full `make ci` so its pass/fail is compared against ci-full's before it is trusted to gate alone
+	@echo "make ci-fast: passed"
+
+ci-full: fitness workflows-check build secrets-scan vuln-scan fuzz-saml lab-test-unit lab-test-windows-unit ci-proof ## The slow half of `make ci`: fitness functions (incl. the ADR-0001 build matrix), web build, secret scan, dependency vulnerability scan, fuzzing, lab tests, gate proofs
+	@echo "make ci-full: passed"
 
 gen-proto: ## T-0157: regenerate the connector contract's Go code (internal/proto) from proto/ with the pinned pure-Go toolchain (no protoc, no buf)
 	go run ./tools/gen/proto
@@ -13,10 +42,10 @@ gen-proto: ## T-0157: regenerate the connector contract's Go code (internal/prot
 gen-check: ## T-0157: fail if the generated Go code under internal/proto is stale, hand-edited or orphaned (regenerates in memory and compares)
 	go run ./tools/gen/proto -check
 
-gen-modules: ## T-0997: regenerate internal/platform/store/owners/owners.gen.tsv (table -> owner key and write class) from the migrations
+gen-modules: ## T-0997, T-2164: regenerate internal/platform/store/owners/owners.gen.tsv (table -> owner key and write class) from the migrations, and the module lists internal/compose/{server,agent}/modules.gen.go from internal/modules and internal/agentmodules
 	go run ./tools/gen/modules
 
-gen-modules-check: ## T-0997: fail if owners.gen.tsv is stale, hand-edited or missing, or a migration table has no `-- write-class: <table> config|system` line (run `make gen-modules`)
+gen-modules-check: ## T-0997, T-2164: fail if a module list (modules.gen.go) is stale or hand-edited, or owners.gen.tsv is stale, hand-edited or missing, or a migration table has no `-- write-class: <table> config|system` line (run `make gen-modules`)
 	go run ./tools/gen/modules -check
 
 web-install: ## Install the pinned web dependencies from the lockfile (npm ci)
@@ -44,13 +73,20 @@ test: test-go test-web ## Go and web unit tests
 test-go: web-install ## Go tests; package parallelism bounded (-p 3) because PG-backed packages each start an embedded PostgreSQL and starve under full parallelism (T-0550)
 	go test -count=1 -p 3 -timeout 30m ./...
 
+SCALE_TIMEOUT ?= 45m
+
+test-scale: ## T-2008: the opt-in scale job (ADIQ_SCALE_FULL=1): group_member_counts, closure fan-out budget and batch-2 reports at 25,000 objects on PostgreSQL 16 and 18, with its own timeout ($(SCALE_TIMEOUT)); not part of `make ci`, whose inventory run must stay under 400 s
+	ADIQ_SCALE_FULL=1 go test -count=1 -timeout $(SCALE_TIMEOUT) ./internal/directory/inventory -run 'Test_group_member_counts_at_scale|Test_group_closure_fanout_is_bounded|Test_reports_library_batch2_at_scale' -v
+
 test-web: web-install
 	npm --prefix web run --silent test
 
-fitness: fitness-sso fitness-stack fitness-tenancy fitness-domain-keys fitness-profiles fitness-proto fitness-safeprim fitness-corpus fitness-oracles fitness-api fitness-operation fitness-audit fitness-objectid fitness-grantbootstrap fitness-disclosure fitness-packaging fitness-host fitness-agent-host fitness-built-msi fitness-update fitness-update-offline fitness-keys fitness-fleet-ca-scope fitness-reports fitness-search fitness-modules ## Architecture fitness-sso (T-0211, console-sso.md section 13: FIT-SSO-1 SAML libraries imported only under authn/sso/saml, go-oidc and go-jose only under authn/sso/oidc, no encoding/xml under platform/authn outside sso/saml, go.mod floors goxmldsig v1.6.0 and gosaml2 v0.12.0; FIT-SSO-2 every OIDC-n/SAML-n check cited by a corpus record, a record of every class per protocol, every record a passing TestCorpus subtest, for the OIDC and the SAML corpus), fitness-search (T-1126, ADR-0011 SE1-SE6: one scope renderer, no pattern or trigram operator in search SQL, bound search tests on PostgreSQL 16 and 18; see the target), fitness-reports (T-0873, ADR-0010 and reports contract §9: RP2 ReadScope.Terms/.Token and NewReadScope have one renderer and one producer, RP3 only reports/run calls reportsql.Compile/CompileCount/Exec, RP7 library/LOCK hashes and append-only history, and the bound tests RP4-RP6 and RP8-RP11 run here, a missing or skipped one fails, RP11 once per report.Dataset; RP1 is the sqlconst amendment inside fitness-safeprim; parts whose code has not landed are listed pending), fitness-grantbootstrap (T-0808: GrantBootstrap referenced only by the first-account CLI), fitness-fleet-ca-scope (T-0738, ADR-0008 items 1-6: only SignServerLeaf uses the server CA key and it takes no key/CSR, the server CA is never in the client pool, dial roots are pinned certificates only, fleet_server_ca has no tenant_id, the presented chain is [leaf, server CA]; parts whose code has not landed are listed pending), fitness-keys (T-0525 keys-custody-design FF-KEY-1..6: tenant_keys schema guards, single owner of keys calls, KEK config only in the composition root, bound behaviour tests; parts whose code has not landed are listed pending; needs Docker), fitness-built-msi (T-0697, ADR-0006 A1 on the built MSI: opens dist/*.msi with msidump and judges ServiceInstall, MsiServiceConfig, CustomAction, Binary, MsiLockPermissionsEx, Registry; inactive until a build produces one), fitness-update (T-0139 TM-F-UPDATE: bad updates refused through the online courier and the offline bundle; the offline one again under docker --network none), fitness-agent-host (T-0554, ADR-0006 A1/A4 and ADR-0007 P1-P8, TM-F-AGENTCMD CI half: agent proto lints R1/R2/R5, module capability scans R3/R4, installer identity, agent import closure, P1-P8 and the F1 policy fuzz), fitness-host (T-0136 TM-F-HOST: boots the real server in a container and judges identity, file modes, TLS-only listener, default credentials, dumps and remote-DSN TLS; needs Docker), fitness functions: fitness-packaging (T-0104 API TLS directory ACL/mode in packaging/), fitness-disclosure (T-0258 SECURITY.md and RFC 9116 security.txt intake, Expires renewal; T-0260 advisory and CVE record carry one CVE ID and one CVSS on the fix day), fitness-modules (blueprint §2 import rules 1-5, 7, 8, and M7, T-0991: every top-level internal/platform, internal/directory and internal/connector package has exactly one row in its own blueprint §5.1/§5.2/§5.3 table), fitness-stack (ADR-0001 F1-F5), fitness-tenancy (ADR-0002 T1-T5), fitness-domain-keys (domain-model X3-X5), fitness-profiles (ADR-0002 P1, P4 logs/metrics/caches, P7, U1, U2 and the activation table), fitness-proto (connector contract compiles and keeps its rules) fitness-safeprim (safe-primitives FF-SP1-3), fitness-corpus (FF-SP4, FF-SP5 declarations, FF-SP8) fitness-oracles (FF-SP6 on Linux) and fitness-api (ADR-0004 A1, A3, A4, A5, A6, A7, A8, A10, A11, A12, A13, A14; prints every inactive check and inactive part)
+fitness: fitness-modules fitness-sso fitness-stack fitness-tenancy fitness-domain-keys fitness-profiles fitness-proto fitness-safeprim fitness-corpus fitness-oracles fitness-api fitness-operation fitness-audit fitness-objectid fitness-grantbootstrap fitness-disclosure fitness-packaging fitness-host fitness-agent-host fitness-built-msi fitness-update fitness-update-offline fitness-keys fitness-fleet-ca-scope fitness-reports fitness-search fitness-merge-order fitness-group-member ## Architecture fitness-merge-order (T-1707, ADR-0012 M1-M5: the checker's own tests, the bound dispatcher tests M1-M4 and the first-parent history scan M5; see the target), fitness-sso (T-0211, console-sso.md section 13: FIT-SSO-1 SAML libraries imported only under authn/sso/saml, go-oidc and go-jose only under authn/sso/oidc, no encoding/xml under platform/authn outside sso/saml, go.mod floors goxmldsig v1.6.0 and gosaml2 v0.12.0; FIT-SSO-2 every OIDC-n/SAML-n check cited by a corpus record, a record of every class per protocol, every record a passing TestCorpus subtest, for the OIDC and the SAML corpus), fitness-search (T-1126, ADR-0011 SE1-SE6: one scope renderer, no pattern or trigram operator in search SQL, bound search tests on PostgreSQL 16 and 18; see the target), fitness-reports (T-0873, ADR-0010 and reports contract §9: RP2 ReadScope.Terms/.Token and NewReadScope have one renderer and one producer, RP3 only reports/run calls reportsql.Compile/CompileCount/Exec, RP7 library/LOCK hashes and append-only history, and the bound tests RP4-RP6 and RP8-RP11 run here, a missing or skipped one fails, RP11 once per report.Dataset; RP1 is the sqlconst amendment inside fitness-safeprim; parts whose code has not landed are listed pending), fitness-grantbootstrap (T-0808: GrantBootstrap referenced only by the first-account CLI), fitness-fleet-ca-scope (T-0738, ADR-0008 items 1-6: only SignServerLeaf uses the server CA key and it takes no key/CSR, the server CA is never in the client pool, dial roots are pinned certificates only, fleet_server_ca has no tenant_id, the presented chain is [leaf, server CA]; parts whose code has not landed are listed pending), fitness-keys (T-0525 keys-custody-design FF-KEY-1..6: tenant_keys schema guards, single owner of keys calls, KEK config only in the composition root, bound behaviour tests; parts whose code has not landed are listed pending; needs Docker), fitness-built-msi (T-0697, ADR-0006 A1 on the built MSI: opens dist/*.msi with msidump and judges ServiceInstall, MsiServiceConfig, CustomAction, Binary, MsiLockPermissionsEx, Registry; inactive until a build produces one), fitness-update (T-0139 TM-F-UPDATE: bad updates refused through the online courier and the offline bundle; the offline one again under docker --network none), fitness-agent-host (T-0554, ADR-0006 A1/A4 and ADR-0007 P1-P8, TM-F-AGENTCMD CI half: agent proto lints R1/R2/R5, module capability scans R3/R4, installer identity, agent import closure, P1-P8 and the F1 policy fuzz), fitness-host (T-0136 TM-F-HOST: boots the real server in a container and judges identity, file modes, TLS-only listener, default credentials, dumps and remote-DSN TLS; needs Docker), fitness functions: fitness-packaging (T-0104 API TLS directory ACL/mode in packaging/), fitness-disclosure (T-0258 SECURITY.md and RFC 9116 security.txt intake, Expires renewal; T-0260 advisory and CVE record carry one CVE ID and one CVSS on the fix day), fitness-modules (blueprint §2 import rules 1-5, 7, 8, and M7, T-0991: every top-level internal/platform, internal/directory and internal/connector package has exactly one row in its own blueprint §5.1/§5.2/§5.3 table), fitness-stack (ADR-0001 F1-F5), fitness-tenancy (ADR-0002 T1-T5), fitness-domain-keys (domain-model X3-X5), fitness-profiles (ADR-0002 P1, P4 logs/metrics/caches, P7, U1, U2 and the activation table, whose P3 row runs the static half of P3 now: `safeprim -p3`), fitness-proto (connector contract compiles and keeps its rules) fitness-safeprim (safe-primitives FF-SP1-3), fitness-corpus (FF-SP4, FF-SP5 declarations, FF-SP8) fitness-oracles (FF-SP6 on Linux) and fitness-api (ADR-0004 A1, A3, A4, A5, A6, A7, A8, A10, A11, A12, A13, A14; prints every inactive check and inactive part)
 
-fitness-modules: ## T-0998 (T-0014, T-0991): blueprint §2 import rules 1-5, 7, 8 and ADR-0003 M7 as a standalone gate (also a prerequisite of fitness, so no earlier red check can hide it)
-	go run ./tools/fitness/modules
+# Its own target, listed first in `ci` and `fitness`: it used to be the recipe line of `fitness`, which
+# make skips when any prerequisite fails, so a failing gate hid the layering check (T-1869).
+fitness-modules: ## T-0991, T-1869, T-2164 (M3a generated lists and module pages, TG2, TG3, OW1), ADR-0003 M1-M11 and ADR-0013: blueprint §2 import rules, M7 catalogue rows, M11 exempt.json (an entry for 2.5/M3 and the other no-exemption rules fails) and M14 (every contract tag has one registering module, every x-permission is in Contributions.Permissions; bound test in compose/server)
+	@go run ./tools/fitness/modules; a=$$?; go test -count=1 -run '^Test_M14_' ./internal/compose/server; b=$$?; exit $$((a | b))
 
 fitness-keys: ## T-0525, keys-custody-design §7: FF-KEY-1 schema (tenant_keys RLS/index/trigger/grants, installation_kek grants once it exists) on PostgreSQL 16 and 18 containers (needs Docker), FF-KEY-2 single owner of tenant_keys and DEK/wrap calls, FF-KEY-3 KEK config only in compose/server, FF-KEY-5 insert sites and Rotate/ShredTenant/OpenMaintenance callers, and the bound tests of FF-KEY-1/3/4/5/6 (missing, failed or skipped fails); lists every part still pending
 	go run ./tools/fitness/keycustody
@@ -65,6 +101,10 @@ fitness-reports: ## T-0873, ADR-0010 / reports contract §9: RP2 (ReadScope.Term
 
 fitness-search: ## T-1126, ADR-0011 Fitness function: SE1 one scope renderer (ReadScope.Terms/.Token only in store/reportsql, Admits/SearchRoots only in authz, CompileSearch only from inventory, RBAC assignment tables named only in rbac/authz/migrations, trigger-guard allow-list), SE2 no LIKE/regex/trigram operator or persistent set_config in search SQL, and the bound tests SE3-SE5 on PostgreSQL 16 and 18 (needs Docker; a missing, failed or skipped one fails); parts whose code has not landed are listed pending, which is not a pass
 	go run ./tools/fitness/search
+
+fitness-merge-order: ## T-1707, ADR-0012: node tests of the checker itself (a violating history fails, a clean one passes), then factory/bin/fitness-merge-order: M1-M4 the named dispatcher/premerge tests (pending, not a pass, until T-1706 lands stacking; missing, failed or skipped after that fails) and M5 the first-parent history scan of main (inactive without factory/state/tickets; set FACTORY_STATE_DIR)
+	node --test factory/test/fitness-merge-order.test.mjs
+	factory/bin/fitness-merge-order
 
 fitness-search-nightly: ## T-1126, ADR-0011 SE6: the 50,000-object latency benchmark on PostgreSQL 16 and 18 behind the large-dataset switch (needs Docker)
 	go run ./tools/fitness/search -nightly
@@ -93,7 +133,7 @@ fitness-profiles: ## T-0038, T-0135, ADR-0002: P1 composition boundary, P4 tenan
 fitness-proto: ## T-0064, T-0144: every proto/ file compiles (pure Go, no protoc) and the connector contract keeps its structural rules P1-P8, fleet F1-F11 and the agent contracts (skenzeriq.agent.v1, activediq.addc.v1, activediq.fileserver.v1) AG1-AG8 (closed RPC list, denied verbs, unary, no free-form fields, policy data only; TM-F-AGENTCMD contract half)
 	go run ./tools/fitness/proto proto
 
-fitness-safeprim: ## T-0033: safe-primitives FF-SP1 import boundaries, FF-SP2 banned APIs and analyzers (dnstring, sqlconst, secretjson, tmplconst, constdisp), FF-SP3 literal shapes; the web/ half of FF-SP3 runs in lint-web
+fitness-safeprim: ## T-0033: safe-primitives FF-SP1 import boundaries (LDAP, Kerberos and Graph/Entra client libraries and the credential/sealed and credential/local packages: ADR-0002 P3, T-1464; `go run ./tools/fitness/safeprim -p3` runs just those rules plus FF-SP2 directory-credential-type and directory-credential-unseal), FF-SP2 banned APIs and analyzers (dnstring, sqlconst, secretjson, tmplconst, constdisp), FF-SP3 literal shapes; the web/ half of FF-SP3 runs in lint-web
 	go run ./tools/fitness/safeprim
 
 SAFEPRIM_REPORTS ?= .safeprim-reports
@@ -120,10 +160,16 @@ fitness-packaging: ## T-0104, TM-TB16-T3: the Windows ACL script (Administrators
 fitness-host: ## T-0136, TM-F-HOST: build cmd/server into packaging/linux-oci/Dockerfile.server, boot it against PostgreSQL 16 and judge the named cases (needs Docker); the Windows half is packaging/windows/Get-HostObservation.ps1 judged by `go run ./tools/fitness/host evaluate`. Known gaps are listed in tools/fitness/host/known-gaps.json
 	go run ./tools/fitness/host oci
 
+fitness-p2-oci: ## T-1462, ADR-0002 P2 (OCI half): build the server image of linux-oci and saas for linux/amd64 and linux/arm64, boot each against PostgreSQL 16 and 18 and prove migrations, health and tenant count (needs Docker; the arm64 boot needs qemu-user binfmt, else it is skipped with a printed reason; P2_OCI_REQUIRE_BOOT=1 forbids the skip). Not in `fitness`: `make fitness-profiles` runs it as the P2-oci activation row
+	go run ./tools/fitness/host p2-oci
+
 BUILT_MSI ?= dist/*.msi
 
-fitness-built-msi: ## T-0697: ADR-0006 A1 on the built artefact: every MSI matching $(BUILT_MSI) is dumped with msidump (msitools) and its service account (NT SERVICE\\activeDIQAgent), restricted SID, pinned privileges, custom actions, binaries, DACLs and HKLM\\SYSTEM writes are judged; prints inactive when none exists. The release job passes -require once the packaging ticket builds the MSI
+fitness-built-msi: ## T-0697: ADR-0006 A1 on the built artefact: every MSI matching $(BUILT_MSI) is dumped with msidump (msitools) and its service account (NT SERVICE\\activeDIQAgent), restricted SID, pinned privileges, custom actions, binaries, DACLs and HKLM\\SYSTEM writes are judged; prints inactive when none exists. The release job runs it with -require (fitness-built-msi-release, T-0724) on the MSI its Windows job builds
 	go run ./tools/fitness/builtmsi -glob '$(BUILT_MSI)'
+
+fitness-built-msi-release: ## T-0724: the release gate: as fitness-built-msi but -require (fails when no MSI exists); release.yml runs the same command on the MSI the Windows job built. Not in `make ci`: WiX needs Windows
+	go run ./tools/fitness/builtmsi -require -glob '$(BUILT_MSI)'
 
 AGENT_POLICY_FUZZ_TIME ?= 20s
 
@@ -158,7 +204,18 @@ fitness-fuzz-nightly: ## T-0034: FF-SP5 nightly: every declared fuzz target for 
 	@mkdir -p $(SAFEPRIM_REPORTS)
 	go run ./tools/fitness/corpus -fuzz -nightly -parallel 4 -log $(SAFEPRIM_REPORTS)/fuzz.log
 
-fitness-nightly: fitness-fuzz-nightly fitness-oracles-lab fitness-search-nightly ## T-0034: the nightly job: FF-SP5 long fuzz, FF-SP6 Samba lab; the Windows rows are fitness-oracles-windows on the Windows lab (runbook safe-primitives-fitness.md)
+fitness-nightly: fitness-fuzz-nightly fitness-oracles-lab fitness-search-nightly search-latency test-scale ## T-0034, T-2008 (test-scale: inventory scale tests): the nightly job: FF-SP5 long fuzz, FF-SP6 Samba lab; the Windows rows are fitness-oracles-windows on the Windows lab (runbook safe-primitives-fitness.md)
+
+SEARCH_LATENCY_OUT ?= $(CURDIR)/factory/demos/evidence/T-1102
+
+SEARCH_LATENCY_LOCK ?= $(CURDIR)/.search-latency.lock
+SEARCH_LATENCY_RUN = ACTIVEDIQ_SEARCH_LARGE_OBJECTS=50000 ACTIVEDIQ_SEARCH_LARGE_OUT=$(SEARCH_LATENCY_OUT) flock -n $(SEARCH_LATENCY_LOCK) go test -count=1 -timeout 90m -v ./internal/modules/directory/latency
+
+search-latency: ## T-1102, ADR-0011 SE6 (nightly, large-dataset switch): universal search p95 <= 200 ms per class over 50,000 objects on PostgreSQL 16 and 18, unscoped and scoped, through the HTTP handler; needs Docker; a miss fails naming the class, caller, version and percentile; tables in $(SEARCH_LATENCY_OUT); holds an exclusive lock so two runs never overlap
+	$(SEARCH_LATENCY_RUN) -run '^TestSearchLatency50k$$'
+
+search-latency-pg16 search-latency-pg18: search-latency-pg%: ## T-1102: the same benchmark on one PostgreSQL version (a run is ~25 min; use when the 90 min budget is shared)
+	$(SEARCH_LATENCY_RUN) -run '^TestSearchLatency50k$$/^pg$*$$'
 
 SAML_FUZZ_TIME ?= 60s
 
@@ -176,3 +233,6 @@ vuln-scan: ## T-0010: govulncheck (pinned in tools/vulntools) over ./...; fails 
 
 ci-proof: web-install ## Prove each gate fails on a deliberate violation and passes on clean input
 	tools/ci/proof.sh
+
+fitness-group-member: ## T-1916, connector-contract §8.10.8 GM1-GM4: group-member Actions declare only the group permissions with the group as authz Target (GM1), kindTable rows with a class for wired kinds 11-13 and the thirteen-key TestKindTableClosed (GM2), guarded-v1 carries unicodePwd[user] and unicodePwd[computer] and ComputerReset() only under objects.computer.reset_account (GM3, B1/B4), every WriteKind has a WriteChange arm of its number and the pinned list equals §8.10.1 (GM4); lists parts whose code has not landed as pending, which is not a pass
+	go run ./tools/fitness/groupmember

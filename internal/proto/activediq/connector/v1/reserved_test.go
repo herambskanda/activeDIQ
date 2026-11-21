@@ -29,11 +29,12 @@ var _ = [...]connectorv1.Operation{
 
 func TestOperationNumbersAreStable(t *testing.T) {
 	for op, want := range map[connectorv1.Operation]int32{
-		connectorv1.Operation_OPERATION_PLAN:              7,
-		connectorv1.Operation_OPERATION_VERIFY_CONNECTION: 8,
-		connectorv1.Operation_OPERATION_APPLY:             100,
-		connectorv1.Operation_OPERATION_READ_SECRET:       101,
-		connectorv1.Operation_OPERATION_VERIFY_USER:       102,
+		connectorv1.Operation_OPERATION_PLAN:                    7,
+		connectorv1.Operation_OPERATION_VERIFY_CONNECTION:       8,
+		connectorv1.Operation_OPERATION_READ_REPLICATION_STATUS: 9,
+		connectorv1.Operation_OPERATION_APPLY:                   100,
+		connectorv1.Operation_OPERATION_READ_SECRET:             101,
+		connectorv1.Operation_OPERATION_VERIFY_USER:             102,
 	} {
 		if int32(op) != want {
 			t.Errorf("%s = %d, want %d", op, int32(op), want)
@@ -83,7 +84,7 @@ func TestServiceRPCs(t *testing.T) {
 	}
 	want := map[string]bool{
 		"Describe": true, "DescribeSchema": true, "ScopedSearch": true, "Read": true, "ReadPerDC": true, "ChangeFeed": true,
-		"VerifyConnection": true, "Plan": true, "Apply": true,
+		"VerifyConnection": true, "Plan": true, "Apply": true, "ReadReplicationStatus": true,
 	}
 	if len(got) != len(want) {
 		t.Fatalf("service has RPCs %v, want exactly %v", got, want)
@@ -120,22 +121,25 @@ func TestNoWritePathMeansNoWrite(t *testing.T) {
 	}
 }
 
-// TestWriteKindList pins the WriteKind list of contract v1.4 (connector-contract.md §8.10, T-1581):
-// ten kinds, each with the WriteChange arm of the same number. Adding, removing or renumbering a
+// TestWriteKindList pins the WriteKind list of contract v1.6 (connector-contract.md §8.10, T-1581, T-1899):
+// thirteen kinds, each with the WriteChange arm of the same number. Adding, removing or renumbering a
 // kind needs a change to §8.10 (its digest key, reversibility class, touched-set rule and CC-WK
 // cases) in the same commit; update this test with it.
 func TestWriteKindList(t *testing.T) {
 	want := map[connectorv1.WriteKind]string{
-		connectorv1.WriteKind_WRITE_KIND_OBJECT_CREATE:       "object_create",
-		connectorv1.WriteKind_WRITE_KIND_OBJECT_UPDATE:       "object_update",
-		connectorv1.WriteKind_WRITE_KIND_OBJECT_DELETE:       "object_delete",
-		connectorv1.WriteKind_WRITE_KIND_OBJECT_MOVE:         "object_move",
-		connectorv1.WriteKind_WRITE_KIND_OBJECT_RENAME:       "object_rename",
-		connectorv1.WriteKind_WRITE_KIND_OBJECT_RESTORE:      "object_restore",
-		connectorv1.WriteKind_WRITE_KIND_USER_PASSWORD_RESET: "user_password_reset",
-		connectorv1.WriteKind_WRITE_KIND_USER_UNLOCK:         "user_unlock",
-		connectorv1.WriteKind_WRITE_KIND_ACCOUNT_ENABLE:      "account_enable",
-		connectorv1.WriteKind_WRITE_KIND_ACCOUNT_DISABLE:     "account_disable",
+		connectorv1.WriteKind_WRITE_KIND_OBJECT_CREATE:          "object_create",
+		connectorv1.WriteKind_WRITE_KIND_OBJECT_UPDATE:          "object_update",
+		connectorv1.WriteKind_WRITE_KIND_OBJECT_DELETE:          "object_delete",
+		connectorv1.WriteKind_WRITE_KIND_OBJECT_MOVE:            "object_move",
+		connectorv1.WriteKind_WRITE_KIND_OBJECT_RENAME:          "object_rename",
+		connectorv1.WriteKind_WRITE_KIND_OBJECT_RESTORE:         "object_restore",
+		connectorv1.WriteKind_WRITE_KIND_USER_PASSWORD_RESET:    "user_password_reset",
+		connectorv1.WriteKind_WRITE_KIND_USER_UNLOCK:            "user_unlock",
+		connectorv1.WriteKind_WRITE_KIND_ACCOUNT_ENABLE:         "account_enable",
+		connectorv1.WriteKind_WRITE_KIND_ACCOUNT_DISABLE:        "account_disable",
+		connectorv1.WriteKind_WRITE_KIND_GROUP_MEMBER_ADD:       "group_member_add",
+		connectorv1.WriteKind_WRITE_KIND_GROUP_MEMBER_REMOVE:    "group_member_remove",
+		connectorv1.WriteKind_WRITE_KIND_COMPUTER_ACCOUNT_RESET: "computer_account_reset",
 	}
 	if n := len(connectorv1.WriteKind_name); n != len(want)+1 {
 		t.Fatalf("WriteKind has %d values, want %d plus UNSPECIFIED: update contract §8.10 and this test together", n, len(want))

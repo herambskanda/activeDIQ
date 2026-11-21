@@ -159,6 +159,14 @@ it and raise a decision; this authorisation does not stretch.
 (§13). The password comes from the gitignored lab env file (`WIN_LAB_ENV`; from a worktree it lives in the
 main checkout's `lab/windows/`). Read it from the file in code; never print it, put it in argv, a log or a note.
 
+**The DC address has no default (T-1279).** `agent-verify`, `agent-unenrolled-verify` and `gssapi-lab` need
+`WIN_LAB_DC_ADDR` (dc1's current IP or host name) in the environment or in the lab env file, and exit non-zero
+naming the key — before the lock, a build or any connection — when it is missing, empty or not a plain
+IP/host name (`lab/windows/lib/labaddr.py`). dc1 has changed address before (A-0032), and a baked-in fallback
+would aim these drivers, which reboot the DC and clear its logs, at whichever LAN device holds the old address.
+Before a run, confirm the address is dc1: `ip neigh show <ip>` should show the VM's MAC (prefix `bc:24:11`).
+`lab/windows/tests/test_dc_addr_required.py` fails if a driver regains a default or the old address returns.
+
 **The lock rule: wrap every dc1 session in `with-dc1-lock`.** About seven tickets share dc1, and some
 of them reboot it, change LDAP signing or channel-binding policy, install and remove the agent or clear the
 Security log. Two sessions at once corrupt each other's result. So every worker session that talks to dc1
@@ -187,9 +195,15 @@ any other session to `dc2` (VM, address or name), and the `with-dc1-lock` wrappe
 every step inside dc2 is done by a human (§20); workers verify the child domain only through dc1 (T-1234). Extending the
 authorisation to dc2 is a CEO decision, not a ticket step.
 
-**fs1 does not exist.** There is no member server in this lab: only dc1 (VM 119). The `fs1` rows in §1–§2
-describe the local-KVM mode, which was dropped. A human creates fs1 (A-0028; tickets T-0409, T-0413).
-Until then no worker step may assume `fs1`, and proofs that need a member server stay blocked on A-0028.
+**fs1 exists (T-1328): Proxmox VM 181, a domain-joined member server.** Workers may open WinRM to `fs1` and only to `fs1` and
+`dc1` (extension of A-0025 by D-0022; the same lab-only rule: never a customer host). Build, credentials and rollback: §22.
+
+**dc1 changes that a rollback of dc1 would undo (T-1734, 2026-11-07).** `Update-LapsADSchema` was run on dc1: the lab forest now has the
+Windows LAPS schema (`msLAPS-*` attributes, the `ms-LAPS-Encrypted-Password-Attributes` extended right, `mayContain` on `computer`); it was absent
+before, although the forest is level 2025. A schema extension cannot be removed; a rollback to an older snapshot removes it, and a LAPS test written
+against dc1 should call `Update-LapsADSchema` (idempotent) first. The `t1734-*` objects the run deleted stay in `CN=Deleted Objects` until they expire.
+`CN=Deleted Objects` is back to its default descriptor (owner SYSTEM): by default not even a Domain Admin can read it, see
+`knowledge/development/domain/deleted-object-read-access.md`.
 
 ### Proxmox lab pool (D-0022)
 
@@ -294,7 +308,7 @@ The CEO supplied an existing Windows Server 2025 Evaluation VM (first Proxmox VM
 4 cores, 60 GB) as `dc1`, instead of local KVM. The steps below were done once by a human, before WinRM
 existed on it; VM 119 is provisioned (§10 status line), so they matter only for a rebuild. After that
 rebuild, WinRM must be enabled again (`Enable-PSRemoting`, firewall, `AllowUnencrypted` on the lab network
-only, as agent-verify expects) before workers can use it. No `fs1` in this mode.
+only, as agent-verify expects) before workers can use it. fs1 is in §22.
 
 **Rebuild steps (inside the VM unless stated)**
 
@@ -391,8 +405,7 @@ in `lab/windows/.state/msi/` of the T-0702 worktree (gitignored; rebuild if it i
 **Run on dc1 (Proxmox VM 119, must refuse) and fs1 (control, must install).** The dc1 run is a worker
 step: over WinRM as `Administrator` (§10, A-0025), wrapped in `lab/windows/bin/with-dc1-lock`, using the
 `DC` helper of `lab/windows/bin/agent-verify` for the upload (sha256-checked) and for running the
-PowerShell below elevated. The fs1 control run needs a member server that **does not exist** (A-0028),
-so it stays blocked until a human builds fs1; a dc1-only run still proves the refusal. Copy the MSI plus
+PowerShell below elevated. fs1 now exists (§22), so the control run is possible. Copy the MSI plus
 `packaging/windows/Get-HostObservation.ps1` and `Test-MsiRefusesDc.ps1` to `C:\lab\`
 (same folder; the driver calls the sibling script).
 
@@ -420,7 +433,7 @@ Then add `windows-lab-runs/T-0635-msi-refuses-dc-<date>.md` with both sha256s, b
 `msi.log` line holding the DC message, and the evaluate output. `tools/fitness/host` is on `factory/T-0635`
 until that branch merges. Status: run on dc1 on 2026-10-30 (T-0635): exit 1603, DC message, nothing installed, HOST-DC-REFUSED ok; see
 `windows-lab-runs/T-0635-msi-refuses-dc-20261030.md`. fs1 (the install control) has not been run, so the MSI has
-never installed on a host. Workers reach dc1 over WinRM (A-0025, section 10) under `lab/windows/bin/with-dc1-lock`; fs1 (A-0028) is still to come.
+never installed on a host. Workers reach dc1 over WinRM (A-0025, section 10) under `lab/windows/bin/with-dc1-lock`; fs1 is §22.
 
 ## 12. Agent identity harness (T-0613, for T-0557)
 
@@ -455,8 +468,8 @@ major upgrade, `agentsetup` refusals, `CheckDataDir`, `EvtLogOldestRecordNumber`
 
 ```bash
 pip install pywinrm requests-ntlm                      # operator tooling; licence register row
-export WIN_LAB_ENV=<path to the main checkout's lab/windows/.win-lab.env>   # gitignored; DC address defaults to 192.168.1.250
-export WIN_LAB_DC_ADDR=<dc ip>                         # optional override
+export WIN_LAB_ENV=<path to the main checkout's lab/windows/.win-lab.env>   # gitignored
+export WIN_LAB_DC_ADDR=<dc ip>                         # REQUIRED unless it is set in that env file; no default
 lab/windows/bin/agent-verify --log knowledge/development/runbooks/windows-lab-runs/T-0648-agent-<date>.log
 ```
 
@@ -478,6 +491,13 @@ lab/windows/bin/agent-verify --log knowledge/development/runbooks/windows-lab-ru
   `HKLM\SYSTEM\CurrentControlSet\Services\activeDIQAgent\ImagePath` is the quoted `activediq-agent.exe` path.
 - If a run leaves the DC odd, re-run (the script is idempotent) or clean up over WinRM; `qm rollback <vmid> clean`
   needs the Proxmox host (no worker access: raise an `action new`).
+- `--build-only --msi-out <dir>` builds the MSI on the DC and downloads it (sha256-checked) without running the cases; with `--msi-out` alone the full run also downloads it. T-0724 used this to `msidump` the real MSI and run `fitness-built-msi -require` on it. No WiX extension is installed any more: the MSI needs none (below). Wrap sessions in `flock -w 3600 /tmp/claude-1000/activediq-dc1.lock`.
+- Service recovery (restart x3, 30 s, reset 1 day; case A6) and the `activeDIQ Agent` event source are set by `agentsetup configure-service` and removed by `unconfigure-service` (T-0724): WiX 5.0.2's core `ServiceConfigFailureActions` writes action names where Windows Installer wants integers (install fails, error 1939, lab), and the util extension's equivalents add a DLL custom action, a Binary row and HKLM\SYSTEM rows that `fitness-built-msi` refuses.
+- **T-0557 variant** `agent-verify --guest agent-t0557.ps1 [--mode gpo-restart]`: same build, then a real GPO
+  (`New-GPO`/`New-GPLink` on the Domain Controllers OU, removed at the end), refusal of an elevated administrator
+  token, job-limit read-back, CPU-cap measurement, a logon-load run and a 10-minute backlog read. About 35 minutes;
+  `--mode gpo-restart` restarts the Event Log service (a real GPO takes effect only then). Results:
+  [domain note](../domain/dc-agent-channel-acl-gpo-and-bounds.md). Re-run `dc1-policy check` afterwards (section 18).
 - Not covered (needs an enrolled agent talking to a server; T-0814): killing the server connection,
   filling the data disk, and the U+0001 `Data` value reaching the server.
 
@@ -522,6 +542,8 @@ Run log, dc1 before/after state and the broken-run proof: `windows-lab-runs/T-05
 proof needs a reboot cycle and was not run. The test accounts stay on dc1 for the T-0846 fix; remove with `Remove-ADUser svc-t0566-gssapi`
 and `Remove-ADServiceAccount gmsa-t0566`.
 
+**Lab server bind (T-1267).** The server's Windows lab bootstrap binds as the shipping connector does (GSSAPI + channel binding, keytab), not with a password. `gssapi-lab keytab` (under `with-dc1-lock`) runs `guest/svc-keytab.ps1` (ktpass AES256 for `svc-activediq`, existing password kept) and writes `.win-lab-svc.keytab` beside the env file (gitignored, 0600); the lab server reads it from `WIN_LAB_SVC_KEYTAB` (`live-user-search.sh` defaults it). The Samba lab keeps its simple bind (no keytab/CBT lab on CI Samba; GSSAPI+CBT is proven on Samba by T-0560). Run log: `windows-lab-runs/T-1267-win-lab-gssapi-20261105.md`.
+
 ## 16. dc1 clock and time source (T-0850)
 
 **What was wrong.** dc1 (the PDC emulator) ran on `Local CMOS Clock` (`Type: NT5DS`, no peer) and its clock sat about 12h30m
@@ -558,7 +580,7 @@ local-time RTC unless `RealTimeIsUniversal=1`. Not needed while NTP sync is on.
 
 ## 17. Unenrolled-start and start-after-enrol proof for the DC agent (T-0833, for T-0813)
 
-`lab/windows/bin/agent-unenrolled-verify --log knowledge/development/runbooks/windows-lab-runs/T-0833-agent-unenrolled-<date>.log [--trials 3] [--ref factory/T-0813] [--merge-main main]`
+`lab/windows/bin/agent-unenrolled-verify --log knowledge/development/runbooks/windows-lab-runs/T-0833-agent-unenrolled-<date>.log [--trials 3] [--ref HEAD]`
 re-runs the whole proof. Run it from a worktree with `WIN_LAB_ENV=<main checkout>/lab/windows/.win-lab.env`; it re-executes itself
 under `with-dc1-lock` (§10), takes 6-8 minutes, and restores dc1 (agent uninstalled, `C:\Program Files\skenzeriq` and
 `C:\ProgramData\skenzeriq` removed; the log records a before and an after snapshot that must match). A killed run still restores
@@ -566,14 +588,13 @@ under `with-dc1-lock` (§10), takes 6-8 minutes, and restores dc1 (agent uninsta
 
 | Check | What it does on dc1 | Failing fixture |
 | --- | --- | --- |
-| AC1 | builds `Agent.wxs` of `--ref` (merged with main, `-X ours`, in a throwaway worktree) with WiX 5.0.2 and greps for `WIX1149` and a non-zero exit | builds `Agent.wxs` from `--old-wxs` (main), which must show `WIX1149` |
+| AC1 | builds `Agent.wxs` of `--ref` (a throwaway worktree) with WiX 5.0.2 as `wix build -wx -sw1149`: exit 0, no `WIX0004`, no `WIX1149`, no warning of any kind (`-wx` makes an unsuppressed warning an error) | the same file without `-sw1149` must fail with `WIX1149`; a failure-action attribute on the core `ServiceConfig` must fail with `WIX0004` |
 | AC2 | `msiexec /i` while unenrolled with `Start=install`: exit 0, no `1920` in the log, service Running, same PID after 45 s (past the 30 s recovery delay), no SCM 7031/7034/7024/7023/7009/7000, no event 101, `sc qfailure` read back | none needed: each assertion is a different observable (a non-zero exit, a `1920` line, a PID change or an SCM failure event each fail it) |
 | AC3 | event 103 of source `activeDIQ Agent`: `Get-WinEvent` message and the `wevtutil /f:text` rendering that Event Viewer shows must contain the text and not `cannot be found`; registered message file printed | an event written under a source key with no message file renders `Description: N/A`, and the same predicate rejects it |
-| AC4 | `enrol-stub` (this host, `lab/windows/enrol-stub`, throwaway pinned CA and tenant CA, prints PIN/TOKEN, logs `ENROLL ok` and `TUNNEL mTLS client verified` with host-clock timestamps) is the fleet server; `activediq-agent.exe enroll <host:7443> <pin>` runs on dc1 with the token on stdin (uploaded to a file the script deletes at once); pickup is the first verified mTLS connection from the same service PID, latency = stub's TUNNEL minus ENROLL time | no connection within 40 s fails; the stub is single-use and refuses a wrong pin (`go test ./lab/windows/enrol-stub`, part of `make lab-test-windows-unit`) |
+| AC4 | (T-1249 adds three ACL checks per trial: every enrolment path grants `NT SERVICE\activeDIQAgent`, is owned by `BUILTIN\Administrators`, and does not name the enrolling administrator.) `enrol-stub` (this host, `lab/windows/enrol-stub`, throwaway pinned CA and tenant CA, prints PIN/TOKEN, logs `ENROLL ok` and `TUNNEL mTLS client verified` with host-clock timestamps) is the fleet server; `activediq-agent.exe enroll <host:7443> <pin>` runs on dc1 with the token on stdin (uploaded to a file the script deletes at once); pickup is the first verified mTLS connection from the same service PID, latency = stub's TUNNEL minus ENROLL time | no connection within 40 s fails; the stub is single-use and refuses a wrong pin (`go test ./lab/windows/enrol-stub`, part of `make lab-test-windows-unit`) |
+| AC5 (T-1249) | enrol, then add a `BUILTIN\Users` ACE to the enrolment directory and start the service: after 20 s event 104 (Error) exists and names `unsafe-permissions`, event 103 does not, the service is Running and the same process | no event 104 fails it; a 103 for state that exists fails it |
 
-If AC1 fails the driver builds a **repaired lab variant** of `Agent.wxs` (failure actions moved to `util:ServiceConfig`, `-sw1149`) so
-AC2-AC4 still run; that variant is never committed. When AC4 fails it runs a labelled DIAG step (swap the enrolling user's ACE for the
-service identity) and does not count it as a pass.
+T-1249 removed the "repaired lab variant" (it is now the committed file) and the DIAG step (cause 1 is fixed in `dial`).
 
 **Result of the first run (2026-11-01, `factory/T-0813` merged with `main`): AC1 FAIL, AC2 PASS, AC3 PASS, AC4 FAIL.** Details and the
 analysis are in the log and in bug T-1249: the committed `Agent.wxs` does not build (WIX0004; the core `ServiceConfig` has no failure-action
@@ -676,3 +697,80 @@ sign-in API, runs `web/e2e/live-user-search.spec.ts` and records dc1's side with
 
 Needs `WIN_LAB_ENV` and `WIN_LAB_CA` as absolute paths (the env and CA files are gitignored and live in the main checkout), docker, go, node with the
 Playwright browser, and `pip install pywinrm requests-ntlm`. The script refuses to run outside `with-dc1-lock`. First record: `windows-lab-runs/T-0765-live-boot-20261101.md`.
+
+## 20. Channel-binding acceptance: binds succeed at signing required + CBT Always, and dc1 logs no 2887/3039/3074/3075 (T-0148)
+
+`lab/windows/bin/gssapi-lab accept` is the TM-TB3-T3 acceptance. Run it like every dc1 proof, under the lock, with
+`WIN_LAB_ENV`, `WIN_LAB_CA` and `WIN_LAB_DC_ADDR` set (sections 10, 15, 18):
+
+```
+lab/windows/bin/with-dc1-lock -- bash -c 'lab/windows/bin/dc1-policy check && lab/windows/bin/gssapi-lab accept && lab/windows/bin/dc1-policy check'
+```
+
+| Step | What it does | Fails when |
+| --- | --- | --- |
+| policy | `require_policy` (section 18): both registry values 2 | either value is not 2; nothing else is touched |
+| clock | dc1 minus host | over 60 s (Kerberos); never steps the clock (section 16) |
+| A. correct binds | the four correct-binding tests of section 15 (keytab + gMSA, test handshake and `ad.Open`), window taken from **dc1's** clock | any of them is not `--- PASS` (a skip or a missing test is a fail), or the Directory Service log holds 2887, 3039, 3074 or 3075 in the window (+-1 s) |
+| B. control | the wrong-binding test (refused with ldap 49); then polls (90 s max) until event 3039 is readable | the test fails, or 3039 never appears: an empty window would prove nothing |
+| after | restores `16 LDAP Interface Events`, re-checks 2/2 | the policy moved during the run |
+
+Exit 0 and the line `ACCEPTANCE PASSED` only if every step holds. It also prints the context ids it queried (2886, 2888, 2889, 3040, 3041) so a
+reader can see what else the DC said. The judge, query builder and parser are pure functions in `lab/windows/lib/cbtevents.py`; the offline proof
+is `lab/windows/tests/test_cbt_acceptance.py` (`make lab-test-windows-unit`, no Windows needed): each named event in the window fails the run,
+events outside the window do not, a control without 3039 fails, a skipped bind is not a pass, drift of the policy fails.
+2887 is a daily DC summary, so a 2-second window cannot prove it absent by itself; the run log also lists everything the queried ids logged in the
+preceding 26 h. Run log and broken-run proof: `windows-lab-runs/T-0148-cbt-acceptance-20261102.md`. Needs the keytab and gMSA files from `gssapi-lab prepare`.
+
+## 22. fs1: domain-joined member server (Proxmox VM 181) (T-1328, for T-0409 / T-0413)
+
+**What it is.** Windows Server 2022 Standard Evaluation (AC amended 2026-11-12: 2022 or later), 4 vCPU / 8 GiB / 80 GB, VirtIO NIC on
+`vmbr0` (dc1's bridge), in pool `adiq-lab` (CEO action A-0041). Static `192.168.1.17/24`, gateway `192.168.1.1`, DNS = dc1
+(`192.168.1.250`), member of `win.activediq.test`. A local non-admin user `adiq-std` and the gMSA `adiq-gmsa$` (retrievable by `FS1$` only, installed on fs1).
+fs1 exists for what a DC cannot show: local SAM users, local ACLs, a service running as a gMSA. It is not a DC: never promote it.
+
+**Credentials** (all in the gitignored 0600 `lab/windows/.win-lab.env`; from a worktree that is the main checkout's file; never print, log or put in argv):
+`WIN_LAB_FS1_ADMIN_PASSWORD` (fs1 local Administrator), `WIN_LAB_FS1_ADDR`, `WIN_LAB_FS1_USER_PASSWORD` (`adiq-std`, generated by the build), and dc1's `WIN_LAB_ADMIN_PASSWORD` (used for the domain join and the gMSA).
+
+**WinRM path.** HTTP 5985, NTLM, local `Administrator` on fs1, lab network only; `lab/windows/lib/dc1winrm.py` `make_ps(env, addr, "WIN_LAB_FS1_ADMIN_PASSWORD")`.
+Any session that touches dc1 (the build does, for the gMSA) runs inside `with-dc1-lock`; a pure fs1 session does not need it.
+
+**Build (idempotent; each step checks first).**
+
+```bash
+export WIN_LAB_ENV=/path/to/main/checkout/lab/windows/.win-lab.env     # from a worktree
+lab/proxmox/bin/proxmox-lab verify-scope && lab/proxmox/bin/proxmox-lab list      # 181 fs1 must be in the pool
+lab/proxmox/bin/proxmox-lab snapshot 181 pre-join                                  # recovery point before changing it
+lab/windows/bin/with-dc1-lock -- lab/windows/bin/fs1-lab build                     # IP+DNS, join, KDS key + gMSA on dc1, install, local user, check
+lab/windows/bin/fs1-lab evidence                                                   # raw evidence for a run log
+lab/proxmox/bin/proxmox-lab snapshot 181 clean                                     # only after `fs1-lab check` exits 0
+```
+
+`fs1-lab check` exits 3 and names each problem: not joined, `nltest /sc_verify` not NERR_Success, `Test-ADServiceAccount` not True,
+`adiq-std` in Administrators or not in Users or disabled, DNS not dc1, DHCP still on, no VirtIO NIC. Offline proof that each of those fails: `make lab-test-windows-unit` (`tests/test_fs1_lab.py`).
+
+**Reset = rollback.** `lab/proxmox/bin/proxmox-lab rollback 181 clean` (the VM is left stopped: `proxmox-lab start 181`, wait for WinRM, then `fs1-lab check`).
+The snapshot is disk-only, so the machine-account password in the snapshot may be older than dc1's view after a long gap (default 30-day rotation); if `nltest /sc_verify` fails after a rollback,
+run `Reset-ComputerMachinePassword -Server dc1.win.activediq.test -Credential WIN\Administrator` on fs1, or re-run `fs1-lab build`. If dc1 itself was rolled back, rebuild the gMSA with `fs1-lab build`.
+The domain Administrator password is dc1's; the snapshot holds no password in plain text beyond the local accounts above.
+
+**Known limits.** The IP is static on the guest but the gateway's DHCP server may still hand `.17` to another device after the old lease expires; ask for a reservation if a clash appears.
+The gMSA's KDS root key is backdated 10 hours (lab shortcut: it is usable immediately; never do this on a customer domain).
+Run logs: `windows-lab-runs/T-1328-fs1-20261112.md`.
+
+## 21. userParameters fixtures (T-1890)
+
+`lab/windows/bin/capture-tsprops capture` (under `with-dc1-lock`) creates disabled, password-less users `tspw01..` and probe users in `OU=tspfix` on dc1,
+writes `userParameters` via ADSI `IADsTSUserEx` or a plain LDAP modify, reads each back (raw octets, `WTSQueryUserConfig`, ADSI) and writes
+`testdata/tsprops/windows/captures.json`; `capture-tsprops derive` builds `records.jsonl`/`probes.jsonl` offline. It also makes a throwaway `tspreader`
+user with a per-run random password (never printed) to test the ordinary-user read, and deletes it. Needs `pip install pywinrm requests-ntlm`
+and `WIN_LAB_DC_ADDR`. The fixture users stay on dc1 for ADUC comparison (spec V4); `Remove-ADOrganizationalUnit tspfix -Recursive` clears them. Findings:
+`knowledge/development/domain/userparameters-windows-findings.md`. No new tool; pywinrm/requests-ntlm are already in the licence register.
+
+## 22. Schema rangeUpper and unpaired-surrogate evidence (T-1880)
+
+`lab/windows/bin/with-dc1-lock -- make lab-test-sync-windows` (needs `WIN_LAB_DC_ADDR`, `WIN_LAB_ENV`, `WIN_LAB_CA`; pywinrm). Reads
+`rangeUpper` from dc1's schema NC, then creates a throwaway non-admin `t1880creator` and, as it, a MachineAccountQuota computer `T1880PC`
+(both deleted at the end and before the run), writes lone surrogates over raw LDAPS, ADSI and SAMR (`lab/windows/bin/t1880-surrogate-write`
+over WinRM; the password goes on stdin, never argv or the environment) and logs the bytes LDAP returns; the mapper side (CodeBadText on those bytes, bounds at the measured rangeUpper) is pinned offline in `internal/directory/sync/bounds_windows_evidence_test.go`. Findings and the verdict for
+T-1713: `knowledge/development/domain/sync-refusal-bounds.md`.

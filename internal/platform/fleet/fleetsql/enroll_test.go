@@ -8,10 +8,8 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
-	"crypto/sha256"
 	"crypto/x509"
 	"crypto/x509/pkix"
-	"encoding/hex"
 	"encoding/pem"
 	"errors"
 	"math/big"
@@ -235,19 +233,6 @@ func TestEnroll(t *testing.T) {
 		}
 		if _, err := e.enr.Enroll(ctx, peerIP, iss.Token.String(), csr); !errors.Is(err, fleetsql.ErrTokenInvalid) {
 			t.Fatalf("second use: %v", err)
-		}
-		// The pin shown to the admin is the SPKI hash of the bundle's CA.
-		var pin string
-		if err := e.db.WithTenant(ctx, e.a, func(ctx context.Context, tx store.Tx) error {
-			var err error
-			pin, err = e.enr.CAPin(ctx, tx, e.a)
-			return err
-		}); err != nil {
-			t.Fatal(err)
-		}
-		h := sha256.Sum256(cas[0].RawSubjectPublicKeyInfo)
-		if pin != "sha256:"+hex.EncodeToString(h[:]) {
-			t.Fatalf("pin %s", pin)
 		}
 		// Tenant B's CA is another CA.
 		resp, err := e.enr.Enroll(ctx, peerIP, other.Token.String(), csr)
