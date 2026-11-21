@@ -1,6 +1,6 @@
 # Windows Server 2025 evaluation lab on local KVM (T-0254, D-0003). Runbook: knowledge/development/runbooks/windows-lab.md
 WINLAB := lab/windows/bin/windows-lab
-.PHONY: windows-agent-harness-build windows-lab-up windows-lab-reset windows-lab-down windows-lab-destroy windows-lab-rebuild windows-lab-status windows-lab-preflight lab-test-connector-windows lab-test-windows-unit
+.PHONY: windows-agent-harness-build windows-lab-up windows-lab-reset windows-lab-down windows-lab-destroy windows-lab-rebuild windows-lab-status windows-lab-preflight lab-test-connector-windows lab-test-windows-unit lab-test-sync-windows
 
 windows-lab-preflight: ## Check KVM/libvirt tooling and disk space for the Windows lab
 	$(WINLAB) preflight
@@ -17,6 +17,8 @@ windows-lab-status: ## VM state and connection details
 	$(WINLAB) status
 lab-test-connector-windows: ## internal/connector/ad against dc1 over LDAPS (tags lab,windowslab); log in knowledge/development/runbooks/windows-lab-runs/
 	$(WINLAB) test-connector
+lab-test-sync-windows: ## T-1880: Windows rangeUpper + unpaired-surrogate hiding path (run as: lab/windows/bin/with-dc1-lock -- make lab-test-sync-windows; needs WIN_LAB_DC_ADDR)
+	go test -count=1 -v -tags 'lab windowslab' -run 'Test_windowslab_' ./internal/connector/ad/
 lab-test-windows-unit: ## Offline proof of the Windows lab tooling and the dc1 lock wrapper (no KVM needed)
 	python3 -m unittest discover -s lab/windows/tests -p 'test_*.py' -v
 	bash lab/windows/tests/test_with_dc1_lock.sh
