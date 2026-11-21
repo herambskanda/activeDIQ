@@ -20,7 +20,6 @@ import (
 	connectorv1 "github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1"
 )
 
-
 func dsa(i int) guid.GUID { return g(fmt.Sprintf("cccccccc-0000-0000-0000-%012d", i)) }
 
 // filetime of 2026-01-01T00:00:00Z.
