@@ -1,0 +1,6 @@
+    qaprobe_test.go:38: pid 66->66 secret="" timeout="30s" bytea="hex" datestyle="ISO, MDY" listening=0
+    qaprobe_test.go:38: pid 84->84 secret="" timeout="30s" bytea="hex" datestyle="ISO, MDY" listening=0
+--- PASS: TestQAProbe (14.98s)
+    --- PASS: TestQAProbe/pg16 (10.46s)
+    --- PASS: TestQAProbe/pg18 (4.52s)
+ok  	github.com/skenzeriq/activediq/internal/platform/store	17.101s

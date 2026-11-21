@@ -1,0 +1,34 @@
+fitness-tenancy: PostgreSQL 16 (postgres:16-alpine@sha256:16bc17c64a573ef34162af9298258d1aec548232985b33ed7b1eac33ba35c229)
+  T1 migration 1 creates tenants  ok
+  T2 catalog (73 tables)          ok
+  T3 roles                        ok
+T4   public.authn_accounts: foreign key authn_accounts_tenant_id_directory_connection_id_fkey is registered NULL at insert (a circular reference); its shape is covered by T2
+T4   public.connections: foreign key connections_tenant_id_last_verification_id_fkey is registered NULL at insert (a circular reference); its shape is covered by T2
+T4   public.connector_bindings: foreign key connector_bindings_tenant_id_component_id_fkey is registered NULL at insert (a circular reference); its shape is covered by T2
+T4   public.report_runs: foreign key report_runs_tenant_id_rerun_of_fkey is self-referencing; its shape is covered by T2
+  T4 isolation probes (579)       ok
+fitness-tenancy: PostgreSQL 18 (postgres:18@sha256:5a5a84b19854a9ffaa54082c166ff4ec27473a361e496e5ea167f298f2da9722)
+  T1 migration 1 creates tenants  ok
+  T2 catalog (73 tables)          ok
+  T3 roles                        ok
+T4   public.authn_accounts: foreign key authn_accounts_tenant_id_directory_connection_id_fkey is registered NULL at insert (a circular reference); its shape is covered by T2
+T4   public.connections: foreign key connections_tenant_id_last_verification_id_fkey is registered NULL at insert (a circular reference); its shape is covered by T2
+T4   public.connector_bindings: foreign key connector_bindings_tenant_id_component_id_fkey is registered NULL at insert (a circular reference); its shape is covered by T2
+T4   public.report_runs: foreign key report_runs_tenant_id_rerun_of_fkey is self-referencing; its shape is covered by T2
+  T4 isolation probes (579)       ok
+T4 blob isolation (TM-Q9)          ok
+T5 static (go/analysis, SQL, OpenAPI) ok
+fitness-tenancy: ok (T1,T2,T3,T4,T5)
+fitness-stack: F2 CGO_ENABLED=0 go build ./... ok for darwin/arm64 (tools/vulntools)
+fitness-stack: F2 CGO_ENABLED=0 go build -tags lab ./... ok for darwin/arm64 (tools/vulntools)
+fitness-stack: ok (F1,F2,F3,F4,F5)
+go run ./tools/fitness/safeprim
+/home/khushi/AD/.activeDIQ-worktrees/T-1313/internal/directory/inventory/datasets_groups.go:154: FF-SP2 [sqlconst] RP1: report.SQL takes a compile-time constant: a derived-column fragment is never built from a variable, concatenation or format (reports contract §3.3)
+/home/khushi/AD/.activeDIQ-worktrees/T-1313/internal/directory/inventory/datasets_groups.go:156: FF-SP2 [sqlconst] RP1: report.SQL takes a compile-time constant: a derived-column fragment is never built from a variable, concatenation or format (reports contract §3.3)
+internal/directory/inventory/datasets_groups.go:264: FF-SP3 [sql-shape] literal " SELECT hop.path FROM hop WHERE hop.i = card…" combined by concatenation: SQL text built from data; use sqlc queries and bind parameters (§7)
+fitness-safeprim: 3 violation(s)
+exit status 1
+make: *** [tools/ci/ci.mk:89: fitness-safeprim] Error 1
+npm --prefix web run --silent format:check
+Checking formatting...
+All matched files use Prettier code style!

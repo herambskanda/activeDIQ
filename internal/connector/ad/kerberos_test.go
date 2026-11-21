@@ -14,7 +14,15 @@ import (
 )
 
 func goodKrb() Kerberos {
-	return Kerberos{Principal: "svc-activediq$", Realm: "LAB.ACTIVEDIQ.TEST", Keytab: secret.FromBytes([]byte{5, 2}), KDCs: []string{"dc1.lab.activediq.test", "10.0.0.5:88"}}
+	kt := keytab.New()
+	if err := kt.AddEntry("svc-activediq$", "LAB.ACTIVEDIQ.TEST", "pw", time.Now(), 1, 18); err != nil {
+		panic(err)
+	}
+	raw, err := kt.Marshal()
+	if err != nil {
+		panic(err)
+	}
+	return Kerberos{Principal: "svc-activediq$", Realm: "LAB.ACTIVEDIQ.TEST", Keytab: secret.FromBytes(raw), KDCs: []string{"dc1.lab.activediq.test", "10.0.0.5:88"}}
 }
 
 func TestKerberosValidate(t *testing.T) {

@@ -1,0 +1,10 @@
+    qaprobe_test.go:38: pid 66->66 secret="x" timeout="30s" bytea="escape" datestyle="SQL, DMY" listening=1
+    qaprobe_test.go:39: LEAK
+    qaprobe_test.go:38: pid 84->84 secret="x" timeout="30s" bytea="escape" datestyle="SQL, DMY" listening=1
+    qaprobe_test.go:39: LEAK
+--- FAIL: TestQAProbe (13.55s)
+    --- FAIL: TestQAProbe/pg16 (7.18s)
+    --- FAIL: TestQAProbe/pg18 (6.38s)
+FAIL
+FAIL	github.com/skenzeriq/activediq/internal/platform/store	14.471s
+FAIL
