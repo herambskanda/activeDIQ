@@ -78,7 +78,7 @@ func TestWindowsLabSyncCapture(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 	sess, err := ad.Open(ctx, ad.Config{Servers: []string{host + ":636"}, ServerName: tlsName, RootCAs: pool, PageSize: searchPage,
-		Schema:     ad.DefaultSchema().With(syncExtraAttrs()...),
+		Schema:     ad.DefaultSchema(),
 		Credential: ad.Credential{BindName: "svc-activediq@" + fqdn, Password: secret.FromBytes([]byte(env["WIN_LAB_SVC_PASSWORD"]))}})
 	if err != nil {
 		t.Fatalf("service bind: %v", err)
