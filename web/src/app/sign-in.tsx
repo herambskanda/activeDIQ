@@ -1,4 +1,4 @@
-import { type FormEvent, useRef, useState } from "react";
+import { type FormEvent, useEffect, useRef, useState } from "react";
 
 import { ApiError, api } from "../api/client";
 import { Button, StatePanel, TextInput } from "../ds/components";
@@ -48,6 +48,10 @@ export function SignInPage({
   const [error, setError] = useState<string>();
   const [fieldError, setFieldError] = useState<string>();
   const codeInput = useRef<HTMLInputElement>(null);
+  // Focus the code field once it is rendered (a timeout fires before React commits it).
+  useEffect(() => {
+    if (step === "code") codeInput.current?.focus();
+  }, [step]);
 
   const useKey = async () => {
     if (busy) return;
@@ -93,7 +97,6 @@ export function SignInPage({
         await submitPassword(client, username.trim(), password);
         setPassword("");
         setStep("code");
-        setTimeout(() => codeInput.current?.focus(), 0);
       } else {
         await submitTotp(client, code.trim());
         onSignedIn();

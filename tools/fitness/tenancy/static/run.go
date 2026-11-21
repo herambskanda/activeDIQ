@@ -18,11 +18,6 @@ import (
 // analyzer, scans .sql files and the OpenAPI documents, and checks the registry for stale entries.
 func Run(root string, cfg *Config) ([]Finding, error) {
 	obs := NewObserved()
-	pkgCfg := &packages.Config{
-		Mode:  packages.NeedName | packages.NeedFiles | packages.NeedCompiledGoFiles | packages.NeedImports | packages.NeedTypes | packages.NeedTypesSizes | packages.NeedSyntax | packages.NeedTypesInfo | packages.NeedDeps,
-		Dir:   root,
-		Tests: true,
-	}
 	// Load only the trees that exist: a pattern for a missing directory is an error, and the product
 	// has no cmd/ or internal/ until its first package lands.
 	var patterns []string
@@ -31,30 +26,44 @@ func Run(root string, cfg *Config) ([]Finding, error) {
 			patterns = append(patterns, "./"+top+"/...")
 		}
 	}
-	var pkgs []*packages.Package
-	if len(patterns) > 0 {
-		var err error
-		if pkgs, err = packages.Load(pkgCfg, patterns...); err != nil {
+	var fnd []Finding
+	seen := map[string]bool{}
+	// One pass per target OS: the host's, then windows, so files behind //go:build windows (the agent,
+	// the KEK opener, the owner-file code) are type-checked and analysed too. Observed is shared, so
+	// registry entries naming a function that exists only on one OS are not reported stale.
+	for _, goos := range []string{"", "windows"} {
+		if len(patterns) == 0 {
+			break
+		}
+		pkgCfg := &packages.Config{
+			Mode:  packages.NeedName | packages.NeedFiles | packages.NeedCompiledGoFiles | packages.NeedImports | packages.NeedTypes | packages.NeedTypesSizes | packages.NeedSyntax | packages.NeedTypesInfo | packages.NeedDeps,
+			Dir:   root,
+			Tests: true,
+		}
+		if goos != "" {
+			pkgCfg.Env = append(os.Environ(), "GOOS="+goos, "CGO_ENABLED=0")
+		}
+		pkgs, err := packages.Load(pkgCfg, patterns...)
+		if err != nil {
 			return nil, err
 		}
-	}
-	var use []*packages.Package
-	for _, p := range pkgs {
-		if strings.HasSuffix(p.ID, ".test") {
-			continue // the generated test main
+		var use []*packages.Package
+		for _, p := range pkgs {
+			if strings.HasSuffix(p.ID, ".test") {
+				continue // the generated test main
+			}
+			if len(p.Errors) > 0 {
+				return nil, fmt.Errorf("package %s does not type-check (GOOS=%q; run go build ./... first): %v", p.PkgPath, goos, p.Errors[0])
+			}
+			use = append(use, p)
 		}
-		if len(p.Errors) > 0 {
-			return nil, fmt.Errorf("package %s does not type-check (run go build ./... first): %v", p.PkgPath, p.Errors[0])
+		if len(use) == 0 {
+			continue
 		}
-		use = append(use, p)
-	}
-	var fnd []Finding
-	if len(use) > 0 {
 		g, err := checker.Analyze([]*analysis.Analyzer{New(cfg, obs)}, use, nil)
 		if err != nil {
 			return nil, err
 		}
-		seen := map[string]bool{}
 		for _, act := range g.Roots {
 			if act.Err != nil {
 				return nil, act.Err
