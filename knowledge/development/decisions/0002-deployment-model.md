@@ -449,6 +449,5 @@ On 2026-10-30, `make fitness-profiles` on `main` (10ce82fe9, re-run on c773b413b
 | P4 | T-0931 | 2026-11-30 | `saas` composed with two tenants and two remote connectors: certificate, message-body and Entra-certificate crossings refused | backend-engineer |
 | P6 | T-0932 | 2026-12-15 | `linux-oci` boot, sign-in and directory read with egress denied except to the lab DC and PostgreSQL | devops-engineer |
 | U3 | T-0933 | 2026-11-30 | no `activediq.*` reference in `skenzeriq.agent.v1`; golden-descriptor breaking-change check on both namespaces, with no new dependency | devops-engineer |
-| U4 | T-0934 | 2026-11-20 | freeze marker `// contract: frozen` gated on `agent-contract-review.md` `status: accepted` | devops-engineer |
 
-All seven deferrals expire within three months of 2026-10-30, the latest on 2027-01-30. An extension is a new amendment line in this ADR with its reason. Editing the date in the manifest does not extend anything. P2-oci was delivered by T-1462 on 2026-11-04 and left the table; six remain.
+All remaining deferrals expire within three months of 2026-10-30, the latest on 2027-01-30. An extension is a new amendment line in this ADR with its reason. Editing the date in the manifest does not extend anything. P2-oci was delivered by T-1462 on 2026-11-04 and U4 by T-2418 on 2026-11-21 (`tools/fitness/contractfreeze`; the deferral T-0934 expired 2026-11-20 and was not extended); both left the table; five remain.
