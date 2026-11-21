@@ -113,8 +113,7 @@
       "check": "U4",
       "subject": "contract-freeze gate: skenzeriq/agent/v1 is not frozen while agent-contract-review.md is absent or not accepted",
       "paths": ["proto/skenzeriq/agent/"],
-      "command": [],
-      "deferral": {"ticket": "T-0934", "expires": "2026-11-20", "adr": "0002-deployment-model.md"},
+      "command": ["go", "run", "./tools/fitness/contractfreeze"],
       "reason": "U4 guards the same protos as U3: it activates with proto/skenzeriq/agent/"
     }
   ]
