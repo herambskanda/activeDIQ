@@ -38,13 +38,13 @@ func TestWindowsLabSyncCapture(t *testing.T) {
 	if os.Getenv("DIQ_DC1_LOCK_HELD") == "" {
 		t.Fatal("run under lab/windows/bin/with-dc1-lock (runbook section 10)")
 	}
-	lf := func(env, def string) string {
-		if p := os.Getenv(env); p != "" {
-			return p
+	lf := func(override, def string) string {
+		if override != "" {
+			return override
 		}
 		return filepath.Join("..", "..", "..", "lab", "windows", def)
 	}
-	f, err := os.Open(lf("WIN_LAB_ENV", ".win-lab.env"))
+	f, err := os.Open(lf(os.Getenv("WIN_LAB_ENV"), ".win-lab.env"))
 	if err != nil {
 		t.Fatalf("windows lab credentials: %v", err)
 	}
@@ -67,7 +67,7 @@ func TestWindowsLabSyncCapture(t *testing.T) {
 	if tlsName == "" {
 		tlsName = "dc1." + fqdn
 	}
-	pem, err := os.ReadFile(lf("WIN_LAB_CA", ".win-lab-ca.pem"))
+	pem, err := os.ReadFile(lf(os.Getenv("WIN_LAB_CA"), ".win-lab-ca.pem"))
 	if err != nil {
 		t.Fatal(err)
 	}
