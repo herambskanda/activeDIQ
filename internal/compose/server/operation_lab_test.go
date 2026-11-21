@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/skenzeriq/activediq/internal/directory/attr/secretattr"
 	"strings"
 	"sync"
 	"testing"
@@ -283,7 +284,7 @@ func newLabRigWith(t *testing.T, s *storetest.Server, actions func(*testing.T, l
 			t.Fatal(err)
 		}
 		jr := jobs.NewRegistry()
-		runner, err := operation.NewRunner(operation.Config{DB: e.db, Audit: ch, Authz: az, Registry: areg, Facts: facts, Jobs: jr, Credentials: connectionCredentials{reg},
+		runner, err := operation.NewRunner(operation.Config{SecretAttr: secretattr.IsStatic, DB: e.db, Audit: ch, Authz: az, Registry: areg, Facts: facts, Jobs: jr, Credentials: connectionCredentials{reg},
 			Keys: fixedKeys{}, Pinner: labPin, Settings: labSettings{}, Component: "lab"})
 		if err != nil {
 			t.Fatal(err)

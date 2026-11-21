@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"errors"
+	"github.com/skenzeriq/activediq/internal/directory/attr/secretattr"
 	"sync"
 	"testing"
 	"time"
@@ -120,7 +121,7 @@ func newEnv(t *testing.T, s *storetest.Server) *env {
 	if err != nil {
 		t.Fatal(err)
 	}
-	runner, err := operation.NewRunner(operation.Config{DB: db, Audit: rec, Registry: reg, Now: time.Now,
+	runner, err := operation.NewRunner(operation.Config{SecretAttr: secretattr.IsStatic, DB: db, Audit: rec, Registry: reg, Now: time.Now,
 		Authz: grantAll{ownerID: true, robotID: true}})
 	if err != nil {
 		t.Fatal(err)

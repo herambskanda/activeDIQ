@@ -40,6 +40,7 @@ type FakeDirectory struct {
 	objs    map[string]map[string][]string
 	writes  int
 	changes int
+	failErr error // when set, Write counts the call and refuses it with this error
 }
 
 // NewFakeDirectory returns an empty fake directory.
@@ -69,6 +70,9 @@ func (d *FakeDirectory) Write(s step.Step, m Mutation) error {
 	d.writes++
 	if err := s.Valid(); err != nil {
 		return err
+	}
+	if d.failErr != nil {
+		return d.failErr
 	}
 	if m.GUID == "" || m.Attribute == "" {
 		return fmt.Errorf("operationtest: mutation needs an object GUID and an attribute")
@@ -113,6 +117,21 @@ func (d *FakeDirectory) Changes() int {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	return d.changes
+}
+
+// failWrites makes every Write refuse with err until it is called with nil: the harness's way of
+// driving an Action's failure path. The call is still counted.
+func (d *FakeDirectory) failWrites(err error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.failErr = err
+}
+
+// resetCounters puts the counters back after the harness drove a path that must leave no trace.
+func (d *FakeDirectory) resetCounters(writes, changes int) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.writes, d.changes = writes, changes
 }
 
 func (d *FakeDirectory) setLocked(guid, attribute string, values []string) {

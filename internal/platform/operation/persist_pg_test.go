@@ -385,7 +385,7 @@ func newPRig(t *testing.T, s *storetest.Server, o rigOpt) *prig {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg := Config{DB: db, Audit: ch, Authz: &authzFake{}, Registry: reg, Facts: factsFake{}, Gate: o.gate, Jobs: jobs.NewRegistry(),
+	cfg := Config{SecretAttr: testSecretAttr, DB: db, Audit: ch, Authz: &authzFake{}, Registry: reg, Facts: factsFake{}, Gate: o.gate, Jobs: jobs.NewRegistry(),
 		Keys: keySrc{}, Pinner: cmpPinner(o.pinner), Credentials: cmpCreds(o.cred), Sites: o.sites, Settings: settingsFake{irreversible: o.irrev}, Provenance: p.prov, Alerts: p.alerts,
 		Attempts: o.attempts, Slots: o.slots, Backoff: time.Millisecond, Lease: time.Minute}
 	if p.r, err = NewRunner(cfg); err != nil {

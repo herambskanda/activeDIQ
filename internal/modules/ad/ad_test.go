@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/skenzeriq/activediq/internal/directory/accountkind"
+	"github.com/skenzeriq/activediq/internal/directory/attr/secretattr"
 	"github.com/skenzeriq/activediq/internal/directory/client"
 	"github.com/skenzeriq/activediq/internal/modules/ad"
 	"github.com/skenzeriq/activediq/internal/platform/audit"
@@ -177,7 +178,12 @@ func TestContract(t *testing.T) {
 			if id == ad.EnableID {
 				a.dir.Seed(obj, "userAccountControl", uacDisabled)
 			}
-			operationtest.Contract(t, actions(t, a)[id], operationtest.Fixture{Input: in, Directory: a.dir, Pins: pins(), FreshStepUp: id == ad.ResetPasswordID || id == ad.ComputerResetID})
+			acts := actions(t, a)
+			fx := operationtest.Fixture{SecretAttr: secretattr.IsStatic, Input: in, Directory: a.dir, Pins: pins(), FreshStepUp: id == ad.ResetPasswordID || id == ad.ComputerResetID}
+			if inv, ok := ad.InverseAction(id); ok {
+				fx.InverseAction = acts[inv]
+			}
+			operationtest.Contract(t, acts[id], fx)
 		})
 	}
 }
@@ -524,7 +530,7 @@ func run(t *testing.T, a *accounts, id operation.ActionID, az operation.Authoriz
 	if err != nil {
 		t.Fatal(err)
 	}
-	r, err := operation.NewRunner(operation.Config{DB: fakeDB{}, Audit: sk, Authz: az, Registry: reg})
+	r, err := operation.NewRunner(operation.Config{SecretAttr: secretattr.IsStatic, DB: fakeDB{}, Audit: sk, Authz: az, Registry: reg})
 	if err != nil {
 		t.Fatal(err)
 	}
