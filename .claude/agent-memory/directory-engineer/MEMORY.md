@@ -52,3 +52,4 @@
 - [read marker lessons](read-marker-lessons.md) — T-2216: observed/not_observed only, enumLabels trap, inventory test timeout
 - [per-DC count lessons](perdc-count-lessons.md) — T-1499: Describe-based DCsInScope, Services.PerDC wiring, reports tests hang without Postgres
 - [printers lessons](printers-lessons.md) — T-1719: new kind = two CHECKs + resync, OU path is dn (RP11), lab seed without rng draws
+- [DC-log join lessons](dcjoin-lessons.md) — T-1636: smbcontrol all, runner ctx gaps, enable/disable skipped, lab rig recipe
