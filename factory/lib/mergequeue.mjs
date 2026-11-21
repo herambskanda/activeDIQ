@@ -28,6 +28,14 @@ export function doneAtMs(ticket) {
   return Number.isFinite(t) ? t : 0;
 }
 
+/** Ticket IDs named in the note of the transition that blocked `ticket` (not itself). */
+export function blockNoteRefs(ticket) {
+  const entry = [...(ticket.history ?? [])].reverse().find((h) => h.to === 'blocked');
+  const ids = new Set(String(entry?.note ?? '').match(/\bT-\d{4}\b/g) ?? []);
+  ids.delete(ticket.id);
+  return ids;
+}
+
 /**
  * Order done tickets for the gate: (0) tickets tagged `gate-first`, then (1) tickets that a blocked or
  * ready ticket lists in `depends_on`, then (2) priority, P0 first, then (3) the earliest done time,
@@ -38,8 +46,12 @@ export function doneAtMs(ticket) {
  */
 export function orderDoneQueue(done, all) {
   const awaited = new Set();
+  const doneIds = new Set(done.map((t) => t.id));
   for (const t of all) {
     if (t.status === 'blocked' || t.status === 'ready') for (const id of t.depends_on ?? []) awaited.add(id);
+    // T-1817: a worker that blocks on "T-nnnn is done but not on main" rarely sets depends_on, so the
+    // block note is the only link. Without this, four such tickets sat 70-250 places back for 10 days.
+    if (t.status === 'blocked') for (const id of blockNoteRefs(t)) if (doneIds.has(id)) awaited.add(id);
   }
   const key = (t) => [(t.tags ?? []).includes(GATE_FIRST_TAG) ? 0 : 1, awaited.has(t.id) ? 0 : 1, priorityRank(t.priority), doneAtMs(t)];
   return [...done].sort((a, b) => {

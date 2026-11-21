@@ -1,0 +1,94 @@
+?   	github.com/skenzeriq/activediq/internal/platform	[no test files]
+ok  	github.com/skenzeriq/activediq/internal/platform/agent	3.806s
+ok  	github.com/skenzeriq/activediq/internal/platform/agentingest	49.862s
+ok  	github.com/skenzeriq/activediq/internal/platform/agentpolicy	0.058s
+ok  	github.com/skenzeriq/activediq/internal/platform/agentpolicy/rotation	17.475s
+ok  	github.com/skenzeriq/activediq/internal/platform/agentpolicy/signer	24.694s
+ok  	github.com/skenzeriq/activediq/internal/platform/apihost	0.051s
+ok  	github.com/skenzeriq/activediq/internal/platform/apihost/apitest	0.013s
+ok  	github.com/skenzeriq/activediq/internal/platform/apihost/apitypes	0.008s
+ok  	github.com/skenzeriq/activediq/internal/platform/apitls	1.290s
+ok  	github.com/skenzeriq/activediq/internal/platform/audit	144.856s
+ok  	github.com/skenzeriq/activediq/internal/platform/audit/canon	0.004s
+ok  	github.com/skenzeriq/activediq/internal/platform/audit/chain	0.031s
+ok  	github.com/skenzeriq/activediq/internal/platform/authn	309.757s
+ok  	github.com/skenzeriq/activediq/internal/platform/authn/api	0.012s
+ok  	github.com/skenzeriq/activediq/internal/platform/authn/negotiate	0.011s
+?   	github.com/skenzeriq/activediq/internal/platform/authn/sso	[no test files]
+ok  	github.com/skenzeriq/activediq/internal/platform/authn/sso/oidc	0.688s
+ok  	github.com/skenzeriq/activediq/internal/platform/authn/sso/saml	60.951s
+?   	github.com/skenzeriq/activediq/internal/platform/authn/sso/saml/samltest	[no test files]
+ok  	github.com/skenzeriq/activediq/internal/platform/authn/sso/signin	37.350s
+?   	github.com/skenzeriq/activediq/internal/platform/authn/sso/signin/signintest	[no test files]
+--- FAIL: TestOnlyPermittedFilesImportTenantref (0.05s)
+    callers_test.go:106: files import tenantref without being permitted (add with security review): [internal/modules/reports/handlers.go]
+FAIL
+FAIL	github.com/skenzeriq/activediq/internal/platform/authn/tenantref	0.057s
+?   	github.com/skenzeriq/activediq/internal/platform/authn/throttlejob	[no test files]
+?   	github.com/skenzeriq/activediq/internal/platform/authority	[no test files]
+ok  	github.com/skenzeriq/activediq/internal/platform/authz	0.023s
+ok  	github.com/skenzeriq/activediq/internal/platform/authz/authztest	0.017s
+ok  	github.com/skenzeriq/activediq/internal/platform/blob	0.276s
+ok  	github.com/skenzeriq/activediq/internal/platform/capability	0.012s
+ok  	github.com/skenzeriq/activediq/internal/platform/corpus	0.084s
+ok  	github.com/skenzeriq/activediq/internal/platform/corpus/corpustest	0.007s
+ok  	github.com/skenzeriq/activediq/internal/platform/egress	0.353s
+ok  	github.com/skenzeriq/activediq/internal/platform/egress/oidchttp	0.021s
+ok  	github.com/skenzeriq/activediq/internal/platform/export	7.636s
+ok  	github.com/skenzeriq/activediq/internal/platform/export/cellsafe	0.254s
+ok  	github.com/skenzeriq/activediq/internal/platform/export/csv	0.112s
+ok  	github.com/skenzeriq/activediq/internal/platform/export/pdf	1.257s
+?   	github.com/skenzeriq/activediq/internal/platform/export/pdf/pdftest	[no test files]
+ok  	github.com/skenzeriq/activediq/internal/platform/export/xlsx	0.235s
+ok  	github.com/skenzeriq/activediq/internal/platform/fleet	3.713s
+ok  	github.com/skenzeriq/activediq/internal/platform/fleet/dial	1.120s
+ok  	github.com/skenzeriq/activediq/internal/platform/fleet/fleetsql	84.062s
+ok  	github.com/skenzeriq/activediq/internal/platform/fleet/gateway	35.901s
+ok  	github.com/skenzeriq/activediq/internal/platform/fleet/tunnelclient	0.012s
+ok  	github.com/skenzeriq/activediq/internal/platform/health	0.271s
+?   	github.com/skenzeriq/activediq/internal/platform/health/api	[no test files]
+ok  	github.com/skenzeriq/activediq/internal/platform/htmlx	0.031s
+ok  	github.com/skenzeriq/activediq/internal/platform/httpx	0.014s
+ok  	github.com/skenzeriq/activediq/internal/platform/httpx/authnhttp	0.012s
+ok  	github.com/skenzeriq/activediq/internal/platform/httpx/negotiatehttp	0.011s
+ok  	github.com/skenzeriq/activediq/internal/platform/httpx/ssohttp	0.009s
+ok  	github.com/skenzeriq/activediq/internal/platform/jobs	116.928s
+?   	github.com/skenzeriq/activediq/internal/platform/jobs/jobstest	[no test files]
+ok  	github.com/skenzeriq/activediq/internal/platform/keys	74.093s
+?   	github.com/skenzeriq/activediq/internal/platform/keys/keystest	[no test files]
+ok  	github.com/skenzeriq/activediq/internal/platform/limiter	92.041s
+ok  	github.com/skenzeriq/activediq/internal/platform/module	0.017s
+?   	github.com/skenzeriq/activediq/internal/platform/module/moduletest	[no test files]
+?   	github.com/skenzeriq/activediq/internal/platform/notify/api	[no test files]
+ok  	github.com/skenzeriq/activediq/internal/platform/notify/delivery	92.656s
+ok  	github.com/skenzeriq/activediq/internal/platform/notify/mail	0.067s
+ok  	github.com/skenzeriq/activediq/internal/platform/notify/mailaddr	0.012s
+?   	github.com/skenzeriq/activediq/internal/platform/notify/mailtest	[no test files]
+ok  	github.com/skenzeriq/activediq/internal/platform/notify/settings	52.569s
+ok  	github.com/skenzeriq/activediq/internal/platform/notify/syslog	62.375s
+ok  	github.com/skenzeriq/activediq/internal/platform/operation	303.268s
+ok  	github.com/skenzeriq/activediq/internal/platform/operation/step	0.010s
+ok  	github.com/skenzeriq/activediq/internal/platform/opsmetrics	0.013s
+ok  	github.com/skenzeriq/activediq/internal/platform/ownerfile	0.007s
+ok  	github.com/skenzeriq/activediq/internal/platform/personal	36.389s
+ok  	github.com/skenzeriq/activediq/internal/platform/prochardening	6.393s
+ok  	github.com/skenzeriq/activediq/internal/platform/rbac	131.338s
+ok  	github.com/skenzeriq/activediq/internal/platform/report	0.010s
+ok  	github.com/skenzeriq/activediq/internal/platform/searchkey	0.008s
+?   	github.com/skenzeriq/activediq/internal/platform/secret	[no test files]
+ok  	github.com/skenzeriq/activediq/internal/platform/secret/secretjson	0.005s
+ok  	github.com/skenzeriq/activediq/internal/platform/setup	0.025s
+?   	github.com/skenzeriq/activediq/internal/platform/setup/api	[no test files]
+ok  	github.com/skenzeriq/activediq/internal/platform/store	174.077s
+?   	github.com/skenzeriq/activediq/internal/platform/store/exempt	[no test files]
+ok  	github.com/skenzeriq/activediq/internal/platform/store/owners	0.013s
+ok  	github.com/skenzeriq/activediq/internal/platform/store/reportsql	99.033s
+ok  	github.com/skenzeriq/activediq/internal/platform/store/storetest	16.815s
+ok  	github.com/skenzeriq/activediq/internal/platform/tablekind	0.004s
+ok  	github.com/skenzeriq/activediq/internal/platform/tenant	0.006s
+ok  	github.com/skenzeriq/activediq/internal/platform/tenant/provision	52.117s
+?   	github.com/skenzeriq/activediq/internal/platform/tenant/tenanttest	[no test files]
+ok  	github.com/skenzeriq/activediq/internal/platform/updateverify	0.253s
+ok  	github.com/skenzeriq/activediq/internal/platform/updateverify/floorpg	43.778s
+ok  	github.com/skenzeriq/activediq/internal/platform/webhook	0.012s
+FAIL

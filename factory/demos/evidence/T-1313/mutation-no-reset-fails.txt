@@ -1,0 +1,12 @@
+--- FAIL: TestQAProbe (17.22s)
+    --- FAIL: TestQAProbe/pg16 (9.65s)
+    --- FAIL: TestQAProbe/pg18 (7.57s)
+--- FAIL: TestStorePoolResetIsolatesTenants (1.93s)
+    --- FAIL: TestStorePoolResetIsolatesTenants/pg16 (1.34s)
+        reset_test.go:91: tenant B inherited session state: got {pid:73 encoding:SJIS scs:off searchPath:pg_temp, public tempTables:1 foreignPrepared:0 appName:tenant-a}, want baseline {pid:73 encoding:UTF8 scs:on searchPath:"$user", public tempTables:0 foreignPrepared:0 appName:}
+    --- FAIL: TestStorePoolResetIsolatesTenants/pg18 (0.59s)
+        reset_test.go:91: tenant B inherited session state: got {pid:91 encoding:SJIS scs:off searchPath:pg_temp, public tempTables:1 foreignPrepared:0 appName:tenant-a}, want baseline {pid:91 encoding:UTF8 scs:on searchPath:"$user", public tempTables:0 foreignPrepared:0 appName:}
+--- FAIL: TestPoolNeverLendsNonDefaultLexingSettings (1.78s)
+    --- FAIL: TestPoolNeverLendsNonDefaultLexingSettings/pg16 (1.24s)
+        reset_test.go:120: after "SET client_encoding = 'SJIS'" the next borrower got client_encoding="SJIS" standard_conforming_strings="on"
+        reset_test.go:120: after "SET standard_conforming_strings = off" the next borrower got client_encoding="SJIS" standard_conforming_strings="off"
