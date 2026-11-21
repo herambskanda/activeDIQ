@@ -542,6 +542,8 @@ Run log, dc1 before/after state and the broken-run proof: `windows-lab-runs/T-05
 proof needs a reboot cycle and was not run. The test accounts stay on dc1 for the T-0846 fix; remove with `Remove-ADUser svc-t0566-gssapi`
 and `Remove-ADServiceAccount gmsa-t0566`.
 
+**Lab server bind (T-1267).** The server's Windows lab bootstrap binds as the shipping connector does (GSSAPI + channel binding, keytab), not with a password. `gssapi-lab keytab` (under `with-dc1-lock`) runs `guest/svc-keytab.ps1` (ktpass AES256 for `svc-activediq`, existing password kept) and writes `.win-lab-svc.keytab` beside the env file (gitignored, 0600); the lab server reads it from `WIN_LAB_SVC_KEYTAB` (`live-user-search.sh` defaults it). The Samba lab keeps its simple bind (no keytab/CBT lab on CI Samba; GSSAPI+CBT is proven on Samba by T-0560). Run log: `windows-lab-runs/T-1267-win-lab-gssapi-20261105.md`.
+
 ## 16. dc1 clock and time source (T-0850)
 
 **What was wrong.** dc1 (the PDC emulator) ran on `Local CMOS Clock` (`Type: NT5DS`, no peer) and its clock sat about 12h30m
