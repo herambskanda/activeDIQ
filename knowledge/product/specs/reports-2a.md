@@ -357,7 +357,14 @@ definition `[UNVERIFIED as a Microsoft definition]`. The report states its cavea
 - Samba and other Linux joins rotate on their own schedule
   ([smb.conf](https://www.samba.org/samba/docs/current/man-html/smb.conf.5.html), default 7 days for
   winbind), so an unrotated join looks stale;
-- gMSA and cluster objects are excluded from Inactive and shown as a count with a link;
+- gMSA and cluster objects are excluded from Inactive and shown as a count with a link. A cluster
+  object is a computer with a `servicePrincipalName` whose class (text before the first `/`) is
+  `MSClusterVirtualServer` or `MSServerCluster`, compared case-insensitively
+  ([KB 302389](https://mskb.pkisolutions.com/kb/302389),
+  [Microsoft Failover Clustering blog](https://techcommunity.microsoft.com/blog/failoverclustering/identifying-stale-cluster-computer-objects/371687)).
+  `MSServerClusterMgmtAPI` is not a marker: cluster nodes carry it `[UNVERIFIED]`. Detection is by SPN, so a
+  prestaged object with no SPN yet, or an AD-detached cluster, is not found; the header says "detected by
+  SPN". That a real Windows cluster writes these SPNs is `[LAB: Windows]` `[UNVERIFIED]` (T-1477);
 - if both values are absent or `pwdLastSet` is 0, the activity falls back to `whenCreated`.
 
 ### 6.5 Per-DC reports: USR-04 and PWD-03
