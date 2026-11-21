@@ -71,6 +71,7 @@ var enumLabels = map[string]string{
 	"pso_precedence_not_read": "A password settings object has no precedence", "pso_interval_not_read": "The password settings object's interval was not read",
 	"account_inputs_not_read":  "Account attributes that select the policy (userAccountControl, SID, logon name) not read",
 	"group_closure_incomplete": "Group membership closure not current or over budget, so a group-linked policy could not be ruled out",
+	"pso_applies_over_budget":  "A password settings object names more targets than activeDIQ stores",
 	"workstation":              "Workstation", "server": "Server", "domain_controller": "Domain controller", "read_only_dc": "Read-only domain controller",
 	"managed_account": "Group managed service account", "unconstrained": "Unconstrained", "constrained": "Constrained",
 	"protocol_transition": "Constrained with protocol transition",
@@ -184,7 +185,7 @@ func usersDataset() report.Dataset {
 			{ID: "applies", Kind: report.RelEdge, Table: "inventory_pso_applies", Project: idents("connection_id", "pso_guid", "target_guid"),
 				Where: report.SQL("state = 'active'")},
 			{ID: "psoval", Kind: report.RelInput, Table: "inventory_psos",
-				Project: idents("connection_id", "nc_guid", "pso_guid", "precedence", "max_pwd_age_secs", "lockout_duration_secs")},
+				Project: idents("connection_id", "nc_guid", "pso_guid", "precedence", "max_pwd_age_secs", "lockout_duration_secs", "applies_over_budget")},
 			{ID: "dom", Kind: report.RelInput, Table: "inventory_domain_policies",
 				Project: idents("connection_id", "nc_guid", "max_pwd_age_secs", "lockout_duration_secs", "logon_sync_interval_days", "psos_read_at")},
 		},
@@ -217,7 +218,7 @@ func userPerDCColumns() []report.Column {
 // reasonValues are the causes of an unknown policy-dependent state, led by the account's own input.
 func reasonValues(own string) []string {
 	return []string{"none", "uac_not_read", own, "domain_policy_not_read", "pso_set_not_read", "pso_not_read",
-		"pso_precedence_not_read", "pso_interval_not_read", "account_inputs_not_read", "group_closure_incomplete"}
+		"pso_precedence_not_read", "pso_interval_not_read", "account_inputs_not_read", "group_closure_incomplete", "pso_applies_over_budget"}
 }
 
 func withUnknown(c report.Column, state report.ColumnID) report.Column {
