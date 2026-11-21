@@ -74,6 +74,10 @@ type Session struct {
 	schema   *ldapfilter.Schema
 	server   string
 	pageSize uint32
+
+	binMu    sync.Mutex // guards the cached Recycle Bin status (RecycleBin)
+	binKnown bool
+	binOn    bool
 }
 
 // Open connects to the first reachable server in cfg.Servers and binds. It never downgrades: a
@@ -92,6 +96,9 @@ func open(ctx context.Context, cfg Config, gc bool) (*Session, error) {
 			return nil, fail(CodeInvalidArgument, "set either a password credential or a kerberos identity", nil)
 		}
 		if err := cfg.Kerberos.validate(); err != nil {
+			return nil, err
+		}
+		if err := cfg.Kerberos.checkKeytab(); err != nil { // before any network traffic (T-0856)
 			return nil, err
 		}
 	}

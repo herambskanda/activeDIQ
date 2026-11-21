@@ -26,6 +26,7 @@ type goFile struct {
 	consts    map[string]bool            // names declared const anywhere in the file
 	strLits   map[string][]*ast.BasicLit // identifier -> string literals it is bound to (const, var, :=, =)
 	module    string
+	cred      credentialTypes // exported types of the credential packages (ADR-0002 P3)
 	out       *[]Finding
 }
 
@@ -35,14 +36,14 @@ func (g *goFile) add(ff, rule string, pos token.Pos, msg string) {
 
 // scanGo runs FF-SP1, FF-SP2 (syntactic half) and FF-SP3 on one Go file. It deliberately ignores
 // build constraints: a file that no target compiles today is still checked.
-func scanGo(rel string, src []byte, module string, checks map[string]bool, out *[]Finding) error {
+func scanGo(rel string, src []byte, env *scanEnv, checks map[string]bool, out *[]Finding) error {
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, rel, src, parser.ParseComments|parser.SkipObjectResolution)
 	if err != nil {
 		return err
 	}
 	g := &goFile{rel: rel, dir: policy.DirOf(rel), fset: fset, file: f, isTest: policy.IsTest(rel) || policy.IsTestSupport(policy.DirOf(rel)), isTool: policy.IsToolTier(rel),
-		imports: map[string]string{}, consts: map[string]bool{}, strLits: map[string][]*ast.BasicLit{}, module: module, out: out,
+		imports: map[string]string{}, consts: map[string]bool{}, strLits: map[string][]*ast.BasicLit{}, module: env.module, cred: env.cred, out: out,
 		sqlcGen: bytes.HasPrefix(bytes.TrimSpace(src), []byte(policy.SQLCHeader))}
 	for _, is := range f.Imports {
 		p, err := strconv.Unquote(is.Path.Value)
@@ -94,6 +95,7 @@ func scanGo(rel string, src []byte, module string, checks map[string]bool, out *
 		g.checkUnsafe()
 		g.checkCgo()
 		g.checkSymbols()
+		g.checkCredentials()
 		g.checkTLS()
 		g.checkJSONEscape()
 		g.checkPredeclaredShadow()

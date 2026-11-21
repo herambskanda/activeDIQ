@@ -42,6 +42,7 @@ type searchLab struct {
 	client connectorv1.ConnectorClient
 	ident  *connectorv1.DirectoryIdentity
 	stamp  string
+	src    *read.ADSource
 }
 
 func newSearchLab(t *testing.T) *searchLab { return newSearchLabSchema(t, nil) }
@@ -81,6 +82,7 @@ func newSearchLabSchema(t *testing.T, extra []ldapfilter.AttrInfo) *searchLab {
 	if err != nil {
 		t.Fatal(err)
 	}
+	l.src = src
 	l.client = start(t, src)
 	return l
 }

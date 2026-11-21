@@ -258,7 +258,7 @@ func Test_verified_caller_satisfies_stepup(t *testing.T) {
 
 // Acceptance 3: after 3 wrong entries the 4th is refused, even with the right code, with the same error as a
 // wrong code: the caller cannot tell the cap from the code.
-func Test_attempt_cap_is_indistinguishable(t *testing.T) {
+func Test_otp_attempt_cap(t *testing.T) {
 	each(t, nil, func(t *testing.T, e *env) {
 		c, _ := e.issue(t, tech, user, false)
 		code := e.send.last()
@@ -286,6 +286,35 @@ func Test_attempt_cap_is_indistinguishable(t *testing.T) {
 	})
 }
 
+// Acceptance 1 (T-0204, 4.4): a correct entry consumes the code; the same code never verifies again, whether
+// the challenge is merely verified or already spent on an operation, and a re-issue does not revive it.
+func Test_otp_single_use(t *testing.T) {
+	each(t, nil, func(t *testing.T, e *env) {
+		c, _ := e.issue(t, tech, user, false)
+		code := e.send.last()
+		if err := e.verify(c.ID, tech, code); err != nil {
+			t.Fatal(err)
+		}
+		if err := e.verify(c.ID, tech, code); err != ErrRefused {
+			t.Fatalf("second use while verified: %v, want ErrRefused", err)
+		}
+		a := AuthoriseInput{Tenant: e.ten, Technician: tech, ChallengeID: c.ID, Target: Target{conn, user}, Action: "ad.user.unlock", Operation: "o"}
+		if _, err := e.v.Authorise(context.Background(), a); err != nil {
+			t.Fatal(err)
+		}
+		if err := e.verify(c.ID, tech, code); err != ErrRefused {
+			t.Fatalf("use after the operation consumed it: %v, want ErrRefused", err)
+		}
+		// the same code string offered to a different challenge for another target verifies nothing
+		c2, _ := e.issue(t, tech, user2, false)
+		if code != e.send.last() {
+			if err := e.verify(c2.ID, tech, code); err != ErrRefused {
+				t.Fatalf("code replayed on another challenge: %v", err)
+			}
+		}
+	})
+}
+
 // 4.9: parallel guesses never spend more than the cap.
 func Test_parallel_guesses_are_bounded(t *testing.T) {
 	each(t, nil, func(t *testing.T, e *env) {
@@ -305,7 +334,7 @@ func Test_parallel_guesses_are_bounded(t *testing.T) {
 }
 
 // 4.2: accepted at 299 s, refused at 301 s.
-func Test_lifetime(t *testing.T) {
+func Test_otp_expires(t *testing.T) {
 	each(t, nil, func(t *testing.T, e *env) {
 		c, _ := e.issue(t, tech, user, false)
 		e.advance(299 * time.Second)

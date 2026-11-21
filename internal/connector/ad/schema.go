@@ -15,6 +15,7 @@ var constructedReadOnly = map[string]struct{}{
 	"allowedchildclasseseffective":        {},
 	"sdrightseffective":                   {},
 	"msds-user-account-control-computed":  {},
+	"msds-replattributemetadata":          {},
 	"msds-userpasswordexpirytimecomputed": {},
 }
 
@@ -137,6 +138,10 @@ func DefaultSchema() *ldapfilter.Schema {
 			ldapfilter.AttrInfo{Name: "jpegPhoto", Syntax: ldapfilter.SynOctet},
 			ldapfilter.AttrInfo{Name: "telephoneNumber", Syntax: s},
 			ldapfilter.AttrInfo{Name: "mobile", Syntax: s},
+			// otherMobile (multi-valued) and msDS-ReplAttributeMetaData (constructed, base-read only) serve
+			// the per-attribute change time of attrchange.go (T-2343). Name-only: no OID is verified in-repo.
+			ldapfilter.AttrInfo{Name: "otherMobile", Syntax: s},
+			ldapfilter.AttrInfo{Name: "msDS-ReplAttributeMetaData", Syntax: s, Constructed: c},
 			ldapfilter.AttrInfo{Name: "manager", Syntax: ldapfilter.SynDN},
 			// The published-printers report (T-1719, D13), read for printQueue objects. Name-only.
 			ldapfilter.AttrInfo{Name: "printerName", Syntax: s},
