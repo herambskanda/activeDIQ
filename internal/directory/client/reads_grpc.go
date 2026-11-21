@@ -16,6 +16,8 @@ import (
 type Reader interface {
 	Describe(ctx context.Context, in *connectorv1.DescribeRequest, opts ...grpc.CallOption) (*connectorv1.DescribeResponse, error)
 	ScopedSearch(ctx context.Context, in *connectorv1.ScopedSearchRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[connectorv1.ScopedSearchResponse], error)
+	// Read is one object by identity; it completes the ranged values a search cannot follow.
+	Read(ctx context.Context, in *connectorv1.ReadRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[connectorv1.ReadResponse], error)
 }
 
 // ReaderSource yields the Reader that serves one connection.
@@ -50,6 +52,10 @@ func (r readOnly) Describe(ctx context.Context, in *connectorv1.DescribeRequest,
 
 func (r readOnly) ScopedSearch(ctx context.Context, in *connectorv1.ScopedSearchRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[connectorv1.ScopedSearchResponse], error) {
 	return r.cc.ScopedSearch(ctx, in, opts...)
+}
+
+func (r readOnly) Read(ctx context.Context, in *connectorv1.ReadRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[connectorv1.ReadResponse], error) {
+	return r.cc.Read(ctx, in, opts...)
 }
 
 // ConnectorSource yields the generated connector client that serves one connection. The component

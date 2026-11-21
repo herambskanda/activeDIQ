@@ -195,13 +195,39 @@ func Test_time_inputs_are_tri_state(t *testing.T) {
 		_, err := mapper(dirsync.Config{}).Map(user(attrs(nil).with("pwdLastSet", sentinel(connectorv1.TimeSentinel_TIME_SENTINEL_MAX))))
 		wantMalformed(t, err, "pwdLastSet", dirsync.CodeBadTime)
 	})
+	t.Run("cluster spn", func(t *testing.T) {
+		for _, c := range []struct {
+			name string
+			spns []string
+			want bool
+		}{
+			{"virtual server", []string{"HTTP/a", "MSClusterVirtualServer/vs1"}, true},
+			{"cluster", []string{"msservercluster/c1"}, true},
+			{"node mgmt api is not a cluster object", []string{"MSServerClusterMgmtAPI/n1", "HOST/n1"}, false},
+			{"plain", []string{"HTTP/cluster-web"}, false},
+		} {
+			var vals []*connectorv1.AttributeValue
+			for _, v := range c.spns {
+				vals = append(vals, txt(v))
+			}
+			o := mustMap(t, mapper(dirsync.Config{}), user(attrs(nil).with("servicePrincipalName", vals...))).Observation
+			if o.ClusterSPN == nil || *o.ClusterSPN != c.want {
+				t.Errorf("%s: ClusterSPN = %v, want %v", c.name, o.ClusterSPN, c.want)
+			}
+		}
+		o := mustMap(t, mapper(dirsync.Config{}), user(attrs(nil))).Observation
+		if o.ClusterSPN != nil {
+			t.Errorf("unread SPN: ClusterSPN = %v, want nil", o.ClusterSPN)
+		}
+	})
 	t.Run("spn", func(t *testing.T) {
 		o := mustMap(t, mapper(dirsync.Config{}), user(attrs(nil).with("servicePrincipalName", txt("HTTP/a"), txt("HTTP/b")))).Observation
 		if o.HasSPN == nil || !*o.HasSPN {
 			t.Errorf("HasSPN = %v, want true", o.HasSPN)
 		}
-		if _, leaked := o.Attributes["servicePrincipalName"]; leaked {
-			t.Error("SPN values are not stored")
+		// T-1129: the values are stored for search, bounded (the first 64).
+		if got, _ := o.Attributes["servicePrincipalName"].([]string); len(got) != 2 || got[0] != "HTTP/a" {
+			t.Errorf("SPN values = %v", o.Attributes["servicePrincipalName"])
 		}
 	})
 }

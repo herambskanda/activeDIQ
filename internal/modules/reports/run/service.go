@@ -144,6 +144,12 @@ type Service struct {
 	Fresh   FreshnessSource
 	Now     func() time.Time
 	RowCap  int
+	// PerDC reads the DCs for USR-04 and PWD-03 and PerDCDCs counts them before the first read (reports.md
+	// §6.5); both are needed to run a per-DC report, and without them such a run fails connection_unavailable.
+	PerDC    report.PerDCReader
+	PerDCDCs report.DCCounter
+	// PerDCReadCap is the most per-object-per-DC reads one run may make (0: report.DefaultPerDCReadCap).
+	PerDCReadCap int
 	// Log receives the loss of a read_denied event (slog.Default when nil).
 	Log *slog.Logger
 }
@@ -178,6 +184,11 @@ type CreateInput struct {
 	Preset       string
 	Params       jsontext.Value // API-shape parameters; nil is "none"
 	RerunOf      *ID
+	// ScheduleID is the schedule a fire runs for (DM-73). A scheduled run is never a reuse of an earlier one:
+	// a fire reads the data as of now.
+	ScheduleID *string
+	// Zone is the runner's IANA time zone for PDF and HTML exports; empty is UTC.
+	Zone string
 }
 
 // Create starts a run, or returns the identical one created in the last ReuseWindow (§6.1).
@@ -193,6 +204,13 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (run Run, reused b
 	raw := in.Params
 	if len(raw) == 0 {
 		raw = jsontext.Value(`{}`)
+	}
+	var zone *string
+	if in.Zone != "" {
+		if !ValidZone(in.Zone) {
+			return Run{}, false, ErrBadTimeZone
+		}
+		zone = &in.Zone
 	}
 	rp, err := s.Codec.Decode(raw, def.Def)
 	if err != nil {
@@ -219,7 +237,11 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (run Run, reused b
 			return err
 		}
 		var existing string
-		switch err := tx.QueryRow(ctx, findReusable, string(in.Chain.Requester.ID), qh[:], fp[:], ReuseWindow.Seconds()).Scan(&existing); {
+		reuseWindow := ReuseWindow.Seconds()
+		if in.ScheduleID != nil {
+			reuseWindow = 0
+		}
+		switch err := tx.QueryRow(ctx, findReusable, string(in.Chain.Requester.ID), qh[:], fp[:], reuseWindow, zone).Scan(&existing); {
 		case err == nil:
 			id, err := ParseID(existing)
 			if err != nil {
@@ -243,7 +265,7 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (run Run, reused b
 			rerun = &x
 		}
 		if _, err := tx.Exec(ctx, insertRun, id.String(), in.DefinitionID, def.Def.Version, def.SHA256[:], preset, string(raw),
-			qh[:], fp[:], string(in.Chain.Requester.ID), string(chainJSON), rerun, string(cols)); err != nil {
+			qh[:], fp[:], string(in.Chain.Requester.ID), string(chainJSON), rerun, string(cols), zone, in.ScheduleID); err != nil {
 			return err
 		}
 		if _, err := s.Jobs.Enqueue(ctx, tx, jobs.Job{Kind: JobKind, Tenant: in.Tenant, Args: jobArgs{RunID: id.String()}, UniqueKey: id.String()}); err != nil {
@@ -442,7 +464,7 @@ func (s *Service) Retry(ctx context.Context, tid tenant.ID, chain authority.Chai
 		return Run{}, false, ErrRunInProgress
 	}
 	return s.Create(ctx, CreateInput{Tenant: tid, Chain: chain, DefinitionID: src.DefinitionID, Version: src.DefinitionVer,
-		Preset: src.Preset, Params: src.Params, RerunOf: &src.ID})
+		Preset: src.Preset, Params: src.Params, RerunOf: &src.ID, Zone: src.Zone})
 }
 
 // Cancel stops a queued or running run of the caller's: the record goes to cancelled and any rows are

@@ -168,14 +168,30 @@ type labRig struct {
 	az                        operation.Authorizer
 	runner                    *operation.Runner
 	cp                        *audit.Checkpointer
-	dsa, nc                   string
+	dsa, nc, site             string
 	broad, kid, plain, backer string
 	helpdsk                   string
 	admin                     *labadmin.Admin
 	plainDN                   string
+	sess                      *ad.Session
+	prov                      *write.ADProvider
+	conns                     *connection.Registry
+	jr                        *jobs.Registry
+	le                        *testlab.Env
 }
 
-func newLabRig(t *testing.T, s *storetest.Server) *labRig {
+// labParts is what a rig variant's action builder sees of the rig being built.
+type labParts struct {
+	conn, nc string
+	sess     *ad.Session
+	prov     *write.ADProvider
+	reads    client.Reads
+}
+
+func newLabRig(t *testing.T, s *storetest.Server) *labRig { return newLabRigWith(t, s, nil) }
+
+// newLabRigWith builds the rig; actions, when set, replaces the stand-in reset Action with the real ones.
+func newLabRigWith(t *testing.T, s *storetest.Server, actions func(*testing.T, labParts) []operation.Action) *labRig {
 	t.Helper()
 	{
 		le := testlab.Load(t)
@@ -226,6 +242,7 @@ func newLabRig(t *testing.T, s *storetest.Server) *labRig {
 			t.Fatal(err)
 		}
 		dsa := uuidText(dc.GetDsaGuid().GetValue())
+		site := dc.GetSite()
 
 		// --- the product: connection record, reads, facts, authorizer, runner.
 		reg := connection.NewRegistry(e.db)
@@ -253,7 +270,11 @@ func newLabRig(t *testing.T, s *storetest.Server) *labRig {
 		if err := e.db.WithTenant(ctx, e.ten, func(ctx context.Context, tx store.Tx) error { return cp.InitTenant(ctx, tx, e.ten) }); err != nil {
 			t.Fatal(err)
 		}
-		actions, err := operation.NewRegistry(resetAction(t, e.ad, nc))
+		acts := []operation.Action{resetAction(t, e.ad, nc)}
+		if actions != nil {
+			acts = actions(t, labParts{conn: e.ad, nc: nc, sess: sess, prov: prov, reads: reads})
+		}
+		areg, err := operation.NewRegistry(acts...)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -261,7 +282,8 @@ func newLabRig(t *testing.T, s *storetest.Server) *labRig {
 		if err != nil {
 			t.Fatal(err)
 		}
-		runner, err := operation.NewRunner(operation.Config{DB: e.db, Audit: ch, Authz: az, Registry: actions, Facts: facts, Jobs: jobs.NewRegistry(),
+		jr := jobs.NewRegistry()
+		runner, err := operation.NewRunner(operation.Config{DB: e.db, Audit: ch, Authz: az, Registry: areg, Facts: facts, Jobs: jr, Credentials: connectionCredentials{reg},
 			Keys: fixedKeys{}, Pinner: labPin, Settings: labSettings{}, Component: "lab"})
 		if err != nil {
 			t.Fatal(err)
@@ -279,7 +301,7 @@ func newLabRig(t *testing.T, s *storetest.Server) *labRig {
 		assignRole(t, e, "helpdesk-operator", helpdsk, kid)
 		assignRole(t, e, "platform-administrator", admAcct, broad)
 
-		return &labRig{rd: reads, e: e, ctx: ctx, tr: tr, az: az, runner: runner, cp: cp, dsa: dsa, nc: nc, broad: broad, kid: kid, plain: plain, backer: backer, helpdsk: helpdsk, admin: admin, plainDN: plainDN}
+		return &labRig{rd: reads, e: e, ctx: ctx, tr: tr, az: az, runner: runner, cp: cp, dsa: dsa, site: site, nc: nc, broad: broad, kid: kid, plain: plain, backer: backer, helpdsk: helpdsk, admin: admin, plainDN: plainDN, sess: sess, prov: prov, conns: reg, jr: jr, le: le}
 	}
 }
 
@@ -412,4 +434,35 @@ func TestLabO8RemovedFromScopeADOUMovedOut(t *testing.T) {
 			t.Fatalf("a moved-out user was planned: %+v", sub)
 		}
 	})
+}
+
+// T-1600 acceptance 2 (ADM-133) on the lab: the site the real bound DC reports (DcIdentity.site) is what
+// the pinner ranks by. The DcIdentity.site -> WritableDC.Site mapping itself is proven by the non-lab
+// TestWritableDCsCarriesReportedSite; this test supplies the lab's real site value to the pinner. Preferring that site pins the DC; preferring a site
+// with no reachable DC still pins it, because the preference is a hint. Samba hosts one DC, so the
+// two-site case (preferred DC down, another site's DC used) is covered by TestPinPreferringSite over a
+// fake list; a real two-site topology is a Windows-lab case (ticket filed for test-engineer).
+func TestLabSitePreferenceUsesRealDCSite(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		r := newLabRig(t, s)
+		if r.site == "" {
+			t.Fatal("the lab DC reported no site; DcIdentity.site must reach WritableDC.Site")
+		}
+		p, err := newDCPinner(labSiteDCs{dsa: r.dsa, site: r.site})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for name, sites := range map[string][]string{"preferred site is the DC's": {r.site}, "preferred site has no DC": {"No-Such-Site", r.site + "-x"}} {
+			pin, err := p.PinPreferring(r.ctx, r.e.ad, authority.NamingContextID(r.nc), "", sites)
+			if err != nil || pin.DSAGUID != r.dsa {
+				t.Fatalf("%s: pin = %+v, err %v; want the lab DC %s", name, pin, err, r.dsa)
+			}
+		}
+	})
+}
+
+type labSiteDCs struct{ dsa, site string }
+
+func (l labSiteDCs) WritableDCs(context.Context, string, authority.NamingContextID) ([]client.WritableDC, error) {
+	return []client.WritableDC{{Host: "localhost", DSAGUID: l.dsa, Site: l.site}}, nil
 }

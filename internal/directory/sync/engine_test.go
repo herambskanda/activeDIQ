@@ -5,13 +5,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/skenzeriq/activediq/internal/directory/client"
 	"log/slog"
 	"sort"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/skenzeriq/activediq/internal/directory/client"
 	"github.com/skenzeriq/activediq/internal/directory/connection"
 	"github.com/skenzeriq/activediq/internal/directory/inventory"
 	dsync "github.com/skenzeriq/activediq/internal/directory/sync"
@@ -681,13 +681,25 @@ func TestFullCycleSkipsMalformedEntries(t *testing.T) {
 		if n := e.count(t, `SELECT count(*) FROM public.directory_objects WHERE connection_id = $1::uuid`, string(e.conn)); n != 497 {
 			t.Fatalf("rows = %d, want 497", n)
 		}
+		// T-1250: the refused objects are named by GUID and reason, not only counted.
+		if len(dr.RefusedEntries) != 3 || dr.RefusedOmitted != 0 {
+			t.Fatalf("refused entries = %+v", dr.RefusedEntries)
+		}
+		seen := map[inventory.GUID]bool{}
+		for _, re := range dr.RefusedEntries {
+			if re.Object == "" || seen[re.Object] || re.Attr != "userAccountControl" || re.Code != dsync.CodeType {
+				t.Fatalf("refused entry = %+v", re)
+			}
+			seen[re.Object] = true
+		}
 		out := r.logs.String()
 		for _, leak := range []string{"BADUSER-SECRET", "not-a-number", "user0", "DC=d"} {
 			if strings.Contains(out, leak) {
 				t.Fatalf("the log carries a directory value %q:\n%s", leak, out)
 			}
 		}
-		if !strings.Contains(out, `"refused":3`) || !strings.Contains(out, "refused.userAccountControl.type") {
+		if !strings.Contains(out, "refused_object.2") || !strings.Contains(out, "userAccountControl.type") ||
+			!strings.Contains(out, `"refused":3`) || !strings.Contains(out, "refused.userAccountControl.type") {
 			t.Fatalf("the log does not carry the refusal counts:\n%s", out)
 		}
 	})
@@ -858,6 +870,49 @@ func TestFullCycleLogsOnlyAFixedClass(t *testing.T) {
 		}
 		if !strings.Contains(out, `"error_phase":"store"`) || !strings.Contains(out, `"error_class":"other"`) {
 			t.Fatalf("the log carries no fixed error class:\n%s", out)
+		}
+	})
+}
+
+// A group past the DC's value limit arrives as its first range; the engine finishes it with Read, so every
+// edge is stored and nothing is partial.
+func TestFullCycleCompletesRangedMembers(t *testing.T) {
+	each(t, func(t *testing.T, e *env) {
+		fo := newForest()
+		fo.build(ncA, 1, 3500, 3200)
+		fake := newFake(fo.doms...)
+		r := e.rig(t, fake, ncA)
+		rep, err := r.run(context.Background())
+		if err != nil {
+			t.Fatalf("FullCycle: %v", err)
+		}
+		d := rep.Domains[0]
+		if d.GroupsPartial != 0 || d.GroupsCompleted != 1 {
+			t.Fatalf("partial=%d completed=%d, want 0 and 1", d.GroupsPartial, d.GroupsCompleted)
+		}
+		if len(fake.memberReads) != 1 || fake.memberReads[0].pin != gtext(fake.dsa) || len(fake.memberReads[0].attrs) != 1 || fake.memberReads[0].attrs[0] != "member" {
+			t.Fatalf("reads = %+v", fake.memberReads)
+		}
+		if n := e.count(t, `SELECT count(*) FROM public.links WHERE connection_id = $1::uuid AND link_attr = 'member' AND state = 'active' AND source_guid = $2::uuid`, string(e.conn), gtext(ncA+11)); n != 3200 {
+			t.Fatalf("member edges of the big group = %d, want 3200", n)
+		}
+	})
+}
+
+// A member list the connector cut off at its cap is not whole: the group stays partial.
+func TestFullCycleKeepsATruncatedGroupPartial(t *testing.T) {
+	each(t, func(t *testing.T, e *env) {
+		fo := newForest()
+		fo.build(ncA, 1, 3500, 3200)
+		fake := newFake(fo.doms...)
+		fake.readTruncate = true
+		r := e.rig(t, fake, ncA)
+		rep, err := r.run(context.Background())
+		if err != nil {
+			t.Fatalf("FullCycle: %v", err)
+		}
+		if d := rep.Domains[0]; d.GroupsPartial != 1 || d.GroupsCompleted != 0 {
+			t.Fatalf("partial=%d completed=%d, want 1 and 0", d.GroupsPartial, d.GroupsCompleted)
 		}
 	})
 }

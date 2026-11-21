@@ -21,6 +21,13 @@
 # POST /reports/schedules/operations/{operationId}/undo and .../previews/undo, bound to reports.schedule; the kernel plans the inverse
 # (reports.schedule.restore) for the caller with the checks of the transition it makes (ADR-0005 rule 10; modules/reports.md 8).
 #
+# SYS-03 DC Replication Status (T-1720; reports-2 second slice 7.3, 13). Typed columns, a per-DC coverage block with the Did not answer entries and the 100-DC cap count, status counts for
+# the chips, and the thresholds (read and edit). It adds two permissions, both distinct from reports.run (spec 13):
+#   reports.replication.read       getReportReplicationThresholds; also checked INSIDE createReportRun (and retry, schedules) for the SYS-03 definition, as createReportExport checks reports.run: 403 Forbidden
+#                                  with errors[].code replication_read_required when it is missing. It is not a second x-permission. The library lists SYS-03 only to holders.
+#   reports.replication.configure  updateReportReplicationThresholds, its preview twin and its undo pair.
+# listReportManagers (T-1720) is the picker list of USR-12; the pick travels as a ReportSubjectRef.
+#
 # Closed on purpose: columns are the ReportColumnId enum, filters are the typed ReportFilter tree, values are typed. There is no member that takes
 # a raw filter string, a DN, SQL, or a column name that is not in the registry (FR-05). The compiler's AST is not modelled here.
 # Request enums are closed; their response twins (...Value) are open (ADR-0004 rule 2).
@@ -191,6 +198,69 @@ paths:
           $ref: shared/problems.yaml#/components/responses/RateLimited
         "500":
           $ref: shared/problems.yaml#/components/responses/Internal
+  /reports/runs/latest:
+    get:
+      tags: [reports]
+      operationId: getLatestReportRun
+      summary: Get the caller's latest run of a report, for a Home widget
+      description: >-
+        Answers the one thing a Home widget needs (specs/home-report-widgets.md 3.2): the caller's own latest succeeded run of definitionId and presetId, or why there is none. It never creates a run.
+        The runner is the caller, taken from the principal; no parameter names another account, so a schedule owned by someone else that delivers to the caller never makes a candidate and the caller
+        sees never_run until they run it themselves. The latest succeeded run is preferred over a newer failed one; a newer queued or running run is reported as inFlight and the state is running.
+        state is one of current, stale_data (current and the freshness state is stale: asOf and freshness.stale name the connections), scope_changed (the caller's read scope differs from the one
+        the run was trimmed with: no rows and no count), expired (past expiresAt: no rows), running, failed (no earlier run is current; failure is on the run header), never_run, unavailable (the definition
+        or preset is not in the library). With rows=10 and a current run, table holds the first 10 rows of the definition's widget-profile columns (at most 5), read through the run-read gate
+        (run.ReadAccess, 6.6 checks 1 to 5); there is no second gate. rows is 0 or 10, anything else is a 400; rows=10 on a definition whose widget profile has no table view is a 400. The response never carries the digest, the parameters or
+        the scope text; getReportRun answers those. asOf is the freshness watermark of the run and is the age to show; it is never called live.
+      x-permission: reports.run
+      x-activediq-stability: preview
+      x-activediq-limits:
+        class: read
+      x-activediq-parity: [ADM-002]
+      parameters:
+        - name: definitionId
+          in: query
+          required: true
+          description: The report definition.
+          schema:
+            type: string
+            minLength: 2
+            maxLength: 64
+            pattern: "^[A-Za-z][A-Za-z0-9-]{1,63}$"
+        - name: presetId
+          in: query
+          required: false
+          description: The preset; absent means the definition's default preset.
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 64
+            pattern: "^[a-z][a-z0-9_-]{0,63}$"
+        - name: rows
+          in: query
+          required: false
+          description: 0 (the default) answers the header only; 10 adds the first 10 rows of the widget table.
+          schema:
+            type: integer
+            minimum: 0
+            maximum: 10
+      responses:
+        "200":
+          description: The latest run state for the widget
+          content:
+            application/json:
+              schema:
+                $ref: modules/reports.yaml#/components/schemas/ReportLatestRun
+        "400":
+          $ref: shared/problems.yaml#/components/responses/Validation
+        "401":
+          $ref: shared/problems.yaml#/components/responses/Unauthenticated
+        "403":
+          $ref: shared/problems.yaml#/components/responses/Forbidden
+        "429":
+          $ref: shared/problems.yaml#/components/responses/RateLimited
+        "500":
+          $ref: shared/problems.yaml#/components/responses/Internal
   /reports/runs/{runId}:
     get:
       tags: [reports]
@@ -332,6 +402,104 @@ paths:
             application/json:
               schema:
                 $ref: modules/reports.yaml#/components/schemas/ReportRowPage
+        "400":
+          $ref: shared/problems.yaml#/components/responses/Validation
+        "401":
+          $ref: shared/problems.yaml#/components/responses/Unauthenticated
+        "403":
+          $ref: shared/problems.yaml#/components/responses/Forbidden
+        "404":
+          $ref: shared/problems.yaml#/components/responses/NotFound
+        "409":
+          $ref: shared/problems.yaml#/components/responses/Conflict
+        "410":
+          $ref: shared/problems.yaml#/components/responses/ReportResultExpired
+        "429":
+          $ref: shared/problems.yaml#/components/responses/RateLimited
+        "500":
+          $ref: shared/problems.yaml#/components/responses/Internal
+  /reports/runs/{runId}/rows/{rowKey}/detail:
+    get:
+      tags: [reports]
+      operationId: getReportRunRowDetail
+      summary: Read the detail of one change-history row of a run
+      description: >-
+        The docked detail of one row of a change-history run (USR-06, GRP-05, CMP-03, CTC-02, OU-02: spec reports-2-second-slice 4.1, design 2). The rows read carries no per-row detail; this read does,
+        for the row whose rowKey (the object GUID) is given. The body is exactly one of five kinds, chosen by kind: edited, membership, credential, permissions, removed (the Deleted presets). Every kind carries
+        when, object and actor; the fields beyond those are the kind's own and no kind carries a field of another. A value the history does not hold (no originating time because the change was only observed, a
+        replication version that was not recorded, a restore status the connection account cannot read) is a typed unknown, never an empty string, 0 or a guess (FR-09). Names only: no kind carries an old or new
+        value, a password or a security descriptor (spec rule 3). actor is notRecorded for a native change (spec rule 6, DM-18.I3) and activediq, with the principal and the operation, only for a change made through activeDIQ.
+        Scope: the object is shown only when its recorded ancestry is in the caller's read scope, otherwise 404 (the existence of an object outside scope is not disclosed). For a membership row the member names are
+        paged and trimmed to the caller's scope: membership.names is one page of the side chosen by side (added by default), and addedCount, removedCount, addedOutOfScope and removedOutOfScope are totals over the whole
+        change, never over the page; members outside scope are counted, never named. The cursor is bound to this run, row and side. The run-read gate is that of listReportRunRows, in the same order: runner equals
+        the caller, otherwise 404; not expired, otherwise 410 report-result-expired; scope fingerprint unchanged, otherwise 409 with errors[].code scope_changed_rerun; succeeded, otherwise 409 with errors[].code
+        run_not_ready or run_failed. A rowKey that is not a row of the run, or whose run is not a change-history report, is a 404. The result is stored and frozen with the run (ADR-0010 rule 3). Read-only; the
+        detail offers no restore (restore is 2b, ADM-098).
+      x-permission: reports.run
+      x-activediq-stability: preview
+      x-activediq-limits:
+        class: read
+      x-activediq-parity: [ADM-092]
+      parameters:
+        - $ref: modules/reports.yaml#/components/parameters/RunId
+        - $ref: modules/reports.yaml#/components/parameters/RowKey
+        - $ref: modules/reports.yaml#/components/parameters/MembershipSide
+        - $ref: shared/paging.yaml#/components/parameters/PageCursor
+        - $ref: shared/paging.yaml#/components/parameters/PageLimit
+      responses:
+        "200":
+          description: The detail of the row
+          content:
+            application/json:
+              schema:
+                $ref: modules/reports.yaml#/components/schemas/ReportRowDetail
+        "400":
+          $ref: shared/problems.yaml#/components/responses/Validation
+        "401":
+          $ref: shared/problems.yaml#/components/responses/Unauthenticated
+        "403":
+          $ref: shared/problems.yaml#/components/responses/Forbidden
+        "404":
+          $ref: shared/problems.yaml#/components/responses/NotFound
+        "409":
+          $ref: shared/problems.yaml#/components/responses/Conflict
+        "410":
+          $ref: shared/problems.yaml#/components/responses/ReportResultExpired
+        "429":
+          $ref: shared/problems.yaml#/components/responses/RateLimited
+        "500":
+          $ref: shared/problems.yaml#/components/responses/Internal
+  /reports/runs/{runId}/policies/{policyId}/targets:
+    get:
+      tags: [reports]
+      operationId: listReportRunPolicyTargets
+      summary: Page the direct targets of one policy row of a run
+      description: >-
+        Reads a page of the objects one policy row of a stored policy run (SYS-01) applies to directly: for a fine-grained policy (PSO) the users and global security groups in its
+        msDS-PSOAppliesTo, in scope. policyId is the rowKey of the policy row in the run's rows (the PSO's objectGUID, or the domain head's objectGUID for a domain policy). These are the
+        direct targets, not the resultant set: which policy wins for one user is resolved per user (the Policy source column of the user reports) and is never answered here, and a target
+        group is one entry, never its members. basis says so on every page. count is the number of direct targets in the caller's scope, the same number as the policy row's applies_to_count cell,
+        and is never a count over the page. A domain policy has no direct targets (it governs every account of its domain unless a PSO overrides it): it answers 200 with count 0 and no targets.
+        Order is by name, then objectGUID, stable; the cursor is bound to this run and policy. The result is stored and frozen with the run (ADR-0010 rule 3). The run-read gate is that of listReportRunRows,
+        in the same order: runner equals the caller, otherwise 404; not expired, otherwise 410 report-result-expired; scope fingerprint unchanged, otherwise 409 with errors[].code scope_changed_rerun;
+        succeeded, otherwise 409 with errors[].code run_not_ready or run_failed. A policyId that is not a policy row of the run (or whose run is not a policy report) is a 404.
+      x-permission: reports.run
+      x-activediq-stability: preview
+      x-activediq-limits:
+        class: read
+      x-activediq-parity: [ADM-092]
+      parameters:
+        - $ref: modules/reports.yaml#/components/parameters/RunId
+        - $ref: modules/reports.yaml#/components/parameters/PolicyId
+        - $ref: shared/paging.yaml#/components/parameters/PageCursor
+        - $ref: shared/paging.yaml#/components/parameters/PageLimit
+      responses:
+        "200":
+          description: A page of the policy's direct targets
+          content:
+            application/json:
+              schema:
+                $ref: modules/reports.yaml#/components/schemas/ReportPolicyTargetPage
         "400":
           $ref: shared/problems.yaml#/components/responses/Validation
         "401":
@@ -507,6 +675,311 @@ paths:
           $ref: shared/problems.yaml#/components/responses/Conflict
         "410":
           $ref: shared/problems.yaml#/components/responses/ReportResultExpired
+        "429":
+          $ref: shared/problems.yaml#/components/responses/RateLimited
+        "500":
+          $ref: shared/problems.yaml#/components/responses/Internal
+  /reports/managers:
+    get:
+      tags: [reports]
+      operationId: listReportManagers
+      summary: Find managers to run a manager report for
+      description: >-
+        The picker list of USR-12 Manager Based Users (reports-2 second slice 6.1, 11): users, inside the caller's read scope, who have at least one direct report, matching q. The pick is carried back as
+        a ReportSubjectRef (connectionId and objectGUID, never a DN) in ReportRunParameters.subjects of a definition whose subjectKind is manager; no new parameter shape is needed. q is literal text matched against name and logon name:
+        nothing from it is placed in a directory query as syntax, and a wildcard or filter character has no meaning. An absent or empty q lists the managers in a stable order (display name, then objectGUID), so the picker can show recent
+        or first managers before the admin types. Two managers with the same display name are told apart by logonName and ouPath, never by order. directReports counts the direct reports inside the caller's scope. The list is read from the inventory (a link edge), not
+        from a live directory read, and the run-time freshness label applies to the report, not to this list. A scope that grants nothing answers an empty page.
+      x-permission: reports.run
+      x-activediq-stability: preview
+      x-activediq-limits:
+        class: read
+      x-activediq-parity: [ADM-084]
+      parameters:
+        - name: q
+          in: query
+          required: false
+          description: Literal text to match in the display name or logon name. Up to 256 characters; control characters are refused.
+          schema:
+            type: string
+            maxLength: 256
+            pattern: "^[^\\x00-\\x1f\\x7f]*$"
+        - $ref: shared/paging.yaml#/components/parameters/PageCursor
+        - $ref: shared/paging.yaml#/components/parameters/PageLimit
+      responses:
+        "200":
+          description: A page of managers
+          content:
+            application/json:
+              schema:
+                $ref: modules/reports.yaml#/components/schemas/ReportManagerList
+        "400":
+          $ref: shared/problems.yaml#/components/responses/Validation
+        "401":
+          $ref: shared/problems.yaml#/components/responses/Unauthenticated
+        "403":
+          $ref: shared/problems.yaml#/components/responses/Forbidden
+        "429":
+          $ref: shared/problems.yaml#/components/responses/RateLimited
+        "500":
+          $ref: shared/problems.yaml#/components/responses/Internal
+  /reports/replication/thresholds:
+    get:
+      tags: [reports]
+      operationId: getReportReplicationThresholds
+      summary: Read the DC replication status thresholds
+      description: >-
+        The tenant's thresholds that turn a replication link's last-success age into a status in SYS-03 DC Replication Status (reports-2 second slice 7.3.3). They are the tenant's setting, not the run's: a run pins the values it used in
+        ReportRun.replication.thresholds and its stored statuses never change when this is edited. Before anyone edits them, isDefault is true and the values are the product defaults (defaults). The ETag is the version for updateReportReplicationThresholds.
+      x-permission: reports.replication.read
+      x-activediq-stability: preview
+      x-activediq-limits:
+        class: read
+      x-activediq-parity: [ADM-092]
+      responses:
+        "200":
+          description: The thresholds
+          headers:
+            ETag:
+              required: true
+              schema:
+                type: string
+                maxLength: 256
+          content:
+            application/json:
+              schema:
+                $ref: modules/reports.yaml#/components/schemas/ReportReplicationThresholds
+        "401":
+          $ref: shared/problems.yaml#/components/responses/Unauthenticated
+        "403":
+          $ref: shared/problems.yaml#/components/responses/Forbidden
+        "429":
+          $ref: shared/problems.yaml#/components/responses/RateLimited
+        "500":
+          $ref: shared/problems.yaml#/components/responses/Internal
+    put:
+      tags: [reports]
+      operationId: updateReportReplicationThresholds
+      summary: Set the DC replication status thresholds
+      description: >-
+        Replaces both thresholds, as the Action reports.replication.thresholds.update (ADR-0005 rule 10): preview diff, gate, audit, and undo that restores the previous values. Needs If-Match with the ETag read. The warning threshold
+        must be shorter than the failing threshold, otherwise 400 with errors[].code thresholds_not_ordered; each is 5 minutes to 30 days, otherwise 400. A change applies to runs that start after it; it never rewrites a stored run. It widens no directory
+        right and reads no directory. Preview it first with previewUpdateReportReplicationThresholds (same body and parameters; nothing is written). The ActiveDIQ-Operation-Id it answers is the undo handle.
+      x-permission: reports.replication.configure
+      x-activediq-stability: preview
+      x-activediq-limits:
+        class: write
+        maxBodyBytes: 1024
+      x-activediq-parity: [ADM-092]
+      parameters:
+        - $ref: modules/reports.yaml#/components/parameters/RequiredIfMatch
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: modules/reports.yaml#/components/schemas/ReportReplicationThresholdsWrite
+      responses:
+        "200":
+          description: The thresholds as stored
+          headers:
+            ActiveDIQ-Operation-Id:
+              required: true
+              description: The operation that made this change; the undo handle.
+              schema:
+                type: string
+                format: uuid
+                maxLength: 36
+            ETag:
+              required: true
+              schema:
+                type: string
+                maxLength: 256
+          content:
+            application/json:
+              schema:
+                $ref: modules/reports.yaml#/components/schemas/ReportReplicationThresholds
+        "202":
+          description: Held for approval by the gate or a kernel hold (ADR-0005 rule 8); holdReason says which. Nothing changed yet; it applies when approved
+          headers:
+            ActiveDIQ-Operation-Id:
+              required: true
+              description: The held operation.
+              schema:
+                type: string
+                format: uuid
+                maxLength: 36
+          content:
+            application/json:
+              schema:
+                $ref: shared/operation.yaml#/components/schemas/OperationRef
+        "400":
+          $ref: shared/problems.yaml#/components/responses/Validation
+        "401":
+          $ref: shared/problems.yaml#/components/responses/Unauthenticated
+        "403":
+          $ref: shared/problems.yaml#/components/responses/Forbidden
+        "412":
+          $ref: shared/problems.yaml#/components/responses/PreconditionFailed
+        "413":
+          $ref: shared/problems.yaml#/components/responses/PayloadTooLarge
+        "415":
+          $ref: shared/problems.yaml#/components/responses/UnsupportedMediaType
+        "428":
+          $ref: shared/problems.yaml#/components/responses/PreconditionRequired
+        "429":
+          $ref: shared/problems.yaml#/components/responses/RateLimited
+        "500":
+          $ref: shared/problems.yaml#/components/responses/Internal
+  /reports/replication/thresholds/previews/update:
+    post:
+      tags: [reports]
+      operationId: previewUpdateReportReplicationThresholds
+      summary: Preview setting the DC replication status thresholds
+      description: >-
+        The dry run of updateReportReplicationThresholds as the Action reports.replication.thresholds.update (ADR-0004 rule 14): it plans the change against the live values, authorises it for the caller and asks the gate, and answers the diff,
+        reversibility and whether it can be undone. It writes, persists and audits nothing. A refusal the plan finds, such as thresholds_not_ordered, is a 200 with outcome refused and blocked[].code, never a problem.
+        Same x-permission, parameters (including If-Match) and body as updateReportReplicationThresholds.
+      x-permission: reports.replication.configure
+      x-activediq-stability: preview
+      x-activediq-limits:
+        class: read
+        maxBodyBytes: 1024
+      x-activediq-parity: [ADM-092]
+      parameters:
+        - $ref: modules/reports.yaml#/components/parameters/RequiredIfMatch
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: modules/reports.yaml#/components/schemas/ReportReplicationThresholdsWrite
+      responses:
+        "200":
+          description: The preview
+          content:
+            application/json:
+              schema:
+                $ref: shared/operation.yaml#/components/schemas/OperationPreview
+        "400":
+          $ref: shared/problems.yaml#/components/responses/Validation
+        "401":
+          $ref: shared/problems.yaml#/components/responses/Unauthenticated
+        "403":
+          $ref: shared/problems.yaml#/components/responses/Forbidden
+        "412":
+          $ref: shared/problems.yaml#/components/responses/PreconditionFailed
+        "413":
+          $ref: shared/problems.yaml#/components/responses/PayloadTooLarge
+        "415":
+          $ref: shared/problems.yaml#/components/responses/UnsupportedMediaType
+        "428":
+          $ref: shared/problems.yaml#/components/responses/PreconditionRequired
+        "429":
+          $ref: shared/problems.yaml#/components/responses/RateLimited
+        "500":
+          $ref: shared/problems.yaml#/components/responses/Internal
+  /reports/replication/thresholds/operations/{operationId}/previews/undo:
+    post:
+      tags: [reports]
+      operationId: previewUndoReportReplicationThresholdsOperation
+      summary: Preview undoing a thresholds change
+      description: >-
+        The dry run of undoing one reports.replication.thresholds.* operation (ADR-0004 rule 14): it plans the inverse, reports.replication.thresholds.restore, against the live thresholds for the caller. A plan refusal is a 200 with outcome refused.
+        It writes, persists and audits nothing. 404 when the operation is unknown or is not a reports.replication.thresholds.* operation. 409 operation-not-undoable with errors[].code irreversible, already_undone,
+        superseded (the thresholds changed after this operation; undo the later change first) or not_finished.
+      x-permission: reports.replication.configure
+      x-activediq-stability: preview
+      x-activediq-limits:
+        class: read
+      x-activediq-parity: [ADM-092]
+      parameters:
+        - $ref: shared/operation.yaml#/components/parameters/OperationId
+      responses:
+        "200":
+          description: The preview of the undo
+          content:
+            application/json:
+              schema:
+                $ref: shared/operation.yaml#/components/schemas/OperationPreview
+        "401":
+          $ref: shared/problems.yaml#/components/responses/Unauthenticated
+        "403":
+          $ref: shared/problems.yaml#/components/responses/Forbidden
+        "404":
+          $ref: shared/problems.yaml#/components/responses/NotFound
+        "409":
+          $ref: shared/problems.yaml#/components/responses/OperationNotUndoable
+        "429":
+          $ref: shared/problems.yaml#/components/responses/RateLimited
+        "500":
+          $ref: shared/problems.yaml#/components/responses/Internal
+  /reports/replication/thresholds/operations/{operationId}/undo:
+    post:
+      tags: [reports]
+      operationId: undoReportReplicationThresholdsOperation
+      summary: Undo a thresholds change
+      description: >-
+        Undoes one reports.replication.thresholds.* operation, named by the ActiveDIQ-Operation-Id its write answered (ADR-0004 rule 14, ADR-0005 rule 10). The undo is a new operation of the Action
+        reports.replication.thresholds.restore, planned against the live thresholds for the caller, run inline, audited, and itself undoable. It restores the values before the operation; runs already stored are not touched.
+        404 as for the preview. 409 operation-not-undoable with errors[].code irreversible, already_undone, superseded, not_finished or plan_refused. Undoing an operation that itself needed approval is always held (202).
+      x-permission: reports.replication.configure
+      x-activediq-stability: preview
+      x-activediq-limits:
+        class: write
+        maxBodyBytes: 1024
+      x-activediq-parity: [ADM-092]
+      parameters:
+        - $ref: shared/operation.yaml#/components/parameters/OperationId
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: shared/operation.yaml#/components/schemas/OperationUndoRequest
+      responses:
+        "200":
+          description: The undo operation; undoes names the operation it undid
+          headers:
+            ActiveDIQ-Operation-Id:
+              required: true
+              description: The undo operation. Undoing it re-applies the original change.
+              schema:
+                type: string
+                format: uuid
+                maxLength: 36
+          content:
+            application/json:
+              schema:
+                $ref: shared/operation.yaml#/components/schemas/OperationRef
+        "202":
+          description: The undo is held for approval by the gate or a kernel hold (ADR-0005 rule 8); holdReason says which. Nothing changed yet
+          headers:
+            ActiveDIQ-Operation-Id:
+              required: true
+              description: The held undo operation.
+              schema:
+                type: string
+                format: uuid
+                maxLength: 36
+          content:
+            application/json:
+              schema:
+                $ref: shared/operation.yaml#/components/schemas/OperationRef
+        "400":
+          $ref: shared/problems.yaml#/components/responses/Validation
+        "401":
+          $ref: shared/problems.yaml#/components/responses/Unauthenticated
+        "403":
+          $ref: shared/problems.yaml#/components/responses/Forbidden
+        "404":
+          $ref: shared/problems.yaml#/components/responses/NotFound
+        "409":
+          $ref: shared/problems.yaml#/components/responses/OperationNotUndoable
+        "413":
+          $ref: shared/problems.yaml#/components/responses/PayloadTooLarge
+        "415":
+          $ref: shared/problems.yaml#/components/responses/UnsupportedMediaType
         "429":
           $ref: shared/problems.yaml#/components/responses/RateLimited
         "500":
@@ -1479,6 +1952,29 @@ components:
       schema:
         type: string
         format: uuid
+    PolicyId:
+      name: policyId
+      in: path
+      required: true
+      description: The rowKey of a policy row of the run (a GUID).
+      schema:
+        type: string
+        format: uuid
+    RowKey:
+      name: rowKey
+      in: path
+      required: true
+      description: The rowKey of a row of the run; for a change-history run, the object's GUID.
+      schema:
+        type: string
+        format: uuid
+    MembershipSide:
+      name: side
+      in: query
+      required: false
+      description: Which side of a membership change the names are paged from. Absent is added. Ignored for a row that is not a membership change.
+      schema:
+        $ref: modules/reports.yaml#/components/schemas/ReportMembershipSide
     ExportId:
       name: exportId
       in: path
@@ -1573,7 +2069,7 @@ components:
       name: If-Match
       in: header
       required: true
-      description: The ETag of the schedule version being changed. A stale value answers precondition-failed; an absent one precondition-required.
+      description: The ETag of the version being changed (a schedule, or the replication thresholds). A stale value answers precondition-failed; an absent one precondition-required.
       schema:
         type: string
         minLength: 1
@@ -1583,8 +2079,18 @@ components:
     ReportColumnId:
       description: >-
         A column of the dataset registry (DM-70) that a 2a report carries. Closed: a column name that is not listed is refused, and a column the chosen definition does not carry is a 400 with code column_not_available. The registry holds no secret attribute (D8).
+        Policy columns (SYS-01, one row per policy, rowKey the policy GUID): policy_name (text); policy_kind (enum domain or pso, the ReportPolicyKindValue); precedence (integer, count; absent on the domain row); applies_to_count (integer, count of direct targets in the
+        runner's scope, 0 for a PSO with none, absent on the domain row); applies_to_first (textList, the first two target names by name order, empty when none; the full list is listReportRunPolicyTargets); min_length, history_length, lockout_threshold (integer, count);
+        max_age, min_age, lockout_duration, lockout_window (integer, seconds; max_age, lockout_threshold and lockout_duration are a never cell when the policy sets no limit, see ReportCellNever); complexity and reversible_encryption (boolean).
+        A value that was not read is an unknown cell, never 0 or false. Deltas against the domain row are computed by the client from these typed cells (the unit is on the column); the server sends no delta text.
+        SYS-03 DC Replication Status (reports-2 second slice 7.3) adds ten ids, one row per destination DC, partition and partner (source DC), and reuses domain and status. Cell kinds, in this order:
+        domain_controller text (the destination DC's DNS host name); domain text; partition text (the naming context's name, never a DN); partner_dc text (the source DC's DNS host name); last_attempt time; last_success time, or never when replication has never succeeded;
+        consecutive_failures integer; last_error_code integer (the error the DC reports, a Win32 or replication error number such as 8524); last_error text (the meaning of the code, or the DC's message, escaped like any text); status enum (ReportReplicationStatusValue);
+        lingering_risk enum (ReportLingeringRiskValue; the column's label never says detected); read_at time (when this DC was read). A value the DC did not return is absent, never a default, and its row's status is not_reported. A DC that did not answer has
+        one row: domain_controller, domain, status not_reported, last_error text from the coverage error, read_at, and absent in every other cell.
+        The status column of SYS-03 takes the choices of ReportReplicationStatusValue, and sorting by it orders by severity, failing first.
       type: string
-      enum: [name, logon_name, upn, status, domain, ou_path, manager, created, account_expires, days_to_expiry, last_logon, days_since, probable_service_account, real_last_logon, from_dc, dc_coverage, locked_out_since, lockout_ends, policy_source, data_as_of, password_last_set, password_expires, password_state, last_failed_logon, failures_on_dc, group_type, group_scope, direct_members, effective_members, managed_by, group, member, member_type, membership_kind, via, user, primary_group, dns_name, computer_type, operating_system, os_version, delegation, last_activity, activity_source, path, users, computers, groups, other_objects, objects_in_subtree, email]
+      enum: [name, logon_name, upn, status, domain, ou_path, manager, created, account_expires, days_to_expiry, last_logon, days_since, probable_service_account, real_last_logon, from_dc, dc_coverage, locked_out_since, lockout_ends, policy_source, data_as_of, password_last_set, password_expires, password_state, last_failed_logon, failures_on_dc, group_type, group_scope, direct_members, effective_members, managed_by, group, member, member_type, membership_kind, via, user, primary_group, dns_name, computer_type, operating_system, os_version, delegation, last_activity, activity_source, path, users, computers, groups, other_objects, objects_in_subtree, email, policy_name, policy_kind, precedence, applies_to_count, applies_to_first, min_length, history_length, max_age, min_age, complexity, reversible_encryption, lockout_threshold, lockout_duration, lockout_window, domain_controller, partition, partner_dc, last_attempt, last_success, consecutive_failures, last_error_code, last_error, lingering_risk, read_at]
     ReportCategory:
       description: >-
         The six categories of the 2a library (spec 6.1).
@@ -1636,6 +2142,12 @@ components:
         - $ref: modules/reports.yaml#/components/schemas/ReportValueEnum
       discriminator:
         propertyName: kind
+        mapping:
+          text: "#/components/schemas/ReportValueText"
+          integer: "#/components/schemas/ReportValueInteger"
+          boolean: "#/components/schemas/ReportValueBoolean"
+          time: "#/components/schemas/ReportValueTime"
+          enum: "#/components/schemas/ReportValueEnum"
     ReportValueText:
       description: >-
         Text compared literally. Control characters are refused.
@@ -1711,6 +2223,9 @@ components:
         - $ref: modules/reports.yaml#/components/schemas/ReportPeriodRange
       discriminator:
         propertyName: kind
+        mapping:
+          last_days: "#/components/schemas/ReportPeriodLastDays"
+          range: "#/components/schemas/ReportPeriodRange"
     ReportPeriodLastDays:
       description: >-
         The last n days, ending when the run starts. The presets offer 7, 30, 90, 180 and 365.
@@ -1783,6 +2298,16 @@ components:
         - $ref: modules/reports.yaml#/components/schemas/ReportRecurrenceCustomMonths
       discriminator:
         propertyName: kind
+        mapping:
+          hourly: "#/components/schemas/ReportRecurrenceHourly"
+          daily: "#/components/schemas/ReportRecurrenceDaily"
+          weekly: "#/components/schemas/ReportRecurrenceWeekly"
+          monthly_day: "#/components/schemas/ReportRecurrenceMonthlyDay"
+          monthly_last_day: "#/components/schemas/ReportRecurrenceMonthlyLastDay"
+          custom_hours: "#/components/schemas/ReportRecurrenceCustomHours"
+          custom_days: "#/components/schemas/ReportRecurrenceCustomDays"
+          custom_weeks: "#/components/schemas/ReportRecurrenceCustomWeeks"
+          custom_months: "#/components/schemas/ReportRecurrenceCustomMonths"
     ReportRecurrenceHourly:
       description: >-
         Every n hours at the given minute.
@@ -1954,6 +2479,12 @@ components:
         - $ref: modules/reports.yaml#/components/schemas/ReportFilterRelative
       discriminator:
         propertyName: kind
+        mapping:
+          group: "#/components/schemas/ReportFilterGroup"
+          compare: "#/components/schemas/ReportFilterCompare"
+          in: "#/components/schemas/ReportFilterIn"
+          presence: "#/components/schemas/ReportFilterPresence"
+          relative_time: "#/components/schemas/ReportFilterRelative"
     ReportFilterGroup:
       description: >-
         Filters combined by match.
@@ -2075,7 +2606,7 @@ components:
         columns:
           type: array
           minItems: 1
-          maxItems: 64
+          maxItems: 96
           description: The columns shown and exported, in order. Replaces the preset's columns when present.
           items:
             $ref: modules/reports.yaml#/components/schemas/ReportColumnId
@@ -2088,6 +2619,14 @@ components:
         includeReadOnlyDcs:
           type: boolean
           description: Per-DC reports only (USR-04, PWD-03). Absent includes read-only DCs.
+        showHidden:
+          type: array
+          maxItems: 16
+          description: Keys of the definition's hidden groups to include in the rows instead of only counting them in the header (for example probable service accounts). A key the definition does not declare is refused; a locked group cannot be shown. Absent keeps every hidden group hidden. Stored with the run parameters.
+          items:
+            type: string
+            minLength: 1
+            maxLength: 64
     ReportRunCreate:
       description: >-
         Starts a run. definitionVersion absent means the current version, which the run record then pins.
@@ -2111,6 +2650,13 @@ components:
           pattern: "^[a-z][a-z0-9_]{0,63}$"
         parameters:
           $ref: modules/reports.yaml#/components/schemas/ReportRunParameters
+        timeZone:
+          type: string
+          maxLength: 64
+          minLength: 1
+          pattern: "^[A-Za-z][A-Za-z0-9_+-]*(/[A-Za-z0-9_+-]+){0,2}$"
+          description: >-
+            The runner's IANA time zone, such as Europe/Berlin. PDF and HTML exports of the run show Time cells in it, with the zone abbreviation. Absent means UTC. It does not change the run's rows or digest.
     ReportExportCreate:
       description: >-
         Starts an export of the run in the path.
@@ -2168,6 +2714,24 @@ components:
         - $ref: modules/reports.yaml#/components/schemas/ReportRecipientEmail
       discriminator:
         propertyName: kind
+        mapping:
+          account: "#/components/schemas/ReportRecipientAccount"
+          email: "#/components/schemas/ReportRecipientEmail"
+    ReportReplicationThresholdsWrite:
+      description: >-
+        Both thresholds of SYS-03 DC Replication Status, in seconds. warningAfterSeconds must be less than failingAfterSeconds. Both are required: a write replaces the pair.
+      type: object
+      required: [warningAfterSeconds, failingAfterSeconds]
+      additionalProperties: false
+      properties:
+        warningAfterSeconds:
+          type: integer
+          minimum: 300
+          maximum: 2592000
+        failingAfterSeconds:
+          type: integer
+          minimum: 300
+          maximum: 2592000
     ReportScheduleWrite:
       description: >-
         The writable settings of a schedule. It runs the report, preset, filters, columns and scope as saved, pinned to the definition version. confirmedExternal lists the external addresses the caller confirmed in the preview (Data leaves your organisation); it must equal the set of external recipients that are new or changed.
@@ -2234,6 +2798,55 @@ components:
             type: string
             format: email
             maxLength: 254
+    ReportSchedulePause:
+      description: >-
+        The input of the Action reports.schedule.pause: the schedule to pause. It has no request body; the id is the path parameter.
+      type: object
+      required: [scheduleId]
+      additionalProperties: false
+      properties:
+        scheduleId:
+          type: string
+          format: uuid
+    ReportScheduleDelete:
+      description: >-
+        The input of the Action reports.schedule.delete: the schedule to archive. It has no request body; the id is the path parameter.
+      type: object
+      required: [scheduleId]
+      additionalProperties: false
+      properties:
+        scheduleId:
+          type: string
+          format: uuid
+    ReportScheduleRestore:
+      description: >-
+        The input of the Action reports.schedule.restore, the inverse of every other schedule Action. Clients never send it: undoReportScheduleOperation builds it from the operation it undoes.
+      type: object
+      required: [scheduleId, mode, expect]
+      additionalProperties: false
+      properties:
+        scheduleId:
+          type: string
+          format: uuid
+        mode:
+          type: string
+          maxLength: 16
+          description: version, archive or reassign_back.
+        version:
+          type: integer
+          minimum: 1
+          maximum: 1000000
+        expect:
+          type: integer
+          minimum: 1
+          maximum: 1000000
+        confirmedExternal:
+          type: array
+          maxItems: 50
+          items:
+            type: string
+            format: email
+            maxLength: 254
     ReportScheduleReassign:
       description: >-
         Hands a schedule to another account.
@@ -2263,6 +2876,13 @@ components:
       type: string
       x-activediq-enum: open
       enum: [text, integer, boolean, time, enum]
+    ReportColumnUnitValue:
+      description: >-
+        What an integer column counts. count: a number of things (characters, remembered passwords, failed attempts, targets) or a rank (precedence). seconds: a length of time in whole seconds (maximum and minimum password age,
+        lockout duration and observation window); the cell is the exact value, the console formats it.
+      type: string
+      x-activediq-enum: open
+      enum: [count, seconds]
     ReportFilterOperatorValue:
       description: >-
         An operator a column takes, or one a preset's filter uses. within_last, within_next and older_than carry the number of days as one integer value.
@@ -2399,7 +3019,7 @@ components:
           maxLength: 128
     ReportColumnInfo:
       description: >-
-        A column of a definition, or of one run (a label can change with the run, such as Last logon (at least)). filterOperators are the operators the column takes.
+        A column of a definition, or of one run (a label can change with the run, such as Last logon (at least)). filterOperators are the operators the column takes. unit is present on an integer column that measures something, so a client can compare and format its cells without parsing text.
       type: object
       required: [id, label, type, sortable, filterable, defaultVisible, filterOperators, choices]
       properties:
@@ -2424,6 +3044,8 @@ components:
           maxItems: 16
           items:
             $ref: modules/reports.yaml#/components/schemas/ReportFilterOperatorValue
+        unit:
+          $ref: modules/reports.yaml#/components/schemas/ReportColumnUnitValue
         choices:
           type: array
           maxItems: 64
@@ -2436,6 +3058,9 @@ components:
         - $ref: modules/reports.yaml#/components/schemas/ReportFilterConditionView
       discriminator:
         propertyName: kind
+        mapping:
+          group: "#/components/schemas/ReportFilterGroupView"
+          condition: "#/components/schemas/ReportFilterConditionView"
     ReportFilterGroupView:
       description: >-
         Filters combined by match.
@@ -2501,7 +3126,7 @@ components:
           maximum: 3660
         columns:
           type: array
-          maxItems: 64
+          maxItems: 96
           items:
             type: string
             maxLength: 64
@@ -2578,7 +3203,7 @@ components:
             $ref: modules/reports.yaml#/components/schemas/ReportPreset
         columns:
           type: array
-          maxItems: 64
+          maxItems: 96
           items:
             $ref: modules/reports.yaml#/components/schemas/ReportColumnInfo
         exportFormats:
@@ -2595,6 +3220,30 @@ components:
           type: integer
           minimum: 1
           maximum: 720
+        widget:
+          $ref: modules/reports.yaml#/components/schemas/ReportWidgetProfile
+    ReportWidgetProfile:
+      description: >-
+        The views a Home widget may render for the report (specs/home-report-widgets.md 3.1). count is always allowed and is listed. tableColumns are the at most 5 columns of the table view, in order, and are
+        empty unless views holds table. trend plots the run's row count only. A definition without this member supports the count view only.
+      type: object
+      required: [views, tableColumns]
+      properties:
+        views:
+          type: array
+          maxItems: 3
+          items:
+            $ref: modules/reports.yaml#/components/schemas/ReportWidgetView
+        tableColumns:
+          type: array
+          maxItems: 5
+          items:
+            type: string
+            maxLength: 64
+    ReportWidgetView:
+      type: string
+      x-activediq-enum: open
+      enum: [count, table, trend]
     ReportDefinitionList:
       description: >-
         A page of the library.
@@ -2612,7 +3261,7 @@ components:
       description: >-
         What a run or schedule is over, as stored. Period, OU and subject references and values are the request shapes; columns and filters are shown as IDs.
       type: object
-      required: [connectionIds, ouInclude, ouExclude, filters, columns, subjects, includeReadOnlyDcs]
+      required: [connectionIds, ouInclude, ouExclude, filters, columns, subjects, includeReadOnlyDcs, showHidden]
       properties:
         connectionIds:
           type: array
@@ -2639,7 +3288,7 @@ components:
             $ref: modules/reports.yaml#/components/schemas/ReportFilterView
         columns:
           type: array
-          maxItems: 64
+          maxItems: 96
           items:
             type: string
             maxLength: 64
@@ -2650,6 +3299,13 @@ components:
             $ref: modules/reports.yaml#/components/schemas/ReportSubjectRef
         includeReadOnlyDcs:
           type: boolean
+        showHidden:
+          type: array
+          maxItems: 16
+          description: Keys of the hidden groups the run included in its rows.
+          items:
+            type: string
+            maxLength: 64
     ReportFreshness:
       description: >-
         The freshness label of spec 8.2. label is the text to show, such as Synced 09:41. When state is stale, stale names every naming context that makes it stale, oldest first: the connection
@@ -2717,12 +3373,202 @@ components:
           maximum: 9007199254740991
         locked:
           type: boolean
+    ReportReplicationStatusValue:
+      description: >-
+        The derived status of one SYS-03 row (reports-2 second slice 7.3.3). healthy: the last success is within the warning threshold and there are no consecutive failures. warning: no failures, and the last success is older than the warning threshold
+        and not older than the failing threshold. failing: consecutive failures above zero, or a last success older than the failing threshold. not_reported: the DC did not answer, or answered without the value; it is never healthy and never a count of problems.
+        unreachable is not a status: an unreachable DC is not_reported, with its reason and error in the coverage block.
+        Severity, for sort order, is failing, warning, not_reported, healthy.
+      type: string
+      x-activediq-enum: open
+      enum: [healthy, warning, failing, not_reported]
+    ReportLingeringRiskValue:
+      description: >-
+        The lingering-object risk indicator of SYS-03 (7.3.4). at_risk: a partner's last success is older than the forest's tombstone lifetime. no_indication: it is not. not_reported: the last success or the tombstone lifetime is not known.
+        This is an indicator, never a detection: no label, text or value says that lingering objects were detected.
+      type: string
+      x-activediq-enum: open
+      enum: [at_risk, no_indication, not_reported]
+    ReportDcUnansweredReason:
+      description: >-
+        Why a DC in scope gave no replication data. unreachable: no connection could be made. timed_out: the read passed its time limit. tls_failed: the TLS handshake or certificate check failed. access_denied: the connection account could not bind or read.
+        right_not_granted: the optional replication-monitoring right is not granted (reports-2 second slice 13). attributes_not_returned: the DC answered and returned no replication values. decode_refused: the connector's safe decoder refused the DC's value.
+      type: string
+      x-activediq-enum: open
+      enum: [unreachable, timed_out, tls_failed, access_denied, right_not_granted, attributes_not_returned, decode_refused]
+    ReportReplicationThresholds:
+      description: >-
+        The tenant's SYS-03 thresholds in seconds. defaults are the product defaults (1 hour warning, 24 hours failing; [PROPOSED] in reports-2 second slice 7.3.3 until ad-expert and reporting-engineer confirm), so a client can offer Reset. isDefault is true while nobody has set values.
+        updatedAt and updatedBy are absent while isDefault.
+      type: object
+      required: [warningAfterSeconds, failingAfterSeconds, defaults, isDefault]
+      properties:
+        warningAfterSeconds:
+          type: integer
+          minimum: 300
+          maximum: 2592000
+        failingAfterSeconds:
+          type: integer
+          minimum: 300
+          maximum: 2592000
+        defaults:
+          $ref: modules/reports.yaml#/components/schemas/ReportReplicationThresholdPair
+        isDefault:
+          type: boolean
+        updatedAt:
+          type: string
+          format: date-time
+        updatedBy:
+          $ref: shared/job.yaml#/components/schemas/JobActor
+    ReportReplicationThresholdPair:
+      description: >-
+        A pair of thresholds in seconds.
+      type: object
+      required: [warningAfterSeconds, failingAfterSeconds]
+      properties:
+        warningAfterSeconds:
+          type: integer
+          minimum: 300
+          maximum: 2592000
+        failingAfterSeconds:
+          type: integer
+          minimum: 300
+          maximum: 2592000
+    ReportReplicationStatusCount:
+      description: >-
+        How many rows of the run have one status.
+      type: object
+      required: [status, count]
+      properties:
+        status:
+          $ref: modules/reports.yaml#/components/schemas/ReportReplicationStatusValue
+        count:
+          type: integer
+          minimum: 0
+          maximum: 9007199254740991
+    ReportReplicationSummary:
+      description: >-
+        What a SYS-03 run adds to its header, present only on a run of DC Replication Status (absent on every other report). thresholds are the values the run applied, pinned when it started. statusCounts has one entry for each of failing, warning,
+        healthy and not_reported, in that order, zeros included, and counts the run's stored rows; their sum is rowCount, so the chips All, Failing, Warning, Healthy and Not reported are filters on the status column with these counts. A DC that did not answer has a
+        row with status not_reported, so it is counted there and never under healthy. tombstoneLifetimeDays is the tombstone lifetime the risk indicator was judged against (the shortest of the forests in scope); null when it was not read, and then every
+        lingering_risk cell is not_reported. nextReadAllowedAfter is when the 1 hour floor of reports-2a 8.4 lets the next run read the DCs; null until the run has started.
+      type: object
+      required: [thresholds, statusCounts, tombstoneLifetimeDays, nextReadAllowedAfter]
+      properties:
+        thresholds:
+          $ref: modules/reports.yaml#/components/schemas/ReportReplicationThresholdPair
+        statusCounts:
+          type: array
+          maxItems: 16
+          items:
+            $ref: modules/reports.yaml#/components/schemas/ReportReplicationStatusCount
+        tombstoneLifetimeDays:
+          type: [integer, "null"]
+          minimum: 1
+          maximum: 36500
+        nextReadAllowedAfter:
+          type: [string, "null"]
+          format: date-time
+    ReportDcError:
+      description: >-
+        Why a DC gave no data. code is a stable slug to branch on, such as connection_refused, dns_failure or tls_untrusted; message is fixed text for the code. Neither carries a DN, LDAP result text, a stack trace or a secret.
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          maxLength: 64
+          minLength: 1
+          pattern: "^[a-z][a-z0-9_.-]{0,63}$"
+        message:
+          type: string
+          maxLength: 512
+    ReportDcUnanswered:
+      description: >-
+        A DC in scope that was read and gave no replication data: one entry of the Did not answer band. dc is the DC's DNS host name. rowKey is the key of this DC's row in the stored result (status not_reported), so the band and the grid, the
+        export and the digest agree. readAt is when the read was tried.
+      type: object
+      required: [dc, connectionId, reason, error, rowKey, readAt]
+      properties:
+        dc:
+          type: string
+          maxLength: 253
+          minLength: 1
+        connectionId:
+          type: string
+          format: uuid
+        reason:
+          $ref: modules/reports.yaml#/components/schemas/ReportDcUnansweredReason
+        error:
+          $ref: modules/reports.yaml#/components/schemas/ReportDcError
+        rowKey:
+          type: string
+          maxLength: 128
+          minLength: 1
+        readAt:
+          type: string
+          format: date-time
+    ReportManagerCandidate:
+      description: >-
+        A user with at least one direct report, offered by the manager picker. Two with the same displayName differ in logonName or ouPath. connectionId and guid are what ReportSubjectRef carries back.
+      type: object
+      required: [connectionId, guid, displayName, logonName, ouPath, directReports]
+      properties:
+        connectionId:
+          type: string
+          format: uuid
+        guid:
+          type: string
+          format: uuid
+        displayName:
+          type: string
+          maxLength: 256
+        logonName:
+          type: string
+          maxLength: 256
+        ouPath:
+          type: string
+          maxLength: 1024
+        directReports:
+          type: integer
+          minimum: 1
+          maximum: 1000000
+    ReportManagerList:
+      description: >-
+        A page of managers, ordered by display name then objectGUID.
+      type: object
+      required: [items, page]
+      properties:
+        items:
+          type: array
+          maxItems: 1000
+          items:
+            $ref: modules/reports.yaml#/components/schemas/ReportManagerCandidate
+        page:
+          $ref: shared/paging.yaml#/components/schemas/PageInfo
     ReportDcCoverage:
       description: >-
-        How many DCs answered a per-DC report. A partial coverage makes the maximum a lower bound (spec 6.5).
+        How many DCs answered a per-DC report. A partial coverage makes the maximum a lower bound (spec 6.5). dcsInScope counts every DC in the runner's scope, including those a cap left unread. dcsAnswered counts the DCs that gave data.
+        complete is true only when every DC in scope answered: it is false when any DC did not answer or when notReadByCap is above zero, and zero DCs answered is coverage, never an empty result.
+        unanswered, notReadByCap and readCap are set by SYS-03 DC Replication Status (reports-2 second slice 7.3) and may be absent on other per-DC reports. unanswered lists the DCs that were read and gave no data, each with its reason and error, in DNS-name order;
+        dcsAnswered plus the length of unanswered plus notReadByCap equals dcsInScope. A DC not read because of readCap has no row and no entry in unanswered; only the count is given, and the console says Narrow the scope.
+        SYS-03 reads at most readCap DCs (100) and reads them in DNS-name order; it does not refuse the run, unlike the read cap of USR-04 and PWD-03 (failure reason per_dc_read_cap_exceeded).
       type: object
       required: [dcsInScope, dcsAnswered, complete]
       properties:
+        unanswered:
+          type: array
+          maxItems: 1000
+          items:
+            $ref: modules/reports.yaml#/components/schemas/ReportDcUnanswered
+        notReadByCap:
+          type: integer
+          minimum: 0
+          maximum: 100000
+        readCap:
+          type: integer
+          minimum: 1
+          maximum: 100000
         dcsInScope:
           type: integer
           minimum: 0
@@ -2733,6 +3579,30 @@ components:
           maximum: 100000
         complete:
           type: boolean
+        label:
+          type: string
+          maxLength: 1024
+          description: >-
+            The header text, "Read from 2 of 3 DCs · 1 unreachable: dc2.example.test: timeout".
+        unreachable:
+          type: array
+          maxItems: 50
+          description: >-
+            The DCs that did not answer, each with the fixed code it gave (never driver text). Empty when coverage is complete.
+          items:
+            $ref: modules/reports.yaml#/components/schemas/ReportUnreachableDc
+    ReportUnreachableDc:
+      description: >-
+        A DC that did not answer a per-DC read.
+      type: object
+      required: [dc, error]
+      properties:
+        dc:
+          type: string
+          maxLength: 255
+        error:
+          type: string
+          maxLength: 64
     ReportSkippedConnection:
       description: >-
         A connection the run skipped.
@@ -2908,11 +3778,15 @@ components:
           $ref: modules/reports.yaml#/components/schemas/ReportFailure
         coverage:
           $ref: modules/reports.yaml#/components/schemas/ReportDcCoverage
+        replication:
+          $ref: modules/reports.yaml#/components/schemas/ReportReplicationSummary
         rerunOf:
           type: string
           format: uuid
         parameters:
           $ref: modules/reports.yaml#/components/schemas/ReportParametersView
+        policyReads:
+          $ref: modules/reports.yaml#/components/schemas/ReportPolicyReads
     ReportCell:
       description: >-
         One typed cell; the kinds map one to one onto report.Cell in modules/reports.md 6.2 (text s, integer i, boolean b, time t, enum e, guid g, textList l, absent a, never n, unknown u).
@@ -2930,6 +3804,17 @@ components:
         - $ref: modules/reports.yaml#/components/schemas/ReportCellUnknown
       discriminator:
         propertyName: kind
+        mapping:
+          text: "#/components/schemas/ReportCellText"
+          integer: "#/components/schemas/ReportCellInteger"
+          guid: "#/components/schemas/ReportCellGuid"
+          textList: "#/components/schemas/ReportCellTextList"
+          never: "#/components/schemas/ReportCellNever"
+          boolean: "#/components/schemas/ReportValueBoolean"
+          time: "#/components/schemas/ReportValueTime"
+          enum: "#/components/schemas/ReportValueEnum"
+          absent: "#/components/schemas/ReportCellAbsent"
+          unknown: "#/components/schemas/ReportCellUnknown"
     ReportCellText:
       description: >-
         Text as stored in the directory, which may hold any character. Encoders neutralise it on export.
@@ -2987,7 +3872,9 @@ components:
             maxLength: 4096
     ReportCellNever:
       description: >-
-        The value can never exist for this object, as distinct from absent (not yet set).
+        The value can never exist for this object, as distinct from absent (not yet set). In the SYS-01 policy columns it is the policy's own no-limit setting, read from 0 or the minimum signed 64-bit value by the 2a codec:
+        in max_age it is "Never expires", in lockout_threshold "Never locks", in lockout_duration "Until an administrator unlocks". The column says which; no other policy column carries it. For a client that compares policies, such a cell is
+        the loosest value of its column, not the smallest number: it is never an integer 0 and must not be ordered as one.
       type: object
       required: [kind]
       additionalProperties: false
@@ -3025,9 +3912,65 @@ components:
           minLength: 1
         cells:
           type: array
-          maxItems: 64
+          maxItems: 96
           items:
             $ref: modules/reports.yaml#/components/schemas/ReportCell
+    ReportLatestState:
+      description: >-
+        What a Home widget renders for the caller's latest run (specs/home-report-widgets.md 3.3).
+      type: string
+      x-activediq-enum: open
+      enum: [current, stale_data, scope_changed, expired, running, failed, never_run, unavailable]
+    ReportLatestTable:
+      description: >-
+        The first rows of a current run in the columns of the definition's widget profile, in the profile's order.
+      type: object
+      required: [columns, rows]
+      properties:
+        columns:
+          type: array
+          maxItems: 5
+          items:
+            $ref: modules/reports.yaml#/components/schemas/ReportColumnInfo
+        rows:
+          type: array
+          maxItems: 10
+          items:
+            $ref: modules/reports.yaml#/components/schemas/ReportRow
+    ReportLatestRun:
+      description: >-
+        The caller's latest run of one report for a widget. runId, asOf, rowCount, finishedAt and expiresAt describe the run the state names and are null for never_run and unavailable.
+        rowCount is null when state is scope_changed, expired, failed or running without a current result. table is present only when rows=10 was asked and the state serves rows. inFlight is a newer queued or running run.
+        failure is the reason of a failed run.
+      type: object
+      required: [state, runId, asOf, rowCount, finishedAt, expiresAt]
+      properties:
+        state:
+          $ref: modules/reports.yaml#/components/schemas/ReportLatestState
+        runId:
+          type: [string, "null"]
+          format: uuid
+        asOf:
+          type: [string, "null"]
+          format: date-time
+        freshness:
+          $ref: modules/reports.yaml#/components/schemas/ReportFreshness
+        rowCount:
+          type: [integer, "null"]
+          minimum: 0
+          maximum: 9007199254740991
+        finishedAt:
+          type: [string, "null"]
+          format: date-time
+        expiresAt:
+          type: [string, "null"]
+          format: date-time
+        inFlight:
+          $ref: modules/reports.yaml#/components/schemas/ReportRunSummary
+        table:
+          $ref: modules/reports.yaml#/components/schemas/ReportLatestTable
+        failure:
+          $ref: modules/reports.yaml#/components/schemas/ReportFailure
     ReportRowPage:
       description: >-
         A page of a stored result. rowCount is the run's total after trimming.
@@ -3039,7 +3982,7 @@ components:
           format: uuid
         columns:
           type: array
-          maxItems: 64
+          maxItems: 96
           items:
             $ref: modules/reports.yaml#/components/schemas/ReportColumnInfo
         rows:
@@ -3053,6 +3996,541 @@ components:
           maximum: 9007199254740991
         page:
           $ref: shared/paging.yaml#/components/schemas/PageInfo
+    ReportPolicyReads:
+      description: >-
+        What a policy report (SYS-01) could read of the Password Settings Container, one entry per domain in the runner's scope, stored with the run and frozen. It exists so that a container that could not be read is never
+        shown as a container that holds no policies (spec 7.1 rule 3, AC-S19): each domain is exactly one of three kinds, readable, none_exist or unreadable, and a client branches on kind and never infers one from another or from a
+        missing row. domainsInScope is the number of entries; domainsReadable is the number of entries of kind readable or none_exist (the read succeeded); complete is true when every domain was read. When complete is false
+        the rows hold the domain policy of every domain and the fine-grained policies of the readable ones only, and users of an unreadable domain may be governed by policies not shown.
+      type: object
+      required: [domainsInScope, domainsReadable, complete, domains]
+      additionalProperties: false
+      properties:
+        domainsInScope:
+          type: integer
+          minimum: 0
+          maximum: 10000
+        domainsReadable:
+          type: integer
+          minimum: 0
+          maximum: 10000
+        complete:
+          type: boolean
+        domains:
+          type: array
+          maxItems: 10000
+          items:
+            $ref: modules/reports.yaml#/components/schemas/ReportPolicyDomainRead
+    ReportPolicyDomainRead:
+      description: >-
+        The read of one domain's Password Settings Container. Three kinds, never collapsed: readable (the container was read and holds at least one policy), none_exist (the container was read and is empty: a real zero) and
+        unreadable (it could not be read, so how many policies exist is not known).
+      oneOf:
+        - $ref: modules/reports.yaml#/components/schemas/ReportPolicyDomainReadable
+        - $ref: modules/reports.yaml#/components/schemas/ReportPolicyDomainNoneExist
+        - $ref: modules/reports.yaml#/components/schemas/ReportPolicyDomainUnreadable
+      discriminator:
+        propertyName: kind
+        mapping:
+          readable: "#/components/schemas/ReportPolicyDomainReadable"
+          none_exist: "#/components/schemas/ReportPolicyDomainNoneExist"
+          unreadable: "#/components/schemas/ReportPolicyDomainUnreadable"
+    ReportPolicyDomainReadable:
+      description: >-
+        The container was read. psoCount is the number of fine-grained policies in it that the runner's scope shows, at least 1; the rows hold each of them. readAt is the policy sync read time.
+      type: object
+      required: [kind, domainId, domainName, domainPolicyRowKey, readAt, psoCount]
+      additionalProperties: false
+      properties:
+        kind:
+          type: string
+          const: readable
+        domainId:
+          type: string
+          format: uuid
+        domainName:
+          type: string
+          maxLength: 255
+          minLength: 1
+        domainPolicyRowKey:
+          type: string
+          format: uuid
+        readAt:
+          type: string
+          format: date-time
+        psoCount:
+          type: integer
+          minimum: 1
+          maximum: 9007199254740991
+    ReportPolicyDomainNoneExist:
+      description: >-
+        The container was read and holds no fine-grained policy: a real zero, true at readAt. Only the domain policy row exists for this domain. It is never sent for a container that could not be read.
+      type: object
+      required: [kind, domainId, domainName, domainPolicyRowKey, readAt]
+      additionalProperties: false
+      properties:
+        kind:
+          type: string
+          const: none_exist
+        domainId:
+          type: string
+          format: uuid
+        domainName:
+          type: string
+          maxLength: 255
+          minLength: 1
+        domainPolicyRowKey:
+          type: string
+          format: uuid
+        readAt:
+          type: string
+          format: date-time
+    ReportPolicyDomainUnreadable:
+      description: >-
+        The container could not be read, so whether this domain has fine-grained policies is not known. containerName is the container as the console names it (Password Settings Container) and reason says why. readAt is when the
+        attempt was made, absent when none was (reason not_read). The domain policy row is still present and is the only policy shown for this domain.
+      type: object
+      required: [kind, domainId, domainName, domainPolicyRowKey, containerName, reason]
+      additionalProperties: false
+      properties:
+        kind:
+          type: string
+          const: unreadable
+        domainId:
+          type: string
+          format: uuid
+        domainName:
+          type: string
+          maxLength: 255
+          minLength: 1
+        domainPolicyRowKey:
+          type: string
+          format: uuid
+        containerName:
+          type: string
+          maxLength: 255
+          minLength: 1
+        reason:
+          $ref: modules/reports.yaml#/components/schemas/ReportPolicyUnreadableReasonValue
+        readAt:
+          type: string
+          format: date-time
+    ReportPolicyUnreadableReasonValue:
+      description: >-
+        Why a Password Settings Container could not be read. permission_denied: the connection account lacks the read right (Domain Admins hold it by default). container_absent: the container is not there, such as a domain below
+        functional level 2008, and the report cannot tell it from an unreadable one. not_read: no read was attempted, such as a connection that was skipped.
+      type: string
+      x-activediq-enum: open
+      enum: [permission_denied, container_absent, not_read]
+    ReportDetailTime:
+      description: An instant the history holds, or unknown when it does not.
+      oneOf:
+        - $ref: modules/reports.yaml#/components/schemas/ReportValueTime
+        - $ref: modules/reports.yaml#/components/schemas/ReportCellUnknown
+      discriminator:
+        propertyName: kind
+        mapping:
+          time: "#/components/schemas/ReportValueTime"
+          unknown: "#/components/schemas/ReportCellUnknown"
+    ReportDetailInteger:
+      description: A whole number as a decimal string, or unknown when the history does not hold it.
+      oneOf:
+        - $ref: modules/reports.yaml#/components/schemas/ReportCellInteger
+        - $ref: modules/reports.yaml#/components/schemas/ReportCellUnknown
+      discriminator:
+        propertyName: kind
+        mapping:
+          integer: "#/components/schemas/ReportCellInteger"
+          unknown: "#/components/schemas/ReportCellUnknown"
+    ReportDetailText:
+      description: Text, absent when the object has none, or unknown when it was not read.
+      oneOf:
+        - $ref: modules/reports.yaml#/components/schemas/ReportCellText
+        - $ref: modules/reports.yaml#/components/schemas/ReportCellAbsent
+        - $ref: modules/reports.yaml#/components/schemas/ReportCellUnknown
+      discriminator:
+        propertyName: kind
+        mapping:
+          text: "#/components/schemas/ReportCellText"
+          absent: "#/components/schemas/ReportCellAbsent"
+          unknown: "#/components/schemas/ReportCellUnknown"
+    ReportDetailBasisValue:
+      description: >-
+        Where a time comes from. origin: the DC time of the change, from replication metadata (independent of the DC). observed: the time activeDIQ observed it. last_seen: the object as last observed before it left the feed.
+      type: string
+      x-activediq-enum: open
+      enum: [origin, observed, last_seen]
+    ReportDetailWhen:
+      description: >-
+        When the change happened. changedAt is the originating time where the history holds one, else the observed time, and basis says which. observedAt is always the observation time. gapMinutes is the minutes between
+        the previous observation and this one, unknown when there is no previous observation. observationBased is always true: several changes between two observations show as one.
+      type: object
+      required: [changedAt, basis, observedAt, gapMinutes, observationBased]
+      additionalProperties: false
+      properties:
+        changedAt:
+          $ref: modules/reports.yaml#/components/schemas/ReportDetailTime
+        basis:
+          $ref: modules/reports.yaml#/components/schemas/ReportDetailBasisValue
+        observedAt:
+          $ref: modules/reports.yaml#/components/schemas/ReportDetailTime
+        gapMinutes:
+          $ref: modules/reports.yaml#/components/schemas/ReportDetailInteger
+        observationBased:
+          type: boolean
+    ReportDetailObject:
+      description: >-
+        The object the change is on. dn is the full distinguished name, an attribute of the object and never a key; the client addresses the object by objectGuid. For a removed row every field is as last seen by activeDIQ.
+        logonName is absent for a kind without one (a group or OU).
+      type: object
+      required: [objectGuid, name, logonName, domain, ouPath, dn]
+      additionalProperties: false
+      properties:
+        objectGuid:
+          type: string
+          format: uuid
+        name:
+          type: string
+          maxLength: 1024
+        logonName:
+          $ref: modules/reports.yaml#/components/schemas/ReportDetailText
+        domain:
+          type: string
+          maxLength: 255
+        ouPath:
+          $ref: modules/reports.yaml#/components/schemas/ReportDetailText
+        dn:
+          $ref: modules/reports.yaml#/components/schemas/ReportDetailText
+    ReportDetailActor:
+      description: >-
+        Who made the change. notRecorded: the directory does not hold it (spec rule 6). activediq: the change was made through activeDIQ, so the principal and the operation are known; operation is the handle of the operation.
+      oneOf:
+        - $ref: modules/reports.yaml#/components/schemas/ReportDetailActorNotRecorded
+        - $ref: modules/reports.yaml#/components/schemas/ReportDetailActorActiveDiq
+      discriminator:
+        propertyName: kind
+        mapping:
+          notRecorded: "#/components/schemas/ReportDetailActorNotRecorded"
+          activediq: "#/components/schemas/ReportDetailActorActiveDiq"
+    ReportDetailActorNotRecorded:
+      type: object
+      required: [kind]
+      additionalProperties: false
+      properties:
+        kind:
+          type: string
+          const: notRecorded
+    ReportDetailActorActiveDiq:
+      type: object
+      required: [kind, principal, operation]
+      additionalProperties: false
+      properties:
+        kind:
+          type: string
+          const: activediq
+        principal:
+          type: string
+          maxLength: 256
+        operation:
+          type: string
+          format: uuid
+    ReportDetailAttribute:
+      description: >-
+        One attribute the change touched, with its name, the originating time and the replication version where recorded, each unknown where not. Never a value.
+      type: object
+      required: [name, originAt, version]
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+          maxLength: 256
+        originAt:
+          $ref: modules/reports.yaml#/components/schemas/ReportDetailTime
+        version:
+          $ref: modules/reports.yaml#/components/schemas/ReportDetailInteger
+    ReportRowDetail:
+      description: >-
+        The detail of one change-history row, exactly one of five kinds. A client branches on kind and on nothing else.
+      oneOf:
+        - $ref: modules/reports.yaml#/components/schemas/ReportRowDetailEdited
+        - $ref: modules/reports.yaml#/components/schemas/ReportRowDetailMembership
+        - $ref: modules/reports.yaml#/components/schemas/ReportRowDetailCredential
+        - $ref: modules/reports.yaml#/components/schemas/ReportRowDetailPermissions
+        - $ref: modules/reports.yaml#/components/schemas/ReportRowDetailRemoved
+      discriminator:
+        propertyName: kind
+        mapping:
+          edited: "#/components/schemas/ReportRowDetailEdited"
+          membership: "#/components/schemas/ReportRowDetailMembership"
+          credential: "#/components/schemas/ReportRowDetailCredential"
+          permissions: "#/components/schemas/ReportRowDetailPermissions"
+          removed: "#/components/schemas/ReportRowDetailRemoved"
+    ReportRowDetailEdited:
+      description: >-
+        An edit (also a created, moved or renamed change, whose attributes are the ones it touched). attributes are names with originating time and version; valuesRecorded is always false (names only, old and new values are not recorded).
+      type: object
+      required: [kind, runId, rowKey, when, attributes, valuesRecorded, object, actor]
+      additionalProperties: false
+      properties:
+        kind:
+          type: string
+          const: edited
+        runId:
+          type: string
+          format: uuid
+        rowKey:
+          type: string
+          format: uuid
+        when:
+          $ref: modules/reports.yaml#/components/schemas/ReportDetailWhen
+        attributes:
+          type: array
+          maxItems: 256
+          items:
+            $ref: modules/reports.yaml#/components/schemas/ReportDetailAttribute
+        valuesRecorded:
+          type: boolean
+        object:
+          $ref: modules/reports.yaml#/components/schemas/ReportDetailObject
+        actor:
+          $ref: modules/reports.yaml#/components/schemas/ReportDetailActor
+    ReportRowDetailMembership:
+      description: >-
+        A membership change of a group. The four counts are totals over the whole change in the caller's scope or outside it; names is one page of the side asked for. A member outside the caller's scope is counted in
+        addedOutOfScope or removedOutOfScope and never named.
+      type: object
+      required: [kind, runId, rowKey, when, side, addedCount, removedCount, addedOutOfScope, removedOutOfScope, names, object, actor]
+      additionalProperties: false
+      properties:
+        kind:
+          type: string
+          const: membership
+        runId:
+          type: string
+          format: uuid
+        rowKey:
+          type: string
+          format: uuid
+        when:
+          $ref: modules/reports.yaml#/components/schemas/ReportDetailWhen
+        side:
+          $ref: modules/reports.yaml#/components/schemas/ReportMembershipSideValue
+        addedCount:
+          type: integer
+          minimum: 0
+          maximum: 9007199254740991
+        removedCount:
+          type: integer
+          minimum: 0
+          maximum: 9007199254740991
+        addedOutOfScope:
+          type: integer
+          minimum: 0
+          maximum: 9007199254740991
+        removedOutOfScope:
+          type: integer
+          minimum: 0
+          maximum: 9007199254740991
+        names:
+          $ref: modules/reports.yaml#/components/schemas/ReportMembershipNamePage
+        object:
+          $ref: modules/reports.yaml#/components/schemas/ReportDetailObject
+        actor:
+          $ref: modules/reports.yaml#/components/schemas/ReportDetailActor
+    ReportMembershipSide:
+      description: Which side of a membership change to page. A closed request enum.
+      type: string
+      enum: [added, removed]
+    ReportMembershipSideValue:
+      description: Which side of a membership change a page of names is.
+      type: string
+      x-activediq-enum: open
+      enum: [added, removed]
+    ReportMembershipNamePage:
+      description: One page of in-scope member names of one side of a membership change, by name then objectGUID, stable.
+      type: object
+      required: [items, page]
+      additionalProperties: false
+      properties:
+        items:
+          type: array
+          maxItems: 1000
+          items:
+            $ref: modules/reports.yaml#/components/schemas/ReportMembershipName
+        page:
+          $ref: shared/paging.yaml#/components/schemas/PageInfo
+    ReportMembershipName:
+      description: One member added or removed, addressed by objectGUID. The name is the one last observed.
+      type: object
+      required: [objectGuid, name]
+      additionalProperties: false
+      properties:
+        objectGuid:
+          type: string
+          format: uuid
+        name:
+          type: string
+          maxLength: 1024
+    ReportRowDetailCredential:
+      description: >-
+        A credential event: a password was changed or reset, recognised from replication metadata. It carries no value and no attribute list beyond the fact (spec rule 2).
+      type: object
+      required: [kind, runId, rowKey, when, object, actor]
+      additionalProperties: false
+      properties:
+        kind:
+          type: string
+          const: credential
+        runId:
+          type: string
+          format: uuid
+        rowKey:
+          type: string
+          format: uuid
+        when:
+          $ref: modules/reports.yaml#/components/schemas/ReportDetailWhen
+        object:
+          $ref: modules/reports.yaml#/components/schemas/ReportDetailObject
+        actor:
+          $ref: modules/reports.yaml#/components/schemas/ReportDetailActor
+    ReportRowDetailPermissions:
+      description: >-
+        A permissions change, recognised from the replication metadata of nTSecurityDescriptor. descriptorRead is always false: no descriptor was read or compared, so the change cannot be told from inheritance or SDProp
+        propagation (spec rule 2).
+      type: object
+      required: [kind, runId, rowKey, when, descriptorRead, object, actor]
+      additionalProperties: false
+      properties:
+        kind:
+          type: string
+          const: permissions
+        runId:
+          type: string
+          format: uuid
+        rowKey:
+          type: string
+          format: uuid
+        when:
+          $ref: modules/reports.yaml#/components/schemas/ReportDetailWhen
+        descriptorRead:
+          type: boolean
+        object:
+          $ref: modules/reports.yaml#/components/schemas/ReportDetailObject
+        actor:
+          $ref: modules/reports.yaml#/components/schemas/ReportDetailActor
+    ReportRestoreStateValue:
+      description: >-
+        What is known of a removed object. removed_restore_unknown: it left the feed, and whether it is a restorable tombstone, recycled or purged is not readable by the connection account and is never guessed from elapsed time.
+      type: string
+      x-activediq-enum: open
+      enum: [removed_restore_unknown]
+    ReportRestoreUnknownReasonValue:
+      description: >-
+        Why the restore status is unknown. deleted_objects_not_readable: the connection account is least-privilege and cannot read CN=Deleted Objects; noSuchObject there is not proof the tombstone expired (spec rule 7).
+      type: string
+      x-activediq-enum: open
+      enum: [deleted_objects_not_readable]
+    ReportRowDetailRemoved:
+      description: >-
+        A row of a Deleted preset. deletedAt is the time activeDIQ first observed the object gone and means on or before that time (onOrBefore is always true; no DC time is shown for a deletion that was not read).
+        object is as last seen by activeDIQ. state and restorableUntil are the restore-status fields; restorableUntil is always the typed unknown (a time is never shown, because the connection account cannot read it and elapsed time is no proof) with restoreUnknownReason saying why; a later read that can know it is an additive change. There is no restore link in this read.
+      type: object
+      required: [kind, runId, rowKey, when, deletedAt, onOrBefore, state, restorableUntil, restoreUnknownReason, object, actor]
+      additionalProperties: false
+      properties:
+        kind:
+          type: string
+          const: removed
+        runId:
+          type: string
+          format: uuid
+        rowKey:
+          type: string
+          format: uuid
+        when:
+          $ref: modules/reports.yaml#/components/schemas/ReportDetailWhen
+        deletedAt:
+          $ref: modules/reports.yaml#/components/schemas/ReportDetailTime
+        onOrBefore:
+          type: boolean
+        state:
+          $ref: modules/reports.yaml#/components/schemas/ReportRestoreStateValue
+        restorableUntil:
+          $ref: modules/reports.yaml#/components/schemas/ReportCellUnknown
+        restoreUnknownReason:
+          $ref: modules/reports.yaml#/components/schemas/ReportRestoreUnknownReasonValue
+        object:
+          $ref: modules/reports.yaml#/components/schemas/ReportDetailObject
+        actor:
+          $ref: modules/reports.yaml#/components/schemas/ReportDetailActor
+    ReportPolicyTargetPage:
+      description: >-
+        A page of the direct targets of one policy row. basis is always direct_targets: the list is what the policy is applied to, not the resultant set, and says nothing about which policy governs a given user. count is the
+        direct targets in the caller's scope, not the length of the page. policyName and kind repeat the policy row so the page stands alone.
+      type: object
+      required: [runId, policyId, policyName, kind, basis, count, targets, page]
+      additionalProperties: false
+      properties:
+        runId:
+          type: string
+          format: uuid
+        policyId:
+          type: string
+          format: uuid
+        policyName:
+          type: string
+          maxLength: 255
+        kind:
+          $ref: modules/reports.yaml#/components/schemas/ReportPolicyKindValue
+        basis:
+          $ref: modules/reports.yaml#/components/schemas/ReportPolicyTargetBasisValue
+        count:
+          type: integer
+          minimum: 0
+          maximum: 9007199254740991
+        targets:
+          type: array
+          maxItems: 1000
+          items:
+            $ref: modules/reports.yaml#/components/schemas/ReportPolicyTarget
+        page:
+          $ref: shared/paging.yaml#/components/schemas/PageInfo
+    ReportPolicyKindValue:
+      description: >-
+        What a policy row is. domain: the domain's own policy, the baseline. pso: a fine-grained policy.
+      type: string
+      x-activediq-enum: open
+      enum: [domain, pso]
+    ReportPolicyTargetBasisValue:
+      description: >-
+        What a list of policy targets is. direct_targets: the objects the policy is applied to; never the resultant set.
+      type: string
+      x-activediq-enum: open
+      enum: [direct_targets]
+    ReportPolicyTarget:
+      description: >-
+        One direct target of a policy: a user or a global security group, addressed by objectGUID. A group is one entry; its members are never listed here.
+      type: object
+      required: [objectGuid, name, targetClass, domain]
+      additionalProperties: false
+      properties:
+        objectGuid:
+          type: string
+          format: uuid
+        name:
+          type: string
+          maxLength: 256
+        targetClass:
+          $ref: modules/reports.yaml#/components/schemas/ReportPolicyTargetClassValue
+        domain:
+          type: string
+          maxLength: 255
+    ReportPolicyTargetClassValue:
+      description: >-
+        The kind of object a PSO is applied to.
+      type: string
+      x-activediq-enum: open
+      enum: [user, group]
     ReportExport:
       description: >-
         An export job and its stored file (DM-72.I3). When the run's result had expired, rerun is true, runId is the new run and rerunOfRunId the expired one; the file carries the new run's as_of.
@@ -3165,6 +4643,9 @@ components:
         - $ref: modules/reports.yaml#/components/schemas/ReportRecipientEmailView
       discriminator:
         propertyName: kind
+        mapping:
+          account: "#/components/schemas/ReportRecipientAccountView"
+          email: "#/components/schemas/ReportRecipientEmailView"
     ReportLastRun:
       description: >-
         The latest fire.

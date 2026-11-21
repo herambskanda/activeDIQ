@@ -2,6 +2,7 @@ package report_test
 
 import (
 	"errors"
+	"fmt"
 	"github.com/skenzeriq/activediq/internal/platform/authz"
 	"strings"
 	"testing"
@@ -158,9 +159,9 @@ func TestPerDCTermsAreSplitAndNeverMixed(t *testing.T) {
 
 func TestColumnAndComplexityLimits(t *testing.T) {
 	ds := usersDataset()
-	cols := make([]report.ColumnID, 65)
+	cols := make([]report.ColumnID, report.MaxQueryCols+1)
 	for i := range cols {
-		cols[i] = "name"
+		cols[i] = report.ColumnID(fmt.Sprintf("c%d", i))
 	}
 	_, err := report.Resolve(usersDef(), "all", report.RunParams{Columns: cols}, ds)
 	wantCode(t, err, report.CodeTooManyColumns)

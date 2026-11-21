@@ -106,9 +106,9 @@ func entry(attrs map[string][][]byte) *ad.Entry {
 	return ad.NewEntry("CN=Smith\\, Ann,OU=Ü,DC=lab,DC=test", attrs)
 }
 
-func start(t *testing.T, s read.Source) connectorv1.ConnectorClient {
+func start(t *testing.T, s read.Source, opts ...read.Option) connectorv1.ConnectorClient {
 	t.Helper()
-	h, err := read.New(s)
+	h, err := read.New(s, opts...)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -83,6 +83,9 @@ type Fixture struct {
 	Pins authority.Pins
 	// Actor is the initiator; the default is a human, "contract-human".
 	Actor authority.Chain
+	// FreshStepUp marks the submission as made after a fresh MFA, which an Action with
+	// Descriptor.StepUp requires before it plans.
+	FreshStepUp bool
 }
 
 // Violation is one clause an Action broke.
@@ -145,7 +148,7 @@ func check(t testing.TB, action operation.Action, fx Fixture) (Record, []Violati
 		actor = authority.Chain{Requester: authority.Principal{ID: "contract-human", Kind: authority.Human}}
 	}
 	res, runErr := r.RunStore(context.Background(), operation.Request{
-		Tenant: tenanttest.NewID(t), Actor: actor, Action: d.ID, Input: fx.Input, Pins: fx.Pins,
+		Tenant: tenanttest.NewID(t), Actor: actor, Action: d.ID, Input: fx.Input, Pins: fx.Pins, FreshStepUp: fx.FreshStepUp,
 		Operation: step.OperationID("contract-" + string(d.ID)),
 	})
 	rec.Steps = len(res.Steps)

@@ -1,0 +1,11 @@
+?   	github.com/skenzeriq/activediq/internal/connector	[no test files]
+ok  	github.com/skenzeriq/activediq/internal/connector/ad	0.575s
+ok  	github.com/skenzeriq/activediq/internal/connector/ad/gssapi	0.009s
+ok  	github.com/skenzeriq/activediq/internal/connector/graph	8.510s
+?   	github.com/skenzeriq/activediq/internal/connector/graph/graphtest	[no test files]
+?   	github.com/skenzeriq/activediq/internal/connector/labadmin	[no test files]
+ok  	github.com/skenzeriq/activediq/internal/connector/read	0.141s
+ok  	github.com/skenzeriq/activediq/internal/connector/rights	16.314s
+ok  	github.com/skenzeriq/activediq/internal/connector/tier0	36.181s
+ok  	github.com/skenzeriq/activediq/internal/connector/write	1.767s
+?   	github.com/skenzeriq/activediq/internal/connector/write/ops	[no test files]

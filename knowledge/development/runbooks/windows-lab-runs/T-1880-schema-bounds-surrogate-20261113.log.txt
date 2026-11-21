@@ -1,0 +1,49 @@
+with-dc1-lock: holding dc1 lock /tmp/claude-1000/activediq-dc1.lock (pid 1352062, waited 0s)
+go test -count=1 -v -tags 'lab windowslab' -run 'Test_windowslab_' ./internal/directory/sync/
+=== RUN   Test_windowslab_mapper_bounds_vs_schema_range_upper
+    schema_bounds_windows_lab_test.go:121: T1880-RANGEUPPER sAMAccountName windows=256 documented=256 single_valued=TRUE
+    schema_bounds_windows_lab_test.go:121: T1880-RANGEUPPER userPrincipalName windows=1024 documented=1024 single_valued=TRUE
+    schema_bounds_windows_lab_test.go:121: T1880-RANGEUPPER displayName windows=256 documented=256 single_valued=TRUE
+    schema_bounds_windows_lab_test.go:121: T1880-RANGEUPPER mail windows=256 documented=256 single_valued=TRUE
+    schema_bounds_windows_lab_test.go:121: T1880-RANGEUPPER company windows=64 documented=64 single_valued=TRUE
+    schema_bounds_windows_lab_test.go:121: T1880-RANGEUPPER description windows=1024 documented=1024 single_valued=FALSE
+    schema_bounds_windows_lab_test.go:121: T1880-RANGEUPPER dNSHostName windows=2048 documented=2048 single_valued=TRUE
+    schema_bounds_windows_lab_test.go:109: T1880-RANGEUPPER operatingSystem windows=absent documented=128
+    schema_bounds_windows_lab_test.go:109: T1880-RANGEUPPER operatingSystemVersion windows=absent documented=24
+--- PASS: Test_windowslab_mapper_bounds_vs_schema_range_upper (0.03s)
+=== RUN   Test_windowslab_unpaired_surrogate_hiding_path
+    schema_bounds_windows_lab_test.go:195: T1880-MAQ ms-DS-MachineAccountQuota=10
+    schema_bounds_windows_lab_test.go:229: T1880-CREATOR t1880creator created CN=T1880PC,CN=Computers,DC=win,DC=activediq,DC=test under MachineAccountQuota
+    schema_bounds_windows_lab_test.go:253: T1880-RESULT path=ldap-raw variant=lone_high_D800 attr=description write_err="" stored=true readback_hex=efbfbdefbfbd valid_utf8=true mapper_code=""
+    schema_bounds_windows_lab_test.go:253: T1880-RESULT path=ldap-raw variant=lone_high_D800 attr=displayName write_err="" stored=true readback_hex=efbfbdefbfbd valid_utf8=true mapper_code=""
+    schema_bounds_windows_lab_test.go:253: T1880-RESULT path=ldap-raw variant=lone_low_DC00 attr=description write_err="" stored=true readback_hex=efbfbdefbfbd valid_utf8=true mapper_code=""
+    schema_bounds_windows_lab_test.go:253: T1880-RESULT path=ldap-raw variant=lone_low_DC00 attr=displayName write_err="" stored=true readback_hex=efbfbdefbfbd valid_utf8=true mapper_code=""
+    schema_bounds_windows_lab_test.go:253: T1880-RESULT path=ldap-raw variant=valid_pair_D83D_DE00 attr=description write_err="" stored=true readback_hex=f09f9880 valid_utf8=true mapper_code=""
+    schema_bounds_windows_lab_test.go:253: T1880-RESULT path=ldap-raw variant=valid_pair_D83D_DE00 attr=displayName write_err="" stored=true readback_hex=f09f9880 valid_utf8=true mapper_code=""
+    schema_bounds_windows_lab_test.go:290: T1880-WRITER path=samr variant=lone_high_D800 err=<nil> out=Description ok
+        FullName ok
+    schema_bounds_windows_lab_test.go:253: T1880-RESULT path=samr variant=lone_high_D800 attr=description write_err="see T1880-WRITER" stored=true readback_hex=efbfbd valid_utf8=true mapper_code=""
+    schema_bounds_windows_lab_test.go:253: T1880-RESULT path=samr variant=lone_high_D800 attr=displayName write_err="see T1880-WRITER" stored=true readback_hex=efbfbd valid_utf8=true mapper_code=""
+    schema_bounds_windows_lab_test.go:290: T1880-WRITER path=samr variant=lone_low_DC00 err=<nil> out=Description ok
+        FullName ok
+    schema_bounds_windows_lab_test.go:253: T1880-RESULT path=samr variant=lone_low_DC00 attr=description write_err="see T1880-WRITER" stored=true readback_hex=efbfbd valid_utf8=true mapper_code=""
+    schema_bounds_windows_lab_test.go:253: T1880-RESULT path=samr variant=lone_low_DC00 attr=displayName write_err="see T1880-WRITER" stored=true readback_hex=efbfbd valid_utf8=true mapper_code=""
+    schema_bounds_windows_lab_test.go:290: T1880-WRITER path=samr variant=valid_pair_D83D_DE00 err=<nil> out=Description ok
+        FullName ok
+    schema_bounds_windows_lab_test.go:253: T1880-RESULT path=samr variant=valid_pair_D83D_DE00 attr=description write_err="see T1880-WRITER" stored=true readback_hex=f09f9880 valid_utf8=true mapper_code=""
+    schema_bounds_windows_lab_test.go:253: T1880-RESULT path=samr variant=valid_pair_D83D_DE00 attr=displayName write_err="see T1880-WRITER" stored=true readback_hex=f09f9880 valid_utf8=true mapper_code=""
+    schema_bounds_windows_lab_test.go:290: T1880-WRITER path=adsi-ldap variant=lone_high_D800 err=<nil> out=description ok
+        displayName ok
+    schema_bounds_windows_lab_test.go:253: T1880-RESULT path=adsi-ldap variant=lone_high_D800 attr=description write_err="see T1880-WRITER" stored=true readback_hex=efbfbd valid_utf8=true mapper_code=""
+    schema_bounds_windows_lab_test.go:253: T1880-RESULT path=adsi-ldap variant=lone_high_D800 attr=displayName write_err="see T1880-WRITER" stored=true readback_hex=efbfbd valid_utf8=true mapper_code=""
+    schema_bounds_windows_lab_test.go:290: T1880-WRITER path=adsi-ldap variant=lone_low_DC00 err=<nil> out=description ok
+        displayName ok
+    schema_bounds_windows_lab_test.go:253: T1880-RESULT path=adsi-ldap variant=lone_low_DC00 attr=description write_err="see T1880-WRITER" stored=true readback_hex=efbfbd valid_utf8=true mapper_code=""
+    schema_bounds_windows_lab_test.go:253: T1880-RESULT path=adsi-ldap variant=lone_low_DC00 attr=displayName write_err="see T1880-WRITER" stored=true readback_hex=efbfbd valid_utf8=true mapper_code=""
+    schema_bounds_windows_lab_test.go:290: T1880-WRITER path=adsi-ldap variant=valid_pair_D83D_DE00 err=<nil> out=description ok
+        displayName ok
+    schema_bounds_windows_lab_test.go:253: T1880-RESULT path=adsi-ldap variant=valid_pair_D83D_DE00 attr=description write_err="see T1880-WRITER" stored=true readback_hex=f09f9880 valid_utf8=true mapper_code=""
+    schema_bounds_windows_lab_test.go:253: T1880-RESULT path=adsi-ldap variant=valid_pair_D83D_DE00 attr=displayName write_err="see T1880-WRITER" stored=true readback_hex=f09f9880 valid_utf8=true mapper_code=""
+--- PASS: Test_windowslab_unpaired_surrogate_hiding_path (9.30s)
+PASS
+ok  	github.com/skenzeriq/activediq/internal/directory/sync	9.356s

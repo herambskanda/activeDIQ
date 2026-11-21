@@ -4,12 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/skenzeriq/activediq/internal/directory/client"
 	"log/slog"
 	"time"
 
 	"google.golang.org/grpc/codes"
 
-	"github.com/skenzeriq/activediq/internal/directory/client"
 	"github.com/skenzeriq/activediq/internal/directory/connection"
 	"github.com/skenzeriq/activediq/internal/directory/inventory"
 	"github.com/skenzeriq/activediq/internal/platform/jobs"
@@ -149,6 +149,15 @@ type RefusalKey struct {
 	Code Code
 }
 
+// MaxRefusedEntries bounds DomainReport.RefusedEntries.
+const MaxRefusedEntries = 1000
+
+// RefusedEntry is one entry refused as malformed: who and why, never what.
+type RefusedEntry struct {
+	Object inventory.GUID
+	RefusalKey
+}
+
 // DomainReport is what the engine did for one managed domain.
 type DomainReport struct {
 	NC inventory.GUID
@@ -160,6 +169,11 @@ type DomainReport struct {
 	// Refused how many were refused as malformed and skipped (RefusedBy has the breakdown).
 	Entries, Mapped, Refused int
 	RefusedBy                map[RefusalKey]int
+	// RefusedEntries identifies the refused entries by objectGUID and reason (no value), so an object that
+	// does not reach the inventory is named, not only counted. It holds at most MaxRefusedEntries; the rest
+	// are in RefusedOmitted. Object is empty when the entry's own GUID was the malformed part.
+	RefusedEntries []RefusedEntry
+	RefusedOmitted int
 	// Batches is how many ingest transactions committed.
 	Batches                  int
 	Inserted, Updated, Stale int
@@ -168,12 +182,19 @@ type DomainReport struct {
 	// objects (a parent the search did not deliver, a cycle, a chain past the store's bound): the store keeps
 	// them with ancestry_complete false, which is out of every delegated scope.
 	AncestryUnresolved int
-	// GroupsPartial counts groups whose member list was not complete (a ranged value: the search never
-	// follows ranges) and MembersUnresolved the member values that named no object GUID. Their edges are
+	// GroupsPartial counts groups whose member list was not complete (a ranged value the Read follow-up could
+	// not finish: truncated, out of order or no terminal range) and MembersUnresolved the member values that named no object GUID. Their edges are
 	// added but no edge is removed on their account.
 	GroupsPartial, MembersUnresolved int
+	// GroupsCompleted counts groups whose ranged member list the engine finished with Read after the search
+	// delivered only its first range; they are complete and not counted in GroupsPartial.
+	GroupsCompleted int
 	// PrimaryGroupUnresolved counts principals whose primaryGroupID named no group of the domain.
 	PrimaryGroupUnresolved int
+	// PasswordChange counts, per outcome, the users whose Cannot Change Password state was read: the
+	// state name (sd.PasswordChange.String()) or "not_confirmed.<cause>" with a fixed cause. Every user
+	// of the domain is in exactly one bucket (T-1551).
+	PasswordChange map[string]int
 }
 
 // Report is the outcome of FullCycle: one entry per managed domain, in the order they were offered.
@@ -190,6 +211,14 @@ type Engine struct {
 	Source   ConnectorSource
 	Ingester Ingest
 	Cursors  Cursors
+	// Reconciler is the write side of Reconcile; Reconcile needs it, FullCycle does not.
+	Reconciler Reconciler
+	// Feed, Applier, FeedCursors and Passes are what IncrementalCycle needs on top of the above; FullCycle
+	// and Reconcile do not.
+	Feed        Feed
+	Applier     *Applier
+	FeedCursors FeedCursors
+	Passes      PassMarker
 	// Clock is the time source; nil is time.Now.
 	Clock func() time.Time
 	// Log receives one summary line per domain: counts and fixed codes, never a directory value. Nil

@@ -46,6 +46,8 @@ type searchRec struct {
 	filter   *connectorv1.Filter
 	nc       string
 	prescan  bool
+	// listing is a reconcile listing: the objectGUID alone.
+	listing bool
 }
 
 // fakeConnector is a connector client that serves a fake forest through Describe and ScopedSearch and records
@@ -61,9 +63,21 @@ type fakeConnector struct {
 	// Faults, applied to the main pass of the named domain (the one asking for more than two attributes).
 	cutAfter map[string]int // end the stream after n entries with no completion marker
 	errAfter map[string]int // fail the stream after n entries with an error whose message holds a value
+	// The same two faults for the reconcile listing of the named domain.
+	listCut map[string]int
+	listErr map[string]int
+
+	// readTruncate makes Read report member as cut off at the cap; memberReads records each member Read call.
+	readTruncate bool
+	memberReads  []readRec
 
 	searches []searchRec
 	describe int
+	// reads are the per-object Read requests (the password-change verdicts); pwStates and pwFaults
+	// shape the answer per object GUID text.
+	reads    []*connectorv1.ReadRequest
+	pwStates map[string]connectorv1.PasswordChangeState
+	pwFaults map[string]pwFault
 	// onEntries is called for every batch the fake sends (the memory test samples the heap there).
 	onBatch func()
 }
@@ -72,7 +86,7 @@ const leakSentinel = "SENTINEL-CN=secret,OU=hidden,DC=leak"
 
 func newFake(doms ...*fdom) *fakeConnector {
 	f := &fakeConnector{doms: map[string]*fdom{}, extraNCs: map[string]connectorv1.NamingContextKind{},
-		cutAfter: map[string]int{}, errAfter: map[string]int{}, maxPage: 1000, dsa: 0xd5a}
+		cutAfter: map[string]int{}, errAfter: map[string]int{}, listCut: map[string]int{}, listErr: map[string]int{}, maxPage: 1000, dsa: 0xd5a}
 	for _, d := range doms {
 		f.doms[gtext(d.nc)] = d
 	}
@@ -116,7 +130,8 @@ func (f *fakeConnector) ScopedSearch(_ context.Context, req *connectorv1.ScopedS
 	if p := req.GetDc().GetPinnedDsaGuid(); p != nil {
 		rec.pin = textOfWire(p)
 	}
-	rec.prescan = len(rec.attrs) <= 2
+	rec.listing = len(rec.attrs) == 1 && strings.EqualFold(rec.attrs[0], "objectGUID")
+	rec.prescan = len(rec.attrs) <= 2 && !rec.listing
 	f.mu.Lock()
 	f.searches = append(f.searches, rec)
 	f.mu.Unlock()
@@ -132,7 +147,15 @@ func (f *fakeConnector) ScopedSearch(_ context.Context, req *connectorv1.ScopedS
 	for _, a := range rec.attrs {
 		s.want[strings.ToLower(a)] = true
 	}
-	if !rec.prescan {
+	if rec.listing {
+		if n, ok := f.listCut[rec.nc]; ok {
+			s.limit, s.mode = n, "cut"
+		}
+		if n, ok := f.listErr[rec.nc]; ok {
+			s.limit, s.mode = n, "err"
+		}
+	}
+	if !rec.prescan && !rec.listing {
 		if n, ok := f.cutAfter[rec.nc]; ok {
 			s.limit, s.mode = n, "cut"
 		}
@@ -233,11 +256,13 @@ func (s *fstream) entry(n fnode) *connectorv1.DirectoryEntry {
 		}
 	}
 	if s.want["member"] && len(n.members) > 0 {
-		vs := make([]*connectorv1.AttributeValue, len(n.members))
-		for i, m := range n.members {
-			vs[i] = dnv(fmt.Sprintf("CN=m%d,DC=x", m), gid(m))
+		vs := memberValues(n.members)
+		if len(vs) > rangeWindow { // the DC answers member;range=0-1499 and the search never follows it
+			as = append(as, &connectorv1.Attribute{Name: "member", Values: vs[:rangeWindow],
+				Range: &connectorv1.ValueRange{Start: 0, End: rangeWindow - 1}})
+		} else {
+			as = as.with("member", vs...)
 		}
-		as = as.with("member", vs...)
 	}
 	var parent *connectorv1.Guid
 	if n.parent != 0 {
@@ -245,3 +270,130 @@ func (s *fstream) entry(n fnode) *connectorv1.DirectoryEntry {
 	}
 	return entry(n.n, n.dn, parent, as)
 }
+
+const rangeWindow = 1500
+
+// readRec is what one Read call asked.
+type readRec struct {
+	guid  string
+	attrs []string
+	pin   string
+	max   uint32
+}
+
+func memberValues(ms []uint64) []*connectorv1.AttributeValue {
+	vs := make([]*connectorv1.AttributeValue, len(ms))
+	for i, m := range ms {
+		vs[i] = dnv(fmt.Sprintf("CN=m%d,DC=x", m), gid(m))
+	}
+	return vs
+}
+
+// readMembers serves one object's member attribute the way the connector does: the first window in the header
+// (complete = false when more follow) and the rest as ValueChunk messages ending in a terminal range.
+func (f *fakeConnector) readMembers(_ context.Context, req *connectorv1.ReadRequest, _ ...grpc.CallOption) (grpc.ServerStreamingClient[connectorv1.ReadResponse], error) {
+	f.mu.Lock()
+	f.memberReads = append(f.memberReads, readRec{guid: textOfWire(req.GetGuid()), attrs: req.GetAttributes(), pin: textOfWire(req.GetDc().GetPinnedDsaGuid()), max: req.GetMaxValuesPerAttribute()})
+	f.mu.Unlock()
+	var n *fnode
+	for _, d := range f.doms {
+		for i := 0; i < d.count; i++ {
+			if x := d.at(i); textOfWire(req.GetGuid()) == gtext(x.n) {
+				n = &x
+			}
+		}
+	}
+	if n == nil {
+		return nil, status.Error(codes.NotFound, "no such object")
+	}
+	vs := memberValues(n.members)
+	hdr := &connectorv1.DirectoryEntry{ObjectGuid: req.GetGuid()}
+	var out []*connectorv1.ReadResponse
+	if len(vs) > 0 {
+		at := &connectorv1.Attribute{Name: "member", Values: vs, Complete: true}
+		if len(vs) > rangeWindow {
+			at.Values, at.Complete = vs[:rangeWindow], false
+			at.Range = &connectorv1.ValueRange{Start: 0, End: rangeWindow - 1}
+		}
+		hdr.Attributes = []*connectorv1.Attribute{at}
+	}
+	out = append(out, &connectorv1.ReadResponse{Event: &connectorv1.ReadResponse_Header{Header: &connectorv1.ReadHeader{Entry: hdr}}})
+	for st := rangeWindow; st < len(vs); st += rangeWindow {
+		end := min(st+rangeWindow, len(vs))
+		out = append(out, &connectorv1.ReadResponse{Event: &connectorv1.ReadResponse_Chunk{Chunk: &connectorv1.ValueChunk{
+			Attribute: "member", Values: vs[st:end], Range: &connectorv1.ValueRange{Start: uint32(st), End: uint32(end - 1), Terminal: end == len(vs)}}}})
+	}
+	done := &connectorv1.ReadCompleted{}
+	if f.readTruncate {
+		done.TruncatedAttributes = []string{"member"}
+	}
+	out = append(out, &connectorv1.ReadResponse{Event: &connectorv1.ReadResponse_Completed{Completed: done}})
+	return &readStream{msgs: out}, nil
+}
+
+// pwFault is how the fake answers the include_password_change Read of one object.
+type pwFault string
+
+const (
+	pwErr       pwFault = "err"        // the call fails with a status whose message holds a value
+	pwMismatch  pwFault = "mismatch"   // a verdict naming another object
+	pwNoVerdict pwFault = "no_verdict" // a header without the verdict
+	pwCoded     pwFault = "coded"      // NOT_CONFIRMED with an error code
+	pwNoGUID    pwFault = "no_guid"    // a definite state with no object GUID
+)
+
+// Read serves the per-object read that carries the Cannot Change Password verdict. Without a fault the
+// object is NO_DENY_ACE unless pwStates names another state.
+func (f *fakeConnector) Read(_ context.Context, req *connectorv1.ReadRequest, _ ...grpc.CallOption) (grpc.ServerStreamingClient[connectorv1.ReadResponse], error) {
+	if !req.GetIncludePasswordChange() {
+		return f.readMembers(context.Background(), req)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.reads) < 10_000 { // the memory test reads 100k users: the fake must not be what grows
+		f.reads = append(f.reads, req)
+	}
+	id := textOfWire(req.GetGuid())
+	hdr := &connectorv1.ReadHeader{}
+	if req.GetIncludePasswordChange() {
+		st := connectorv1.PasswordChangeState_PASSWORD_CHANGE_STATE_NO_DENY_ACE
+		if s, ok := f.pwStates[id]; ok {
+			st = s
+		}
+		v := &connectorv1.PasswordChangeVerdict{State: st, ObjectGuid: req.GetGuid()}
+		switch f.pwFaults[id] {
+		case pwErr:
+			return nil, status.Error(codes.Unavailable, "dc down: "+leakSentinel)
+		case pwMismatch:
+			v.ObjectGuid = gid(0xbad)
+		case pwNoVerdict:
+			v = nil
+		case pwCoded:
+			v = &connectorv1.PasswordChangeVerdict{State: connectorv1.PasswordChangeState_PASSWORD_CHANGE_STATE_NOT_CONFIRMED,
+				ErrorCode: connectorv1.ErrorCode_ERROR_CODE_INSUFFICIENT_RIGHTS}
+		case pwNoGUID:
+			v.ObjectGuid = nil
+		}
+		hdr.PasswordChange = v
+	}
+	return &readStream{msgs: []*connectorv1.ReadResponse{
+		{Event: &connectorv1.ReadResponse_Header{Header: hdr}},
+		{Event: &connectorv1.ReadResponse_Completed{Completed: &connectorv1.ReadCompleted{}}},
+	}}, nil
+}
+
+type readStream struct {
+	grpc.ClientStream
+	msgs []*connectorv1.ReadResponse
+}
+
+func (s *readStream) Recv() (*connectorv1.ReadResponse, error) {
+	if len(s.msgs) == 0 {
+		return nil, io.EOF
+	}
+	m := s.msgs[0]
+	s.msgs = s.msgs[1:]
+	return m, nil
+}
+
+func (s *readStream) CloseSend() error { return nil }

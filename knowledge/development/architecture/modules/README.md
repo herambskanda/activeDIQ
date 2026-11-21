@@ -12,10 +12,11 @@ binding_sources: ADR-0003 (ratified), blueprint v0 (review)
 # Module pages
 
 Every server module `internal/modules/<id>/` and every agent module `internal/agentmodules/<id>/`
-has one page here, `<id>.md`. Every page here has a module. `fitness-modules` **M3** fails the
+has one page here, `<id>.md`. Every page here has a module. `fitness-modules` **M3a** (ADR-0015 D3; the first cut of M3) fails the
 build on either mismatch
 ([ADR-0003](../../decisions/0003-module-system-extension-points-only-on-ramp.md) rule 3), so the
-map cannot lag the tree. This `README.md` is the index and the template. It is not a module page,
+map cannot lag the tree. Gaps that predate M3a are listed in `tools/fitness/modules/m3a-baseline.txt`, which fails when a
+line goes stale, so each page written deletes its line. This `README.md` is the index and the template. It is not a module page,
 and M3 ignores it (`README` cannot match the module-ID pattern `^[a-z][a-z0-9]{1,30}$`).
 
 **Who writes a page.** The ticket that creates the module writes its page in the same change. Every
@@ -35,9 +36,11 @@ and the agent modules in §5.5. Add a row here when a page is created.
 
 | Module | Tier | Owner | Page | Spec |
 | --- | --- | --- | --- | --- |
+| `ad` | server | backend-engineer | [ad.md](ad.md) | [connector-contract §8.10](../connector-contract.md) |
 | `agentfleet` | server | backend-engineer | [agentfleet.md](agentfleet.md) | [agent-host-addc-contract](../agent-host-addc-contract.md) |
 | `notify` | server | backend-engineer | [notify.md](notify.md) | [reports-2a](../../../product/specs/reports-2a.md) |
-| `objects` | server | backend-engineer | [objects.md](objects.md) (library package; Module registration is T-1631) | domain-model DM-50, DM-51 |
+| `migration` | server | backend-engineer | [migration.md](migration.md) | [e2-11](../../../product/specs/e2-11-migration-importer.md) |
+| `objects` | server | backend-engineer | [objects.md](objects.md) (library package; owns no directory-writing Action, ADR-0015 D2; Module registration is an ADR-0015 follow-up) | domain-model DM-50, DM-51 |
 | `reports` | server | reporting-engineer | [reports.md](reports.md) (contract ahead of the module, T-0865) | [reports-2a](../../../product/specs/reports-2a.md) |
 
 ## Template

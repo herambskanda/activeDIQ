@@ -222,6 +222,9 @@ type EpochState struct {
 	known    bool // an epoch completed (or an entry was appended) since this process started
 	verifyID string
 	reported map[entryKey]ReportedEntry
+	// tokens is the TokenSet of the newest clean check of the current epoch (T-1741); nil when the
+	// epoch's run was not clean, no run completed since the process started, or the last Complete failed.
+	tokens *TokenSet
 }
 
 // NewEpochState returns the state for one connection and credential. now may be nil.
@@ -283,8 +286,31 @@ func (s *EpochState) snapshot() *Baseline {
 // new epoch. It returns the number of dropped entries. Any failed write returns ErrLocalRecordFailed
 // and leaves the reported set as it was.
 func (s *EpochState) Complete(ctx context.Context, verificationID string, inputs []ReportedEntry) (int, error) {
+	return s.CompleteWithTokens(ctx, verificationID, inputs, nil)
+}
+
+// TokenSet returns the access-token SID set of the newest clean rights check of the current
+// verification epoch (contract §5.9.4). ok is false when the epoch's run did not pass, when no run
+// has completed since this process started (the set is held in memory only, like the gate), or when
+// the last attempt to start an epoch failed. The returned set is a copy.
+func (s *EpochState) TokenSet() (TokenSet, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	// The epoch is the verification_id of the run; a set recorded for any other id is stale.
+	if s.tokens == nil || s.tokens.Epoch != s.verifyID || !s.known {
+		return TokenSet{}, false
+	}
+	return s.tokens.Clone(), true
+}
+
+// CompleteWithTokens is Complete that also records the run's token set when the run was clean. A nil
+// tokens (a run that did not pass) starts the epoch with no set, so the accessor answers ok=false until
+// the next clean run. The old set is dropped before anything is written, so a failed Complete never
+// leaves the previous epoch's set readable.
+func (s *EpochState) CompleteWithTokens(ctx context.Context, verificationID string, inputs []ReportedEntry, tokens *TokenSet) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.tokens = nil
 
 	prev := s.reported
 	prevID := s.verifyID
@@ -353,5 +379,10 @@ func (s *EpochState) Complete(ctx context.Context, verificationID string, inputs
 		return 0, ErrLocalRecordFailed
 	}
 	s.reported, s.verifyID, s.known = next, verificationID, true
+	if tokens != nil {
+		t := tokens.Clone()
+		t.Epoch = verificationID
+		s.tokens = &t
+	}
 	return len(dropped), nil
 }

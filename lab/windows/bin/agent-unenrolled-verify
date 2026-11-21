@@ -25,6 +25,11 @@ Runbook: knowledge/development/runbooks/windows-lab.md section 17.
 import argparse, datetime, hashlib, os, random, re, socket, subprocess, sys, tempfile, threading, time
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+sys.path.insert(0, os.path.join(REPO, "lab", "windows", "lib"))
+from labaddr import require_dc_addr  # noqa: E402
+
+# No default DC address (T-1279): fail before the dc1 lock, the build and any connection.
+require_dc_addr("agent-unenrolled-verify", REPO)
 if not os.environ.get("DIQ_DC1_LOCK_HELD"):
     os.execv(os.path.join(REPO, "lab", "windows", "bin", "with-dc1-lock"),
              ["with-dc1-lock", "--", sys.executable, os.path.abspath(__file__), *sys.argv[1:]])
@@ -159,7 +164,6 @@ if(-not (Test-Path C:\\lab\\tools\\dotnet\\dotnet.exe)){{
  & C:\\lab\\tools\\dotnet-install.ps1 -Channel 8.0 -InstallDir C:\\lab\\tools\\dotnet | Out-Null }}
 $env:DOTNET_ROOT='C:\\lab\\tools\\dotnet'; $env:DOTNET_CLI_TELEMETRY_OPTOUT=1
 if(-not (Test-Path C:\\lab\\tools\\wix\\wix.exe)){{ & C:\\lab\\tools\\dotnet\\dotnet.exe tool install wix --version {WIX} --tool-path C:\\lab\\tools\\wix | Out-Null }}
-& C:\\lab\\tools\\wix\\wix.exe extension add -g WixToolset.Util.wixext/{WIX} 2>&1 | Out-Null
 'wix ' + (& C:\\lab\\tools\\wix\\wix.exe --version)""")
     say(out.strip())
     dc.put(os.path.join(work, "activediq-agent.exe"), B + "\\activediq-agent.exe")
@@ -171,7 +175,7 @@ if(-not (Test-Path C:\\lab\\tools\\wix\\wix.exe)){{ & C:\\lab\\tools\\dotnet\\do
     build = lambda wxs, msi, extra="": dc.ps(f"""
 Remove-Item {B}\\{msi} -ErrorAction SilentlyContinue
 $env:DOTNET_ROOT='C:\\lab\\tools\\dotnet'; $env:PATH='C:\\lab\\tools\\dotnet;'+$env:PATH; cd {B}
-$o = (& C:\\lab\\tools\\wix\\wix.exe build {wxs} -ext WixToolset.Util.wixext -d Version={a.version} -d AgentExe={B}\\activediq-agent.exe -d SetupExe={B}\\agentsetup.exe -arch x64 {extra} -o {msi} 2>&1 | Out-String)
+$o = (& C:\\lab\\tools\\wix\\wix.exe build {wxs} -d Version={a.version} -d AgentExe={B}\\activediq-agent.exe -d SetupExe={B}\\agentsetup.exe -arch x64 {extra} -o {msi} 2>&1 | Out-String)
 $o; "wix exit=$LASTEXITCODE"; "msi exists=" + (Test-Path {msi}); if (Test-Path {msi}) {{ "msi sha256 " + (Get-FileHash {msi}).Hash }}""")
 
     say("\n== AC1: wix build -wx -sw1149 ==")
