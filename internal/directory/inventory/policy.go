@@ -2,6 +2,7 @@ package inventory
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -118,8 +119,12 @@ func (w PolicyWriter) SetPSO(ctx context.Context, tx store.Tx, connection Connec
 	if err != nil {
 		return err
 	}
-	_, err = tx.Exec(ctx, `INSERT INTO public.inventory_psos AS d (tenant_id, connection_id, pso_guid, nc_guid, precedence, max_pwd_age_secs, lockout_duration_secs, observed_at)
-		VALUES (NULLIF(current_setting('app.tenant_id', true), '')::uuid, $1::uuid, $2::uuid, $3::uuid, $4::bigint, $5::bigint, $6::bigint, $7)
+	// A new PSO row starts its counter at the edges already stored for it (edges may arrive before the values;
+	// there are at most psoAppliesPerPSO of them).
+	_, err = tx.Exec(ctx, `INSERT INTO public.inventory_psos AS d (tenant_id, connection_id, pso_guid, nc_guid, precedence, max_pwd_age_secs, lockout_duration_secs, observed_at, applies_count)
+		VALUES (NULLIF(current_setting('app.tenant_id', true), '')::uuid, $1::uuid, $2::uuid, $3::uuid, $4::bigint, $5::bigint, $6::bigint, $7,
+			(SELECT count(*) FROM public.inventory_pso_applies a WHERE a.tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid
+				AND a.connection_id = $1::uuid AND a.pso_guid = $2::uuid AND a.state = 'active'))
 		ON CONFLICT (tenant_id, connection_id, pso_guid) DO UPDATE SET nc_guid = EXCLUDED.nc_guid, precedence = EXCLUDED.precedence,
 			max_pwd_age_secs = EXCLUDED.max_pwd_age_secs, lockout_duration_secs = EXCLUDED.lockout_duration_secs, observed_at = EXCLUDED.observed_at
 		WHERE d.observed_at <= EXCLUDED.observed_at`,
@@ -140,6 +145,22 @@ func (w PolicyWriter) RemovePSOApplies(ctx context.Context, tx store.Tx, connect
 	return w.applies(ctx, tx, connection, pso, target, "removed", observed)
 }
 
+// Row budget of inventory_pso_applies (TM-D32). A PSO is normally written by a Domain Admin, but a delegate
+// with write on one PSO chooses how many msDS-PSOAppliesTo values it holds. The caps are constants, not
+// settings the directory can reach: past either, further active edges are not stored and the PSO is marked
+// applies_over_budget, which the users dataset reads as Unknown for the PSO's naming context. The cycle
+// commits.
+const (
+	psoAppliesPerPSO  = 10_000
+	psoAppliesPerConn = 100_000
+)
+
+var psoApplies = struct{ perPSO, perConn int }{psoAppliesPerPSO, psoAppliesPerConn}
+
+// ErrPSONotStored: an msDS-PSOAppliesTo edge past the budget arrived for a PSO whose values were not stored
+// yet, so there is no row to carry the over-budget marker. Call SetPSO before the PSO's edges.
+var ErrPSONotStored = errors.New("inventory: PSO values must be stored before an edge past the applies budget")
+
 func (w PolicyWriter) applies(ctx context.Context, tx store.Tx, connection ConnectionID, pso, target GUID, state string, observed time.Time) error {
 	if err := w.check(ctx, tx, connection, pso, target); err != nil {
 		return err
@@ -147,13 +168,88 @@ func (w PolicyWriter) applies(ctx context.Context, tx store.Tx, connection Conne
 	if observed.IsZero() {
 		return ErrInvalid
 	}
-	_, err := tx.Exec(ctx, `INSERT INTO public.inventory_pso_applies AS d (tenant_id, connection_id, pso_guid, target_guid, state, observed_at)
+	var (
+		stored  *int
+		perConn int
+		prev    string
+	)
+	if err := tx.QueryRow(ctx, `SELECT (SELECT p.applies_count FROM public.inventory_psos p WHERE p.tenant_id = t.id AND p.connection_id = $1::uuid AND p.pso_guid = $2::uuid),
+			(SELECT COALESCE(sum(p.applies_count), 0) FROM public.inventory_psos p WHERE p.tenant_id = t.id AND p.connection_id = $1::uuid),
+			COALESCE((SELECT a.state FROM public.inventory_pso_applies a WHERE a.tenant_id = t.id AND a.connection_id = $1::uuid
+				AND a.pso_guid = $2::uuid AND a.target_guid = $3::uuid), '')
+		FROM (SELECT NULLIF(current_setting('app.tenant_id', true), '')::uuid AS id) t`,
+		string(connection), string(pso), string(target)).Scan(&stored, &perConn, &prev); err != nil {
+		return writeErr("read pso applies budget", err)
+	}
+	newActive := state == "active" && prev != "active"
+	if newActive {
+		var count int
+		if stored != nil {
+			count = *stored
+		} else if err := tx.QueryRow(ctx, `SELECT count(*) FROM (SELECT 1 FROM public.inventory_pso_applies a
+			WHERE a.tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid AND a.connection_id = $1::uuid
+			AND a.pso_guid = $2::uuid AND a.state = 'active' LIMIT $3) s`, string(connection), string(pso), psoApplies.perPSO).Scan(&count); err != nil {
+			return writeErr("count pso applies", err)
+		}
+		if count >= psoApplies.perPSO || perConn >= psoApplies.perConn {
+			if stored == nil {
+				return ErrPSONotStored
+			}
+			return markAppliesOver(ctx, tx, connection, pso, true)
+		}
+	}
+	err := tx.QueryRow(ctx, `INSERT INTO public.inventory_pso_applies AS d (tenant_id, connection_id, pso_guid, target_guid, state, observed_at)
 		VALUES (NULLIF(current_setting('app.tenant_id', true), '')::uuid, $1::uuid, $2::uuid, $3::uuid, $5, $4)
 		ON CONFLICT (tenant_id, connection_id, pso_guid, target_guid) DO UPDATE SET state = EXCLUDED.state, observed_at = EXCLUDED.observed_at
-		WHERE d.observed_at <= EXCLUDED.observed_at`,
-		string(connection), string(pso), string(target), observed.UTC(), state)
+		WHERE d.observed_at <= EXCLUDED.observed_at RETURNING 1`,
+		string(connection), string(pso), string(target), observed.UTC(), state).Scan(new(int))
+	if store.IsNoRows(err) {
+		return nil // an older observation than the stored one: nothing changed
+	}
 	if err != nil {
 		return writeErr("set pso applies", err)
+	}
+	delta := 0
+	if newActive {
+		delta = 1
+	} else if state == "removed" && prev == "active" {
+		delta = -1
+	}
+	if delta != 0 {
+		if _, err := tx.Exec(ctx, `UPDATE public.inventory_psos SET applies_count = applies_count + $3
+			WHERE tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid AND connection_id = $1::uuid AND pso_guid = $2::uuid`,
+			string(connection), string(pso), delta); err != nil {
+			return writeErr("count pso applies", err)
+		}
+	}
+	return nil
+}
+
+// SetPSOAppliesRead tells the writer how many msDS-PSOAppliesTo values the directory holds for pso right now.
+// The marker is set when that number is over the per-PSO cap, or when it differs from the edges stored (an
+// edge refused by either cap is never sent again by a delta read, so the store stays short). It clears only
+// when the directory count is under the cap and equals what is stored, so the stored set is complete. A PSO
+// that is not stored is ignored (its values are Unknown already).
+func (w PolicyWriter) SetPSOAppliesRead(ctx context.Context, tx store.Tx, connection ConnectionID, pso GUID, values int) error {
+	if err := w.check(ctx, tx, connection, pso); err != nil {
+		return err
+	}
+	if values < 0 {
+		return ErrInvalid
+	}
+	if _, err := tx.Exec(ctx, `UPDATE public.inventory_psos SET applies_over_budget = ($3::int > $4::int OR $3::int <> applies_count)
+		WHERE tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid AND connection_id = $1::uuid AND pso_guid = $2::uuid
+		AND applies_over_budget <> ($3::int > $4::int OR $3::int <> applies_count)`, string(connection), string(pso), values, psoApplies.perPSO); err != nil {
+		return writeErr("mark pso applies over budget", err)
+	}
+	return nil
+}
+
+func markAppliesOver(ctx context.Context, tx store.Tx, connection ConnectionID, pso GUID, over bool) error {
+	if _, err := tx.Exec(ctx, `UPDATE public.inventory_psos SET applies_over_budget = $3
+		WHERE tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid AND connection_id = $1::uuid AND pso_guid = $2::uuid
+		AND applies_over_budget <> $3`, string(connection), string(pso), over); err != nil {
+		return writeErr("mark pso applies over budget", err)
 	}
 	return nil
 }

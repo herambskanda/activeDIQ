@@ -174,9 +174,25 @@ type labRig struct {
 	helpdsk                   string
 	admin                     *labadmin.Admin
 	plainDN                   string
+	sess                      *ad.Session
+	prov                      *write.ADProvider
+	conns                     *connection.Registry
+	jr                        *jobs.Registry
+	le                        *testlab.Env
 }
 
-func newLabRig(t *testing.T, s *storetest.Server) *labRig {
+// labParts is what a rig variant's action builder sees of the rig being built.
+type labParts struct {
+	conn, nc string
+	sess     *ad.Session
+	prov     *write.ADProvider
+	reads    client.Reads
+}
+
+func newLabRig(t *testing.T, s *storetest.Server) *labRig { return newLabRigWith(t, s, nil) }
+
+// newLabRigWith builds the rig; actions, when set, replaces the stand-in reset Action with the real ones.
+func newLabRigWith(t *testing.T, s *storetest.Server, actions func(*testing.T, labParts) []operation.Action) *labRig {
 	t.Helper()
 	{
 		le := testlab.Load(t)
@@ -255,7 +271,11 @@ func newLabRig(t *testing.T, s *storetest.Server) *labRig {
 		if err := e.db.WithTenant(ctx, e.ten, func(ctx context.Context, tx store.Tx) error { return cp.InitTenant(ctx, tx, e.ten) }); err != nil {
 			t.Fatal(err)
 		}
-		actions, err := operation.NewRegistry(resetAction(t, e.ad, nc))
+		acts := []operation.Action{resetAction(t, e.ad, nc)}
+		if actions != nil {
+			acts = actions(t, labParts{conn: e.ad, nc: nc, sess: sess, prov: prov, reads: reads})
+		}
+		areg, err := operation.NewRegistry(acts...)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -263,7 +283,8 @@ func newLabRig(t *testing.T, s *storetest.Server) *labRig {
 		if err != nil {
 			t.Fatal(err)
 		}
-		runner, err := operation.NewRunner(operation.Config{SecretAttr: secretattr.IsStatic, DB: e.db, Audit: ch, Authz: az, Registry: actions, Facts: facts, Jobs: jobs.NewRegistry(),
+		jr := jobs.NewRegistry()
+		runner, err := operation.NewRunner(operation.Config{SecretAttr: secretattr.IsStatic, DB: e.db, Audit: ch, Authz: az, Registry: areg, Facts: facts, Jobs: jr, Credentials: connectionCredentials{reg},
 			Keys: fixedKeys{}, Pinner: labPin, Settings: labSettings{}, Component: "lab"})
 		if err != nil {
 			t.Fatal(err)
@@ -281,7 +302,7 @@ func newLabRig(t *testing.T, s *storetest.Server) *labRig {
 		assignRole(t, e, "helpdesk-operator", helpdsk, kid)
 		assignRole(t, e, "platform-administrator", admAcct, broad)
 
-		return &labRig{rd: reads, e: e, ctx: ctx, tr: tr, az: az, runner: runner, cp: cp, dsa: dsa, site: site, nc: nc, broad: broad, kid: kid, plain: plain, backer: backer, helpdsk: helpdsk, admin: admin, plainDN: plainDN}
+		return &labRig{rd: reads, e: e, ctx: ctx, tr: tr, az: az, runner: runner, cp: cp, dsa: dsa, site: site, nc: nc, broad: broad, kid: kid, plain: plain, backer: backer, helpdsk: helpdsk, admin: admin, plainDN: plainDN, sess: sess, prov: prov, conns: reg, jr: jr, le: le}
 	}
 }
 

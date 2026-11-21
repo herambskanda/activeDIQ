@@ -41,8 +41,9 @@ const (
 	aceTypeAllowedObject = 0x05
 	aceTypeDeniedObject  = 0x06
 
-	aceFlagInheritOnly = 0x08
-	aceFlagInherited   = 0x10
+	aceFlagContainerInherit = 0x02
+	aceFlagInheritOnly      = 0x08
+	aceFlagInherited        = 0x10
 
 	aceObjectTypePresent = 0x1
 	aceInheritedPresent  = 0x2

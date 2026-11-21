@@ -46,6 +46,8 @@ type accounts struct {
 	deny error
 	// writeErr, when set, is returned by Write.
 	writeErr error
+	// wrotePins is the DSA pins on the context of the last Write, as client.Write reads them to route.
+	wrotePins authority.DSAPins
 }
 
 func newAccounts() *accounts {
@@ -75,7 +77,8 @@ func first(v []string) string {
 	return v[0]
 }
 
-func (a *accounts) Write(_ context.Context, s step.Step, op client.WriteOp) (client.Result, error) {
+func (a *accounts) Write(ctx context.Context, s step.Step, op client.WriteOp) (client.Result, error) {
+	a.wrotePins = authority.DSAPinsFrom(ctx)
 	if a.deny != nil {
 		return client.Result{}, a.deny
 	}
@@ -561,6 +564,20 @@ func TestTargetLeavesScopeBetweenPlanAndApply(t *testing.T) {
 		}
 		if !denied {
 			t.Errorf("%s: no denial audit event in %d events", id, len(sk.events))
+		}
+	}
+}
+
+// T-1636: the account write carries the target's DSA pin on its context, as the reads do; without it
+// client.Write cannot route the write to the pinned DC and the real write failed outcome_unknown.
+func TestWriteCarriesTheNamingContextDSAPin(t *testing.T) {
+	for _, id := range []operation.ActionID{ad.DisableID, ad.ResetPasswordID} {
+		a := newAccounts()
+		if _, err := applyWith(t, a, id); err != nil {
+			t.Fatalf("%s: %v", id, err)
+		}
+		if _, ok := a.wrotePins[authority.NamingContextID(nc)]; !ok {
+			t.Errorf("%s: write context pins = %v, want an entry for naming context %s", id, a.wrotePins, nc)
 		}
 	}
 }
