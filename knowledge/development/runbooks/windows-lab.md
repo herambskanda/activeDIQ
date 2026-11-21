@@ -774,3 +774,19 @@ and `WIN_LAB_DC_ADDR`. The fixture users stay on dc1 for ADUC comparison (spec V
 (both deleted at the end and before the run), writes lone surrogates over raw LDAPS, ADSI and SAMR (`lab/windows/bin/t1880-surrogate-write`
 over WinRM; the password goes on stdin, never argv or the environment) and logs the bytes LDAP returns; the mapper side (CodeBadText on those bytes, bounds at the measured rangeUpper) is pinned offline in `internal/directory/sync/bounds_windows_evidence_test.go`. Findings and the verdict for
 T-1713: `knowledge/development/domain/sync-refusal-bounds.md`.
+
+## 23. Sync mapper golden capture from dc1 (T-1787)
+
+`internal/connector/read` `TestWindowsLabSyncCapture` (tags `lab windowslab`) seeds users with accountExpires
+`0`, `9223372036854775807` and a far-future value plus a never-logged-on user in a throw-away
+`OU=t1787-<stamp>` by LDAPS adds as the lab Administrator, reads them (and the Administrator's real
+lastLogonTimestamp, which is system-only and cannot be written) back through the real ScopedSearch handler with
+the widened sync attribute list, and removes the OU. It refuses to run outside `with-dc1-lock`. Recapture:
+
+```bash
+export WIN_LAB_ENV=<main checkout>/lab/windows/.win-lab.env WIN_LAB_CA=<main checkout>/lab/windows/.win-lab-ca.pem
+lab/windows/bin/with-dc1-lock -- env SYNC_CAPTURE_DIR=$PWD/internal/directory/sync/testdata/windows \
+  go test -tags 'lab windowslab' ./internal/connector/read -run TestWindowsLabSyncCapture
+go test ./internal/directory/sync -run Test_windows_dc
+```
+Recycled/tombstone and raw ranged-member captures stay with T-1205.

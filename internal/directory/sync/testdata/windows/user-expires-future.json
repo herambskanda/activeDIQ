@@ -1,0 +1,113 @@
+{
+  "objectGuid":  {
+    "value":  "BiEMsp2LQXCod7jaXghm0w=="
+  },
+  "dn":  {
+    "displayDn":  "CN=expfut-090854,OU=t1787-090854,DC=win,DC=activediq,DC=test"
+  },
+  "parentGuid":  {
+    "value":  "k6lG2H3eQS2LHvEHsf4Sgg=="
+  },
+  "attributes":  [
+    {
+      "name":  "accountexpires",
+      "values":  [
+        {
+          "time":  {
+            "at":  "2105-12-01T10:40:00Z"
+          }
+        }
+      ],
+      "complete":  true
+    },
+    {
+      "name":  "objectclass",
+      "values":  [
+        {
+          "text":  "top"
+        },
+        {
+          "text":  "person"
+        },
+        {
+          "text":  "organizationalPerson"
+        },
+        {
+          "text":  "user"
+        }
+      ],
+      "complete":  true
+    },
+    {
+      "name":  "objectsid",
+      "values":  [
+        {
+          "sid":  {
+            "value":  "AQUAAAAAAAUVAAAA+Dq3tTpOfba5tfeLZgYAAA=="
+          }
+        }
+      ],
+      "complete":  true
+    },
+    {
+      "name":  "primarygroupid",
+      "values":  [
+        {
+          "int32Value":  513
+        }
+      ],
+      "complete":  true
+    },
+    {
+      "name":  "pwdlastset",
+      "values":  [
+        {
+          "time":  {
+            "sentinel":  "TIME_SENTINEL_ZERO"
+          }
+        }
+      ],
+      "complete":  true
+    },
+    {
+      "name":  "samaccountname",
+      "values":  [
+        {
+          "text":  "expfut-090854"
+        }
+      ],
+      "complete":  true
+    },
+    {
+      "name":  "useraccountcontrol",
+      "values":  [
+        {
+          "int32Value":  546
+        }
+      ],
+      "complete":  true
+    },
+    {
+      "name":  "whenchanged",
+      "values":  [
+        {
+          "time":  {
+            "at":  "2026-11-12T09:08:55Z"
+          }
+        }
+      ],
+      "complete":  true
+    },
+    {
+      "name":  "whencreated",
+      "values":  [
+        {
+          "time":  {
+            "at":  "2026-11-12T09:08:55Z"
+          }
+        }
+      ],
+      "complete":  true
+    }
+  ]
+}
