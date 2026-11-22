@@ -136,6 +136,23 @@ describe("security key second factor", () => {
     expect(text()).toContain("Password");
   });
 
+  it("moves focus to the Authenticator code field after the password step", async () => {
+    // Timers are frozen and never advanced: focus must come from the commit itself,
+    // not from a deferred callback (a 0ms timeout fires before the field exists).
+    vi.useFakeTimers({ toFake: ["setTimeout"] });
+    try {
+      await reachSecondStep(store(async () => assertion));
+      const l = [...container.querySelectorAll("label")].find(
+        (x) => x.textContent === "Authenticator code",
+      );
+      expect(document.activeElement).toBe(
+        container.querySelector(`#${CSS.escape(l?.htmlFor ?? "")}`),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("keeps the code step when the user dismisses the key prompt", async () => {
     await reachSecondStep(
       store(async () => {

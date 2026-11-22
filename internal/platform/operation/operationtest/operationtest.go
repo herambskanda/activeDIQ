@@ -12,11 +12,32 @@
 //	plan-read-only      Plan's store transaction is not READ ONLY, or Plan wrote or tried to write
 //	                    to the store or the fake directory;
 //	apply-idempotent    Apply run a second time with the same step key changes state again;
-//	verify-after-drop   Verify still passes after the fake directory drops the write Apply made.
+//	verify-after-drop   Verify still passes after the fake directory drops the write Apply made;
+//	inverse-available   a step the Plan calls Reversible or Lossy has an Inverse that returns
+//	                    ErrIrreversible (O5, third clause) or that does not encode;
+//	inverse-restores    apply, then the inverse, then apply again does not restore the before-state:
+//	                    the fake directory and the fixture's State are compared after the inverse and
+//	                    again after the second apply;
+//	lossy-undeclared    a Lossy step loses a field its fixture does not declare in Fixture.Lost, or
+//	                    its plan gives no ReversibilityReason (the plan names what is lost);
+//	audit-success       the run does not emit one success event per applied step, or one is missing
+//	audit-failure       an AG-3 field (below);
+//	audit-denial        the same for a failure the harness injects into Apply, and for a denial the
+//	                    harness injects at the Apply-time authorisation re-check.
 //
-// The remaining O7 behaviours (inverse restores the before-state, Lossy loses no undeclared field,
-// success, failure and denial events with their AG-3 fields) are not checked yet; a Contract pass
-// is not a claim about them. The Record of each run lists the clauses it really exercised.
+// The AG-3 fields it holds each event to are the ones audit.Event carries: the Kind the Action
+// declares, an event ID and time, the initiator chain (requester and on-behalf-of principals), the
+// planned step's target, the operation/step key (the operation ID), the source component, the
+// outcome and a machine reason, the plan hash, and for a success the plan's before/after with every
+// secret change redacted (AG-9); a plan change to a statically secret attribute (internal/platform/secret)
+// that is not flagged Secret fails audit-success. The verification factor, client IP and the target's DN
+// at the time are not fields of audit.Event yet, so Contract cannot hold an Action to them (T-1280 adds them and
+// extends this check). A failure or denial before any step is chosen (a Plan that fails, a
+// denial at Plan) carries no operation key today (T-1281), so those paths are not driven.
+//
+// The Record of each run lists the clauses it really exercised; a clause an Action gave the harness
+// nothing to check (an Action that plans no step has no inverse, no failure and no denial to drive)
+// is absent from it.
 //
 // # Coverage record (O6)
 //
@@ -50,6 +71,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/skenzeriq/activediq/internal/platform/audit"
 	"github.com/skenzeriq/activediq/internal/platform/authority"
 	"github.com/skenzeriq/activediq/internal/platform/operation"
 	"github.com/skenzeriq/activediq/internal/platform/operation/step"
@@ -63,15 +85,28 @@ const (
 	ClausePlanReadOnly    = "plan-read-only"
 	ClauseApplyIdempotent = "apply-idempotent"
 	ClauseVerifyAfterDrop = "verify-after-drop"
+
+	ClauseInverseAvailable = "inverse-available"
+	ClauseInverseRestores  = "inverse-restores"
+	ClauseLossyUndeclared  = "lossy-undeclared"
+	ClauseAuditSuccess     = "audit-success"
+	ClauseAuditFailure     = "audit-failure"
+	ClauseAuditDenial      = "audit-denial"
 )
 
 // Fixture is what an Action needs to be exercised.
 type Fixture struct {
+	// SecretAttr says whether an attribute name is a known secret attribute (AG-9). Required: the
+	// runner is built with it, and the harness flags a plan that changes such an attribute without
+	// Secret. Pass secretattr.IsStatic (the kernel cannot import it, so the caller does).
+	SecretAttr func(name string) bool
 	// Input is a valid input for the Action. It must plan at least one step for the Apply and Verify
 	// clauses to be exercised; an Action that plans none is recorded as such.
 	Input operation.Input
 	// Directory is the FakeDirectory the Action under test was built with, or nil for an Action that
-	// does not use one. Without it the directory halves of the clauses are not exercised.
+	// does not use one. Without it the directory halves of the clauses are not exercised. Its write
+	// counters, read after Contract, are those of the forward run: the failure and denial paths, the
+	// inverse and the second apply are the harness's own work and are not counted.
 	Directory *FakeDirectory
 	// State, when set, returns a comparable view of any state the Action keeps outside the
 	// FakeDirectory. Apply is idempotent only if it is unchanged by the second Apply. Without it, a
@@ -83,6 +118,15 @@ type Fixture struct {
 	Pins authority.Pins
 	// Actor is the initiator; the default is a human, "contract-human".
 	Actor authority.Chain
+	// InverseAction is the Action that runs the input Inverse returns, when it is not the Action itself:
+	// a Store Action's inverse is its family's restore Action (ADR-0005 rule 10). Nil: the Action is
+	// its own inverse.
+	InverseAction operation.Action
+	// Lost names what a Lossy step is declared to lose: an attribute name ("description"), or
+	// "<objectGUID>/<attribute>" for one object, or "State" for a difference in the fixture's State.
+	// A Lossy step may leave exactly these different after apply and inverse; anything else it
+	// loses fails the lossy-undeclared clause. A Reversible step may lose nothing.
+	Lost []string
 	// FreshStepUp marks the submission as made after a fresh MFA, which an Action with
 	// Descriptor.StepUp requires before it plans.
 	FreshStepUp bool
@@ -122,44 +166,73 @@ func Check(t testing.TB, action operation.Action, fx Fixture) []Violation {
 	return vs
 }
 
+// options are the seams a test of the harness itself uses, to damage the pipeline the way a faulty
+// Action or kernel would. Contract uses none.
+type options struct {
+	// sink wraps the audit sink the runner appends to, so a test can drop or alter an event.
+	sink func(audit.Sink) audit.Sink
+}
+
+// component is the source component the runner is configured with, and the event must carry.
+const component = "operationtest"
+
 func check(t testing.TB, action operation.Action, fx Fixture) (Record, []Violation) {
+	return checkWith(t, action, fx, options{})
+}
+
+func checkWith(t testing.TB, action operation.Action, fx Fixture, o options) (Record, []Violation) {
 	rec := Record{At: time.Now().UTC()}
 	if action == nil {
 		return rec, []Violation{{ClauseDescriptor, "nil action"}}
 	}
 	d := action.Describe()
 	rec.Action, rec.Version, rec.Target = d.ID, d.Version, string(d.Target)
+	if fx.SecretAttr == nil {
+		return rec, []Violation{{ClauseDescriptor, "Fixture.SecretAttr is required (AG-9): pass secretattr.IsStatic"}}
+	}
 
-	h := &harness{inner: action, fx: fx, d: d}
-	// The wrapper presents the Action as a Store Action so the runner's inline path runs it; the
-	// Action's own Describe is unchanged otherwise (the validation sees the same fields).
-	reg, err := operation.NewRegistry(&probe{h: h})
-	if err != nil {
-		return rec, []Violation{{ClauseDescriptor, err.Error()}}
-	}
-	db := &rolledBackDB{}
-	r, err := operation.NewRunner(operation.Config{DB: db, Audit: validatingSink{}, Authz: allowAll{},
-		Registry: reg, Facts: fx.Facts})
-	if err != nil {
-		return rec, []Violation{{ClauseRun, err.Error()}}
-	}
 	actor := fx.Actor
 	if actor.Validate() != nil {
 		actor = authority.Chain{Requester: authority.Principal{ID: "contract-human", Kind: authority.Human}}
 	}
-	res, runErr := r.RunStore(context.Background(), operation.Request{
-		Tenant: tenanttest.NewID(t), Actor: actor, Action: d.ID, Input: fx.Input, Pins: fx.Pins, FreshStepUp: fx.FreshStepUp,
-		Operation: step.OperationID("contract-" + string(d.ID)),
-	})
-	rec.Steps = len(res.Steps)
-
-	vs := h.violations()
-	// The statements the Plan transaction saw, in the harness's own bookkeeping, not the Action's.
-	vs = append(vs, planTxViolations(db, h)...)
-	if runErr != nil && len(vs) == 0 {
-		vs = append(vs, Violation{ClauseRun, runErr.Error()})
+	newH := func(m mode) *harness {
+		return &harness{t: t, inner: action, fx: fx, d: d, actor: actor, o: o, mode: m, deny: &denyAfterPlan{}}
 	}
-	rec.Exercised = h.exercised()
+
+	// The failure and denial paths first, from the Action's pristine state: neither reaches the
+	// Action's own successful Apply, so they leave nothing behind.
+	hf, hd, h := newH(modeFailure), newH(modeDenial), newH(modeSuccess)
+	var vs []Violation
+	fout, err := hf.run(&probe{h: hf}, allowAll{}, fx.Input, "failure")
+	if err != nil {
+		return rec, []Violation{{ClauseDescriptor, err.Error()}}
+	}
+	vs = append(vs, hf.failureViolations(fout)...)
+	dout, err := hd.run(&probe{h: hd}, hd.deny, fx.Input, "denial")
+	if err != nil {
+		return rec, []Violation{{ClauseDescriptor, err.Error()}}
+	}
+	vs = append(vs, hd.denialViolations(dout)...)
+
+	// The success run: Plan, authorise, Apply (twice), Verify (and again after a drop), success event.
+	out, err := h.run(&probe{h: h}, allowAll{}, fx.Input, "")
+	if err != nil {
+		return rec, []Violation{{ClauseDescriptor, err.Error()}}
+	}
+	rec.Steps = len(out.res.Steps)
+
+	vs = append(h.violations(), vs...) // plan, apply and verify clauses lead, as they always have
+	// The statements the Plan transaction saw, in the harness's own bookkeeping, not the Action's.
+	vs = append(vs, planTxViolations(out.db, h)...)
+	if out.err != nil && len(vs) == 0 {
+		vs = append(vs, Violation{ClauseRun, out.err.Error()})
+	}
+	if out.err == nil {
+		vs = append(vs, h.successEventViolations(out)...)
+	}
+	vs = append(vs, h.reversibilityViolations()...)
+
+	rec.Exercised = exercised(h, hf, hd)
 	rec.Passed = len(vs) == 0
 	for _, v := range vs {
 		if !slices.Contains(rec.Violations, v.Clause) {
@@ -167,6 +240,26 @@ func check(t testing.TB, action operation.Action, fx Fixture) (Record, []Violati
 		}
 	}
 	return rec, vs
+}
+
+// exercised lists, in a fixed order, the clauses the runs could really check.
+func exercised(h, hf, hd *harness) []string {
+	have := map[string]bool{}
+	for _, x := range []*harness{h, hf, hd} {
+		x.mu.Lock()
+		for c := range x.ex {
+			have[c] = true
+		}
+		x.mu.Unlock()
+	}
+	var out []string
+	for _, c := range []string{ClausePlanReadOnly, ClauseApplyIdempotent, ClauseVerifyAfterDrop, ClauseInverseAvailable,
+		ClauseInverseRestores, ClauseLossyUndeclared, ClauseAuditSuccess, ClauseAuditFailure, ClauseAuditDenial} {
+		if have[c] {
+			out = append(out, c)
+		}
+	}
+	return out
 }
 
 // planTxViolations inspects the transaction Plan ran in.
@@ -188,21 +281,50 @@ func planTxViolations(db *rolledBackDB, h *harness) []Violation {
 	return vs
 }
 
+// mode says which path a run drives.
+type mode int
+
+const (
+	modeSuccess mode = iota // the Action's own Apply and Verify run, with the clause probes around them
+	modeFailure             // the fake directory refuses the write; the failure event is expected
+	modeDenial              // the Apply-time authorisation refuses; the denial event is expected
+)
+
 // harness is the state of one Contract run, shared by the probe's hooks.
 type harness struct {
+	t     testing.TB
 	inner operation.Action
 	fx    Fixture
 	d     operation.Descriptor
+	actor authority.Chain
+	o     options
+	mode  mode
+	deny  *denyAfterPlan
 
 	mu       sync.Mutex
 	vs       []Violation
+	ex       map[string]bool // clauses really exercised
 	planned  bool
 	dropped  bool // Apply changed the fake directory, so there is a write to drop
-	dropChk  bool // the drop probe ran
-	planChk  bool
-	idemChk  bool
-	applyTx  *recordingTx
 	preApply snapshot
+
+	// before-state, taken as Plan starts; afterForward is taken when the forward run ends.
+	before       snapshot
+	beforeState  any
+	haveBefore   bool
+	afterForward snapshot
+	afterState   any
+
+	op      step.OperationID
+	applied []appliedStep // the steps Apply ran, once each, in order
+	nsteps  int           // steps Plan returned
+	failure *appliedStep  // modeFailure: the step whose Apply was failed
+}
+
+type appliedStep struct {
+	key step.Key
+	sp  operation.StepPlan
+	out operation.Outcome
 }
 
 func (h *harness) fail(clause, format string, a ...any) {
@@ -211,26 +333,60 @@ func (h *harness) fail(clause, format string, a ...any) {
 	h.vs = append(h.vs, Violation{clause, fmt.Sprintf(format, a...)})
 }
 
+func (h *harness) exercise(clause string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.ex == nil {
+		h.ex = map[string]bool{}
+	}
+	h.ex[clause] = true
+}
+
 func (h *harness) violations() []Violation {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return slices.Clone(h.vs)
 }
 
-func (h *harness) exercised() []string {
+// runOut is what one runner call left behind.
+type runOut struct {
+	res  operation.Result
+	err  error
+	db   *rolledBackDB
+	sink *recordingSink
+}
+
+// run registers act (presented as a Store Action, see probe.Describe) in a fresh runner over a
+// rolled-back store and runs one request. A non-nil error is a setup failure, not a clause.
+func (h *harness) run(act operation.Action, az operation.Authorizer, in operation.Input, suffix string) (runOut, error) {
+	reg, err := operation.NewRegistry(act)
+	if err != nil {
+		return runOut{}, err
+	}
+	db, rs := &rolledBackDB{}, &recordingSink{}
+	var sink audit.Sink = rs
+	if h.o.sink != nil {
+		sink = h.o.sink(sink)
+	}
+	r, err := operation.NewRunner(operation.Config{SecretAttr: h.fx.SecretAttr, DB: db, Audit: sink, Authz: az, Registry: reg,
+		Facts: h.fx.Facts, Component: component})
+	if err != nil {
+		return runOut{}, err
+	}
+	id := "contract-" + string(h.d.ID)
+	if suffix != "" {
+		id = "contract-" + suffix + "-" + string(h.d.ID)
+	}
 	h.mu.Lock()
-	defer h.mu.Unlock()
-	var out []string
-	if h.planChk {
-		out = append(out, ClausePlanReadOnly)
+	if h.op == "" {
+		h.op = step.OperationID(id)
 	}
-	if h.idemChk {
-		out = append(out, ClauseApplyIdempotent)
-	}
-	if h.dropChk {
-		out = append(out, ClauseVerifyAfterDrop)
-	}
-	return out
+	h.mu.Unlock()
+	res, runErr := r.RunStore(context.Background(), operation.Request{
+		Tenant: tenanttest.NewID(h.t), Actor: h.actor, Action: act.Describe().ID, Input: in, Pins: h.fx.Pins, FreshStepUp: h.fx.FreshStepUp,
+		Operation: step.OperationID(id),
+	})
+	return runOut{res: res, err: runErr, db: db, sink: rs}, nil
 }
 
 // probe wraps the Action under test with the clause checks. It is registered in the real runner, so
@@ -250,19 +406,49 @@ func (p *probe) Plan(ctx context.Context, pc operation.PlanContext, in operation
 		before = h.fx.Directory.Writes()
 	}
 	h.mu.Lock()
-	h.planned, h.planChk = true, true
+	h.planned = true
+	if h.mode == modeSuccess {
+		h.ex = orMap(h.ex)
+		h.ex[ClausePlanReadOnly] = true
+		if h.fx.Directory != nil {
+			h.before = h.fx.Directory.snapshot()
+		}
+		h.beforeState, h.haveBefore = h.state(), true
+	}
 	h.mu.Unlock()
 	steps, err := h.inner.Plan(ctx, pc, in)
-	if h.fx.Directory != nil {
+	if h.mode == modeSuccess && h.fx.Directory != nil {
 		if n := h.fx.Directory.Writes() - before; n > 0 {
 			h.fail(ClausePlanReadOnly, "Plan made %d write attempt(s) on the fake directory", n)
 		}
 	}
+	h.mu.Lock()
+	h.nsteps = len(steps)
+	h.mu.Unlock()
+	if h.mode == modeDenial {
+		h.deny.setAllowed(len(steps)) // the Plan-time authorisation of each step passes; the re-check does not
+	}
 	return steps, err
+}
+
+func orMap(m map[string]bool) map[string]bool {
+	if m == nil {
+		return map[string]bool{}
+	}
+	return m
 }
 
 func (p *probe) Apply(ctx context.Context, s step.Step, sp operation.StepPlan) (operation.Outcome, error) {
 	h := p.h
+	switch h.mode {
+	case modeFailure:
+		return h.applyFailing(ctx, s, sp)
+	case modeDenial:
+		// Not reached: the re-check refused first. If the runner got here the write would land while the
+		// trail says "denied", so the Action is not called and the clause fails.
+		h.fail(ClauseAuditDenial, "Apply ran after the Apply-time re-check refused the step: the write was not withheld")
+		return operation.Outcome{}, errContractDenied
+	}
 	dir := h.fx.Directory
 	if dir != nil {
 		h.mu.Lock()
@@ -279,6 +465,7 @@ func (p *probe) Apply(ctx context.Context, s step.Step, sp operation.StepPlan) (
 	changed := changes(dir)-changes0 > 0
 	h.mu.Lock()
 	h.dropped = changed
+	h.applied = append(h.applied, appliedStep{key: s.Key(), sp: sp, out: out})
 	h.mu.Unlock()
 
 	// Second Apply, same Step and so the same key (operation, item, step): a crash and a retry.
@@ -286,9 +473,7 @@ func (p *probe) Apply(ctx context.Context, s step.Step, sp operation.StepPlan) (
 	w1 := txWrites(tx)
 	c1 := changes(dir)
 	_, err2 := h.inner.Apply(ctx, s, sp)
-	h.mu.Lock()
-	h.idemChk = true
-	h.mu.Unlock()
+	h.exercise(ClauseApplyIdempotent)
 	switch {
 	case err2 != nil && !errors.Is(err2, operation.ErrStaleState):
 		h.fail(ClauseApplyIdempotent, "a second Apply with the same step key returned an error: %v", err2)
@@ -300,6 +485,40 @@ func (p *probe) Apply(ctx context.Context, s step.Step, sp operation.StepPlan) (
 		h.fail(ClauseApplyIdempotent, "a second Apply with the same step key sent %d write statement(s) to the store and the fixture gives no State to show they changed nothing", txWrites(tx)-w1)
 	}
 	return out, nil
+}
+
+// errInjected is the failure the harness makes Apply return when the fake directory has no write to
+// refuse. It carries no content.
+var errInjected = errors.New("operationtest: injected apply failure")
+
+// applyFailing runs the Action's Apply while the fake directory refuses every write, so the Action's
+// own error handling is what the failure event rests on. An Apply that reports success although its
+// write was refused would never have its failure recorded.
+func (h *harness) applyFailing(ctx context.Context, s step.Step, sp operation.StepPlan) (operation.Outcome, error) {
+	h.mu.Lock()
+	if h.failure == nil {
+		h.failure = &appliedStep{key: s.Key(), sp: sp}
+	}
+	h.mu.Unlock()
+	dir := h.fx.Directory
+	if dir == nil {
+		return operation.Outcome{}, errInjected
+	}
+	snap, w, c := dir.snapshot(), dir.Writes(), dir.Changes()
+	dir.failWrites(errInjected)
+	out, err := h.inner.Apply(ctx, s, sp)
+	attempted := dir.Writes() > w
+	dir.failWrites(nil)
+	dir.restore(snap)
+	dir.resetCounters(w, c)
+	switch {
+	case err == nil && attempted:
+		h.fail(ClauseAuditFailure, "Apply returned success although the fake directory refused its write, so the failure would never be recorded")
+		return out, errInjected // keep driving: the event for the failure is still checked
+	case err == nil:
+		return out, errInjected
+	}
+	return out, err
 }
 
 func (h *harness) state() any {
@@ -338,9 +557,7 @@ func (p *probe) Verify(ctx context.Context, s step.Step, sp operation.StepPlan, 
 		return v, nil
 	}
 	// The fake directory drops the write: the state goes back to before Apply, as if the DC lost it.
-	h.mu.Lock()
-	h.dropChk = true
-	h.mu.Unlock()
+	h.exercise(ClauseVerifyAfterDrop)
 	after := h.fx.Directory.snapshot()
 	h.fx.Directory.restore(pre)
 	v2, err2 := h.inner.Verify(ctx, s, sp, o)
@@ -353,4 +570,14 @@ func (p *probe) Verify(ctx context.Context, s step.Step, sp operation.StepPlan, 
 
 func (p *probe) Inverse(sp operation.StepPlan, o operation.Outcome) (operation.Input, error) {
 	return p.h.inner.Inverse(sp, o)
+}
+
+// asStore presents an Action as a Store Action, as probe does, with no clause probes: it runs the
+// inverse and the second apply.
+type asStore struct{ operation.Action }
+
+func (a asStore) Describe() operation.Descriptor {
+	d := a.Action.Describe()
+	d.Target = operation.TargetStore
+	return d
 }

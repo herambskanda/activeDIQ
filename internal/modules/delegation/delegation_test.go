@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/skenzeriq/activediq/internal/directory/attr/secretattr"
 	"os"
 	"sync"
 	"testing"
@@ -140,7 +141,7 @@ VALUES ($1::uuid, $2::uuid, 0, false, 'tenant', $1::uuid, $1::uuid)`, tid.String
 		t.Fatal(err)
 	}
 	rec := &recorder{}
-	runner, err := operation.NewRunner(operation.Config{DB: db, Audit: rec, Authz: az, Facts: noFacts{}, Registry: reg, Now: time.Now})
+	runner, err := operation.NewRunner(operation.Config{SecretAttr: secretattr.IsStatic, DB: db, Audit: rec, Authz: az, Facts: noFacts{}, Registry: reg, Now: time.Now})
 	if err != nil {
 		t.Fatal(err)
 	}

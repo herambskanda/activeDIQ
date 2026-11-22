@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"errors"
+	"github.com/skenzeriq/activediq/internal/directory/attr/secretattr"
 	"strings"
 	"testing"
 	"time"
@@ -129,7 +130,7 @@ func withStepKind(t *testing.T, target authority.TargetRef, pins authority.Pins,
 	if err != nil {
 		t.Fatal(err)
 	}
-	r, err := operation.NewRunner(operation.Config{DB: fakeDB{}, Audit: sink{}, Authz: allowAll{}, Registry: reg,
+	r, err := operation.NewRunner(operation.Config{SecretAttr: secretattr.IsStatic, DB: fakeDB{}, Audit: sink{}, Authz: allowAll{}, Registry: reg,
 		Now: func() time.Time { return time.Unix(1_700_000_000, 0) }})
 	if err != nil {
 		t.Fatal(err)

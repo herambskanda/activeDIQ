@@ -1,0 +1,74 @@
+=== RUN   TestStorePoolResetIsolatesTenants
+=== RUN   TestStorePoolResetIsolatesTenants/pg16
+=== RUN   TestStorePoolResetIsolatesTenants/pg18
+--- PASS: TestStorePoolResetIsolatesTenants (12.29s)
+    --- PASS: TestStorePoolResetIsolatesTenants/pg16 (8.26s)
+    --- PASS: TestStorePoolResetIsolatesTenants/pg18 (4.03s)
+=== RUN   TestStorePoolDestroysConnectionWithForeignPreparedStatement
+=== RUN   TestStorePoolDestroysConnectionWithForeignPreparedStatement/pg16
+2026/11/02 13:47:43 WARN store: destroying a pooled connection that could not be reset error="store: connection state could not be proven clean: a statement outside pgx's cache is prepared on it"
+=== RUN   TestStorePoolDestroysConnectionWithForeignPreparedStatement/pg18
+2026/11/02 13:47:43 WARN store: destroying a pooled connection that could not be reset error="store: connection state could not be proven clean: a statement outside pgx's cache is prepared on it"
+--- PASS: TestStorePoolDestroysConnectionWithForeignPreparedStatement (1.91s)
+    --- PASS: TestStorePoolDestroysConnectionWithForeignPreparedStatement/pg16 (1.33s)
+    --- PASS: TestStorePoolDestroysConnectionWithForeignPreparedStatement/pg18 (0.58s)
+=== RUN   TestPoolNeverLendsNonDefaultLexingSettings
+=== RUN   TestPoolNeverLendsNonDefaultLexingSettings/pg16
+=== RUN   TestPoolNeverLendsNonDefaultLexingSettings/pg18
+--- PASS: TestPoolNeverLendsNonDefaultLexingSettings (1.89s)
+    --- PASS: TestPoolNeverLendsNonDefaultLexingSettings/pg16 (1.29s)
+    --- PASS: TestPoolNeverLendsNonDefaultLexingSettings/pg18 (0.60s)
+=== RUN   TestResetKeepsStatementCacheWorking
+=== RUN   TestResetKeepsStatementCacheWorking/pg16
+=== RUN   TestResetKeepsStatementCacheWorking/pg18
+--- PASS: TestResetKeepsStatementCacheWorking (1.84s)
+    --- PASS: TestResetKeepsStatementCacheWorking/pg16 (1.27s)
+    --- PASS: TestResetKeepsStatementCacheWorking/pg18 (0.57s)
+=== RUN   TestPoolDestroysConnectionWithForgedStatementCacheName
+=== RUN   TestPoolDestroysConnectionWithForgedStatementCacheName/forged_name
+=== RUN   TestPoolDestroysConnectionWithForgedStatementCacheName/forged_name/pg16
+2026/11/02 13:47:48 WARN store: destroying a pooled connection that could not be reset error="store: connection state could not be proven clean: a statement outside pgx's cache is prepared on it"
+=== RUN   TestPoolDestroysConnectionWithForgedStatementCacheName/forged_name/pg18
+2026/11/02 13:47:49 WARN store: destroying a pooled connection that could not be reset error="store: connection state could not be proven clean: a statement outside pgx's cache is prepared on it"
+=== RUN   TestPoolDestroysConnectionWithForgedStatementCacheName/forged_name_with_valid_shape
+=== RUN   TestPoolDestroysConnectionWithForgedStatementCacheName/forged_name_with_valid_shape/pg16
+2026/11/02 13:47:50 WARN store: destroying a pooled connection that could not be reset error="store: connection state could not be proven clean: a statement outside pgx's cache is prepared on it"
+=== RUN   TestPoolDestroysConnectionWithForgedStatementCacheName/forged_name_with_valid_shape/pg18
+2026/11/02 13:47:51 WARN store: destroying a pooled connection that could not be reset error="store: connection state could not be proven clean: a statement outside pgx's cache is prepared on it"
+=== RUN   TestPoolDestroysConnectionWithForgedStatementCacheName/replace_a_real_cached_name
+=== RUN   TestPoolDestroysConnectionWithForgedStatementCacheName/replace_a_real_cached_name/pg16
+2026/11/02 13:47:52 WARN store: destroying a pooled connection that could not be reset error="store: connection state could not be proven clean: a statement outside pgx's cache is prepared on it"
+=== RUN   TestPoolDestroysConnectionWithForgedStatementCacheName/replace_a_real_cached_name/pg18
+2026/11/02 13:47:53 WARN store: destroying a pooled connection that could not be reset error="store: connection state could not be proven clean: a statement outside pgx's cache is prepared on it"
+--- PASS: TestPoolDestroysConnectionWithForgedStatementCacheName (5.56s)
+    --- PASS: TestPoolDestroysConnectionWithForgedStatementCacheName/forged_name (1.85s)
+        --- PASS: TestPoolDestroysConnectionWithForgedStatementCacheName/forged_name/pg16 (1.23s)
+        --- PASS: TestPoolDestroysConnectionWithForgedStatementCacheName/forged_name/pg18 (0.63s)
+    --- PASS: TestPoolDestroysConnectionWithForgedStatementCacheName/forged_name_with_valid_shape (1.92s)
+        --- PASS: TestPoolDestroysConnectionWithForgedStatementCacheName/forged_name_with_valid_shape/pg16 (1.30s)
+        --- PASS: TestPoolDestroysConnectionWithForgedStatementCacheName/forged_name_with_valid_shape/pg18 (0.61s)
+    --- PASS: TestPoolDestroysConnectionWithForgedStatementCacheName/replace_a_real_cached_name (1.79s)
+        --- PASS: TestPoolDestroysConnectionWithForgedStatementCacheName/replace_a_real_cached_name/pg16 (1.23s)
+        --- PASS: TestPoolDestroysConnectionWithForgedStatementCacheName/replace_a_real_cached_name/pg18 (0.55s)
+=== RUN   TestPoolResetUndoesSetRole
+=== RUN   TestPoolResetUndoesSetRole/pg16
+=== RUN   TestPoolResetUndoesSetRole/pg18
+--- PASS: TestPoolResetUndoesSetRole (1.82s)
+    --- PASS: TestPoolResetUndoesSetRole/pg16 (1.19s)
+    --- PASS: TestPoolResetUndoesSetRole/pg18 (0.64s)
+=== RUN   TestSQL14TenantDoesNotLeakToPooledConnection
+=== RUN   TestSQL14TenantDoesNotLeakToPooledConnection/pg16
+=== RUN   TestSQL14TenantDoesNotLeakToPooledConnection/pg18
+--- PASS: TestSQL14TenantDoesNotLeakToPooledConnection (1.92s)
+    --- PASS: TestSQL14TenantDoesNotLeakToPooledConnection/pg16 (1.29s)
+    --- PASS: TestSQL14TenantDoesNotLeakToPooledConnection/pg18 (0.63s)
+=== RUN   TestPoolRefusesSimpleProtocol
+=== RUN   TestPoolRefusesSimpleProtocol/mixed-case
+=== RUN   TestPoolRefusesSimpleProtocol/url
+=== RUN   TestPoolRefusesSimpleProtocol/keyvalue
+--- PASS: TestPoolRefusesSimpleProtocol (0.00s)
+    --- PASS: TestPoolRefusesSimpleProtocol/mixed-case (0.00s)
+    --- PASS: TestPoolRefusesSimpleProtocol/url (0.00s)
+    --- PASS: TestPoolRefusesSimpleProtocol/keyvalue (0.00s)
+PASS
+ok  	github.com/skenzeriq/activediq/internal/platform/store	31.093s

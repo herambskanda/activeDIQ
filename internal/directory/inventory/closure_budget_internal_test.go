@@ -242,3 +242,65 @@ func Test_estimates_deep_chain(t *testing.T) {
 		t.Errorf("chain of %d took %v", n, took)
 	}
 }
+
+// The review of T-0961 priced the attack at about 16,000 writes: k = w = 8,000 member values (the hub holds
+// 8,000 groups, 8,000 groups hold the hub). The ceiling of TM-D32 is the same as at 4,000: 1 s and 64 MB for
+// the decision step alone, before a row is written.
+func Test_splitByBudget_work_at_16000_writes(t *testing.T) {
+	const k, w = 8000, 8000
+	groups, edges, counts := hubFan(k, w)
+	b := budget{root: defaultRootRows, conn: defaultConnRows}
+	var m0, m1 runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&m0)
+	start := time.Now()
+	adm, over := splitByBudget(groups, nil, edges, counts, b)
+	took := time.Since(start)
+	runtime.ReadMemStats(&m1)
+	alloc := m1.TotalAlloc - m0.TotalAlloc
+	t.Logf("%d writes, %d groups: %v, %d MB allocated; admitted %d, over %d", k+w, len(groups), took, alloc>>20, len(adm), len(over))
+	if took > time.Second {
+		t.Errorf("decision took %v at %d writes, want under 1 s", took, k+w)
+	}
+	if alloc > 64<<20 {
+		t.Errorf("decision allocated %d MB at %d writes, want under 64 MB", alloc>>20, k+w)
+	}
+	if len(adm)+len(over) != len(groups) {
+		t.Fatalf("admitted %d + over %d != %d groups", len(adm), len(over), len(groups))
+	}
+}
+
+// Shape 3 of TM-F-AMPLIFY: a 128-deep chain and a ring of 4,000 groups (a cycle) are decided inside the
+// same ceilings, and every group gets a verdict.
+func Test_splitByBudget_work_on_deep_chain_and_cycle(t *testing.T) {
+	var groups []string
+	edges, counts := map[string][]string{}, map[string]int{}
+	add := func(prefix string, n int, ring bool) {
+		for i := 0; i < n; i++ {
+			g := fmt.Sprintf("%s%05d", prefix, i)
+			groups = append(groups, g)
+			counts[g] = 1
+			switch {
+			case i+1 < n:
+				edges[g] = []string{fmt.Sprintf("%s%05d", prefix, i+1)}
+			case ring:
+				edges[g] = []string{fmt.Sprintf("%s%05d", prefix, 0)}
+			}
+		}
+	}
+	add("chain", 128, false)
+	add("ring", 4000, true)
+	var m0, m1 runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&m0)
+	start := time.Now()
+	adm, over := splitByBudget(groups, nil, edges, counts, budget{root: defaultRootRows, conn: defaultConnRows})
+	took := time.Since(start)
+	runtime.ReadMemStats(&m1)
+	if took > time.Second || m1.TotalAlloc-m0.TotalAlloc > 64<<20 {
+		t.Errorf("chain + ring took %v and %d MB, want under 1 s and 64 MB", took, (m1.TotalAlloc-m0.TotalAlloc)>>20)
+	}
+	if len(adm)+len(over) != len(groups) {
+		t.Errorf("admitted %d + over %d != %d groups", len(adm), len(over), len(groups))
+	}
+}

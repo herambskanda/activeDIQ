@@ -25,6 +25,11 @@ Runbook: knowledge/development/runbooks/windows-lab.md section 17.
 import argparse, datetime, hashlib, os, random, re, socket, subprocess, sys, tempfile, threading, time
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+sys.path.insert(0, os.path.join(REPO, "lab", "windows", "lib"))
+from labaddr import require_dc_addr  # noqa: E402
+
+# No default DC address (T-1279): fail before the dc1 lock, the build and any connection.
+require_dc_addr("agent-unenrolled-verify", REPO)
 if not os.environ.get("DIQ_DC1_LOCK_HELD"):
     os.execv(os.path.join(REPO, "lab", "windows", "bin", "with-dc1-lock"),
              ["with-dc1-lock", "--", sys.executable, os.path.abspath(__file__), *sys.argv[1:]])
