@@ -6,6 +6,8 @@ import (
 	"bytes"
 	"context"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -40,14 +42,24 @@ func TestLabSpecsNoEnvSeedsNothing(t *testing.T) {
 
 // T-0684 acceptance 1 and 2 (config half): both labs are read from their variables.
 func TestLabSpecsReadBothLabs(t *testing.T) {
+	kt := filepath.Join(t.TempDir(), "svc.keytab")
+	if err := os.WriteFile(kt, []byte{5, 2, 0}, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	sp, err := labSpecs(envOf(map[string]string{
-		"WIN_LAB_DC_ADDR": "10.0.0.5", "WIN_LAB_SVC_PASSWORD": "pw1", "WIN_LAB_CA": "/ca1",
+		"WIN_LAB_DC_ADDR": "10.0.0.5", "WIN_LAB_SVC_KEYTAB": kt, "WIN_LAB_CA": "/ca1",
 		"LAB_LDAPS_PORT": "6361", "LAB_SVC_PASSWORD": "pw2", "LAB_CA": "/ca2"}))
 	if err != nil || len(sp) != 2 {
 		t.Fatalf("labSpecs = %v, %v", sp, err)
 	}
 	if sp[0].Name != "win" || sp[0].Server != "10.0.0.5:636" || sp[0].ServerName != winLabTLS {
 		t.Errorf("windows spec = %+v", sp[0])
+	}
+	if k := sp[0].Kerberos; k == nil || k.Principal != winLabPrinc || k.Realm != winLabRealm || len(k.KDCs) != 1 || k.KDCs[0] != "10.0.0.5" {
+		t.Errorf("windows spec has no keytab identity: %+v", sp[0])
+	}
+	if !sp[0].Password.IsEmpty() {
+		t.Error("windows spec carries a password credential")
 	}
 	if sp[1].Name != "samba" || sp[1].Server != "localhost:6361" {
 		t.Errorf("samba spec = %+v", sp[1])
@@ -57,8 +69,8 @@ func TestLabSpecsReadBothLabs(t *testing.T) {
 // A partly configured lab fails closed and the error names the variable, never a value.
 func TestLabSpecsPartialConfigFailsWithoutLeaking(t *testing.T) {
 	_, err := labSpecs(envOf(map[string]string{"WIN_LAB_DC_ADDR": "10.0.0.5", "WIN_LAB_CA": "/ca"}))
-	if err == nil || !strings.Contains(err.Error(), "WIN_LAB_SVC_PASSWORD") {
-		t.Fatalf("err = %v, want one naming WIN_LAB_SVC_PASSWORD", err)
+	if err == nil || !strings.Contains(err.Error(), "WIN_LAB_SVC_KEYTAB") {
+		t.Fatalf("err = %v, want one naming WIN_LAB_SVC_KEYTAB", err)
 	}
 	_, err = labSpecs(envOf(map[string]string{"LAB_LDAPS_PORT": "6361", "LAB_SVC_PASSWORD": "hunter2"}))
 	if err == nil || !strings.Contains(err.Error(), "LAB_CA") || strings.Contains(err.Error(), "hunter2") {

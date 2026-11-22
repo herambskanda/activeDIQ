@@ -1,4 +1,4 @@
--- 0094_inventory_policy_gates: two more inputs of the effective-policy resolution (T-1134; T-1016 lab rows
+-- 0096_inventory_policy_gates: two more inputs of the effective-policy resolution (T-1134; T-1016 lab rows
 -- LAB-PS-10 and LAB-PS-13; domain-model DM-16 "Report-engine inputs"). Owner: internal/directory/inventory.
 --
 --  * inventory_domain_policies.functional_level: msDS-Behavior-Version of the domain head (NULL = not read).

@@ -63,7 +63,7 @@ const byId = (f) => Object.fromEntries(listEntities(f.ctx, 'tickets').map((t) =>
 const dispatcher = (f) => { const d = new Dispatcher(f.ctx); d.shared = false; return d; };
 const busy = (d, ids = ['T-9999']) => d.gateLanes.push({ ids, abort: new AbortController(), run: Promise.resolve() });
 const events = (f) => readRecentEvents(f.ctx, 300).map((e) => e.text).join('\n');
-const screen = async (d, f) => { await d.prescreenAhead(preMergeSettings(f.ctx.config)); await d.prescreenRun; };
+const screen = async (d, f) => { await d.prescreenAhead(preMergeSettings(f.ctx.config)); await d.prescreenIdle(); };
 
 test('a ticket at the front that fails the pre-screen is reopened with no strike while the gate is busy', async () => {
   const f = setup();

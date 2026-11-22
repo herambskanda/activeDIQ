@@ -26,12 +26,25 @@
         "x-activediq-tag": "helpdesk"
       },
       "ConnectionId": {
-        "description": "The Entra connection.",
+        "description": "The connection.",
         "in": "path",
         "name": "connectionId",
         "required": true,
         "schema": {
           "format": "uuid",
+          "type": "string"
+        },
+        "x-activediq-tag": "connections"
+      },
+      "ConnectionIdempotencyKey": {
+        "description": "The request ID. It names the audit events of the change and makes a retry safe.",
+        "in": "header",
+        "name": "Idempotency-Key",
+        "required": true,
+        "schema": {
+          "maxLength": 128,
+          "minLength": 8,
+          "pattern": "^[A-Za-z0-9._~-]+$",
           "type": "string"
         },
         "x-activediq-tag": "connections"
@@ -1200,6 +1213,107 @@
         "type": "object",
         "x-activediq-tag": "objects"
       },
+      "Connection": {
+        "additionalProperties": false,
+        "description": "One directory connection (DM-10). Nothing here is a credential or a bind identity. transport is absent for an Entra tenant.",
+        "properties": {
+          "createdAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "credentialId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "directoryIdentity": {
+            "description": "The forest root NC objectGUID or the Entra tenant id, in lower-case UUID text. Null until a verification has read it.",
+            "format": "uuid",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "displayName": {
+            "maxLength": 200,
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ConnectionKind"
+          },
+          "lastVerificationId": {
+            "format": "uuid",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "state": {
+            "$ref": "#/components/schemas/ConnectionLifecycleState"
+          },
+          "transport": {
+            "$ref": "#/components/schemas/ConnectionTransport"
+          },
+          "updatedAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "verifiedAt": {
+            "description": "When the last recorded verification completed, UTC. Null when none has.",
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "displayName",
+          "state",
+          "directoryIdentity",
+          "credentialId",
+          "lastVerificationId",
+          "verifiedAt",
+          "createdAt",
+          "updatedAt"
+        ],
+        "type": "object",
+        "x-activediq-tag": "connections"
+      },
+      "ConnectionCreate": {
+        "additionalProperties": false,
+        "description": "What createConnection needs. transport is required for ad_forest and must be absent for entra_tenant. There is no field for a secret.",
+        "properties": {
+          "credentialId": {
+            "description": "The directory credential to bind, by id. A reference, never material.",
+            "format": "uuid",
+            "type": "string"
+          },
+          "displayName": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ConnectionKindInput"
+          },
+          "transport": {
+            "$ref": "#/components/schemas/ConnectionTransportInput"
+          }
+        },
+        "required": [
+          "kind",
+          "displayName",
+          "credentialId"
+        ],
+        "type": "object",
+        "x-activediq-tag": "connections"
+      },
       "ConnectionHealth": {
         "additionalProperties": false,
         "description": "The health of one connection. Nothing here is a credential or an identity the connection binds as.",
@@ -1287,6 +1401,40 @@
         "x-activediq-enum": "open",
         "x-activediq-tag": "connections"
       },
+      "ConnectionKind": {
+        "description": "ad_forest (a whole AD forest) or entra_tenant.",
+        "enum": [
+          "ad_forest",
+          "entra_tenant"
+        ],
+        "type": "string",
+        "x-activediq-enum": "open",
+        "x-activediq-tag": "connections"
+      },
+      "ConnectionKindInput": {
+        "description": "The kinds createConnection accepts.",
+        "enum": [
+          "ad_forest",
+          "entra_tenant"
+        ],
+        "type": "string",
+        "x-activediq-tag": "connections"
+      },
+      "ConnectionLifecycleState": {
+        "description": "The DM-10 lifecycle state. Health is a separate reading (ConnectionHealthState).",
+        "enum": [
+          "draft",
+          "verifying",
+          "active",
+          "suspended",
+          "decommissioning",
+          "removed",
+          "discarded"
+        ],
+        "type": "string",
+        "x-activediq-enum": "open",
+        "x-activediq-tag": "connections"
+      },
       "ConnectionSummary": {
         "additionalProperties": false,
         "description": "How many connections the tenant has. A count only; no connection is identified.",
@@ -1299,6 +1447,90 @@
         },
         "required": [
           "connectionCount"
+        ],
+        "type": "object",
+        "x-activediq-tag": "connections"
+      },
+      "ConnectionTransport": {
+        "description": "How an AD connection secures LDAP. There is no third value and no way to skip certificate validation.",
+        "enum": [
+          "ldaps",
+          "starttls"
+        ],
+        "type": "string",
+        "x-activediq-enum": "open",
+        "x-activediq-tag": "connections"
+      },
+      "ConnectionTransportInput": {
+        "description": "The transports createConnection accepts.",
+        "enum": [
+          "ldaps",
+          "starttls"
+        ],
+        "type": "string",
+        "x-activediq-tag": "connections"
+      },
+      "ConnectionVerification": {
+        "additionalProperties": false,
+        "description": "One recorded onboarding run (DM-24), without its findings.",
+        "properties": {
+          "checkListVersion": {
+            "maximum": 1000,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "checks": {
+            "items": {
+              "$ref": "#/components/schemas/VerificationCheck"
+            },
+            "maxItems": 16,
+            "type": "array"
+          },
+          "completedAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/VerificationKind"
+          },
+          "startedAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "verdict": {
+            "$ref": "#/components/schemas/VerificationVerdict"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "verdict",
+          "startedAt",
+          "completedAt",
+          "checkListVersion",
+          "checks"
+        ],
+        "type": "object",
+        "x-activediq-tag": "connections"
+      },
+      "ConnectionVerificationResult": {
+        "additionalProperties": false,
+        "description": "The completed run and the connection after it.",
+        "properties": {
+          "connection": {
+            "$ref": "#/components/schemas/Connection"
+          },
+          "verification": {
+            "$ref": "#/components/schemas/ConnectionVerification"
+          }
+        },
+        "required": [
+          "connection",
+          "verification"
         ],
         "type": "object",
         "x-activediq-tag": "connections"
@@ -5197,6 +5429,15 @@
           "period": {
             "$ref": "#/components/schemas/ReportPeriod"
           },
+          "showHidden": {
+            "description": "Keys of the hidden groups the run included in its rows.",
+            "items": {
+              "maxLength": 64,
+              "type": "string"
+            },
+            "maxItems": 16,
+            "type": "array"
+          },
           "subjects": {
             "items": {
               "$ref": "#/components/schemas/ReportSubjectRef"
@@ -5212,7 +5453,8 @@
           "filters",
           "columns",
           "subjects",
-          "includeReadOnlyDcs"
+          "includeReadOnlyDcs",
+          "showHidden"
         ],
         "type": "object",
         "x-activediq-tag": "reports"
@@ -6909,6 +7151,16 @@
           "period": {
             "$ref": "#/components/schemas/ReportPeriod"
           },
+          "showHidden": {
+            "description": "Keys of the definition's hidden groups to include in the rows instead of only counting them in the header (for example probable service accounts). A key the definition does not declare is refused; a locked group cannot be shown. Absent keeps every hidden group hidden. Stored with the run parameters.",
+            "items": {
+              "maxLength": 64,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 16,
+            "type": "array"
+          },
           "subjects": {
             "items": {
               "$ref": "#/components/schemas/ReportSubjectRef"
@@ -8118,6 +8370,87 @@
         "type": "object",
         "x-activediq-tag": "objects"
       },
+      "VerificationCheck": {
+        "additionalProperties": false,
+        "description": "One check of the run (V1 to V9 for an AD forest, EV1 to EV5 for an Entra tenant). reason is a stable code, null on a pass; message is a fixed text for that code. Neither carries a DN, an object or account name, a directory result text or a secret.",
+        "properties": {
+          "check": {
+            "pattern": "^(V[1-9]|EV[1-5])$",
+            "type": "string"
+          },
+          "findingCount": {
+            "description": "Findings the run recorded under this check. The findings themselves are not in this answer.",
+            "maximum": 50000,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "message": {
+            "maxLength": 512,
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "outcome": {
+            "$ref": "#/components/schemas/VerificationOutcome"
+          },
+          "reason": {
+            "pattern": "^[a-z0-9_.]{1,64}$",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "title": {
+            "maxLength": 128,
+            "type": "string"
+          }
+        },
+        "required": [
+          "check",
+          "title",
+          "outcome",
+          "reason",
+          "message",
+          "findingCount"
+        ],
+        "type": "object",
+        "x-activediq-tag": "connections"
+      },
+      "VerificationKind": {
+        "description": "Why the run happened. verifyConnection records onboarding runs.",
+        "enum": [
+          "onboarding"
+        ],
+        "type": "string",
+        "x-activediq-enum": "open",
+        "x-activediq-tag": "connections"
+      },
+      "VerificationOutcome": {
+        "description": "The result of one check. warn is shown and does not block; could_not_verify blocks where the answer decides a security verdict.",
+        "enum": [
+          "pass",
+          "warn",
+          "fail",
+          "could_not_verify",
+          "not_run"
+        ],
+        "type": "string",
+        "x-activediq-enum": "open",
+        "x-activediq-tag": "connections"
+      },
+      "VerificationVerdict": {
+        "description": "pass, refused (over-privilege only, overridable), could_not_verify or failed.",
+        "enum": [
+          "pass",
+          "refused",
+          "could_not_verify",
+          "failed"
+        ],
+        "type": "string",
+        "x-activediq-enum": "open",
+        "x-activediq-tag": "connections"
+      },
       "VerifyCallerVerificationRequest": {
         "additionalProperties": false,
         "description": "The six digits the caller read back, held as a secret and destroyed after the request.",
@@ -8770,6 +9103,95 @@
         "x-permission": "authenticated"
       }
     },
+    "/connections": {
+      "post": {
+        "description": "Creates a connection in the draft state (DM-10, spec L1) and answers it with its id. Nothing is read from the directory and nothing is activated: the connection has no directoryIdentity until a verification (verifyConnection) reads it. The connection binds an existing directory credential by credentialId (a gMSA, a keytab reference or an Entra certificate registered through the credential flow); this operation never accepts a password, keytab or key, so a secret cannot travel in this body. An AD forest needs transport ldaps or starttls, and an Entra tenant takes none. There is no option to skip certificate validation. Needs a fresh step-up (TM section 7.4, directory credential or connection changes). The Idempotency-Key is the request ID of the audit event: a retry with the same key and body answers the connection already created and changes nothing, and the same key with a different body is refused. A credential that does not exist, or that another connection already binds, answers 400 with a per-field error.",
+        "operationId": "createConnection",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ConnectionIdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "example": {
+                "credentialId": "7b1d4e90-3c52-4f0a-8a61-0e2f9d6c4b13",
+                "displayName": "corp.example.com",
+                "kind": "ad_forest",
+                "transport": "ldaps"
+              },
+              "schema": {
+                "$ref": "#/components/schemas/ConnectionCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "createdAt": "2026-11-15T13:40:00Z",
+                  "credentialId": "7b1d4e90-3c52-4f0a-8a61-0e2f9d6c4b13",
+                  "directoryIdentity": null,
+                  "displayName": "corp.example.com",
+                  "id": "3f0c8a52-6a1e-4c1b-9d57-2a7b1e5c9a10",
+                  "kind": "ad_forest",
+                  "lastVerificationId": null,
+                  "state": "draft",
+                  "transport": "ldaps",
+                  "updatedAt": "2026-11-15T13:40:00Z",
+                  "verifiedAt": null
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/Connection"
+                }
+              }
+            },
+            "description": "The connection is created, in draft"
+          },
+          "400": {
+            "$ref": "#/components/responses/Validation"
+          },
+          "401": {
+            "$ref": "#/components/responses/StepUpRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
+          },
+          "422": {
+            "$ref": "#/components/responses/IdempotencyKeyReuse"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          }
+        },
+        "summary": "Create a directory connection (a draft)",
+        "tags": [
+          "connections"
+        ],
+        "x-activediq-limits": {
+          "class": "write",
+          "maxBodyBytes": 2048
+        },
+        "x-activediq-parity": [
+          "ADM-002"
+        ],
+        "x-activediq-stability": "preview",
+        "x-permission": "connections.manage"
+      }
+    },
     "/connections/health": {
       "get": {
         "description": "Answers one row per directory connection in the caller's tenant that the caller may read, for the Home \"Directory health\" and \"Needs you\" panels. The row set is trimmed to the connections the caller's connections.read grant covers before anything is counted or ordered; a connection outside it is not in the answer and not in any total. Rows are ordered by displayName, then id, so the order is stable. state is synced (last sync inside its expected interval, every DC reachable), lagging (the last successful sync is older than the interval, or some but not all DCs are unreachable), dc_unreachable (no DC is reachable) or suspended (an administrator paused the connection). lastSyncAt is null and lagSeconds is null when the connection has never synced. The rows carry no credential, keytab, bind identity or service-account DN. A tenant with no connection answers 200 with an empty items list. A caller without connections.read gets 403 (never an empty list) and learns nothing about which connections exist; getConnectionSummary is the count any signed-in administrator may read.",
@@ -8949,6 +9371,69 @@
         "x-permission": "anonymous"
       }
     },
+    "/connections/{connectionId}": {
+      "get": {
+        "description": "Answers one connection the caller's connections.read grant covers: its kind, name, DM-10 lifecycle state, transport, verified directory identity (null until a verification has read it), the id of the credential it binds (a reference, never material) and the time of its last verification. A connection outside the grant, or in another tenant, answers 404, the same as one that does not exist. The answer carries no secret, bind identity or findings; the per-check result of a run is the answer of verifyConnection, which needs connections.verify (FR-16).",
+        "operationId": "getConnection",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ConnectionId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "createdAt": "2026-11-15T13:40:00Z",
+                  "credentialId": "7b1d4e90-3c52-4f0a-8a61-0e2f9d6c4b13",
+                  "directoryIdentity": "0b4f1c3e-52d7-4a68-9e0b-6c1d7a3f8e25",
+                  "displayName": "corp.example.com",
+                  "id": "3f0c8a52-6a1e-4c1b-9d57-2a7b1e5c9a10",
+                  "kind": "ad_forest",
+                  "lastVerificationId": "5d2a9c71-8e34-4b06-a1f7-3c9e0d5b6a42",
+                  "state": "draft",
+                  "transport": "ldaps",
+                  "updatedAt": "2026-11-15T13:41:12Z",
+                  "verifiedAt": "2026-11-15T13:41:12Z"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/Connection"
+                }
+              }
+            },
+            "description": "The connection"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          }
+        },
+        "summary": "Read a directory connection",
+        "tags": [
+          "connections"
+        ],
+        "x-activediq-limits": {
+          "class": "read"
+        },
+        "x-activediq-parity": [
+          "ADM-002"
+        ],
+        "x-activediq-stability": "preview",
+        "x-permission": "connections.read"
+      }
+    },
     "/connections/{connectionId}/takeover-attestation": {
       "post": {
         "description": "Starts the TM-D17 attestation of an Entra connection. The answer is the IdP sign-in URL (authorization code with PKCE, one delegated read-only scope, no offline access) at which a Global Administrator of that tenant signs in. The server then makes the one read of the tenant's sync features itself and discards the token. Needs a fresh step-up.",
@@ -9055,6 +9540,121 @@
         },
         "x-activediq-stability": "preview",
         "x-permission": "connections.takeover.attest"
+      }
+    },
+    "/connections/{connectionId}/verify": {
+      "post": {
+        "description": "Runs the onboarding verification (spec section 7, TM section 6.5 for AD and 6.6 for Entra) against a connection in draft and answers the recorded run: one row per check, each pass, warn, fail, could_not_verify or not_run with a stable reason code and a fixed, safe message. The run ends back in draft whatever the verdict (DM-10.I10); it never activates. A verdict of pass needs every required check answered, and an over-privilege or read-sufficiency question that could not be answered is could_not_verify, never a pass. The run is synchronous: the answer is the completed run, and a run that did not complete (the connector stream ended without its completion message) is answered 503, records no result and can be repeated. A connection that is not a draft answers 409 wrong_state. Reasons and messages never carry a DN, object name, account name, directory result text or secret; the objects behind a finding are read through the findings view, which needs connections.verify and is not part of this answer. The Idempotency-Key is the request ID of the audit events: a retry with the same key answers the run already recorded and does not start another.",
+        "operationId": "verifyConnection",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ConnectionId"
+          },
+          {
+            "$ref": "#/components/parameters/ConnectionIdempotencyKey"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "connection": {
+                    "createdAt": "2026-11-15T13:40:00Z",
+                    "credentialId": "7b1d4e90-3c52-4f0a-8a61-0e2f9d6c4b13",
+                    "directoryIdentity": "0b4f1c3e-52d7-4a68-9e0b-6c1d7a3f8e25",
+                    "displayName": "corp.example.com",
+                    "id": "3f0c8a52-6a1e-4c1b-9d57-2a7b1e5c9a10",
+                    "kind": "ad_forest",
+                    "lastVerificationId": "5d2a9c71-8e34-4b06-a1f7-3c9e0d5b6a42",
+                    "state": "draft",
+                    "transport": "ldaps",
+                    "updatedAt": "2026-11-15T13:41:12Z",
+                    "verifiedAt": "2026-11-15T13:41:12Z"
+                  },
+                  "verification": {
+                    "checkListVersion": 1,
+                    "checks": [
+                      {
+                        "check": "V5",
+                        "findingCount": 0,
+                        "message": null,
+                        "outcome": "pass",
+                        "reason": null,
+                        "title": "Identity"
+                      },
+                      {
+                        "check": "V7",
+                        "findingCount": 1,
+                        "message": "The identity is a member of a Tier-0 group.",
+                        "outcome": "fail",
+                        "reason": "tier0_group_member",
+                        "title": "Over-privilege"
+                      },
+                      {
+                        "check": "V8",
+                        "findingCount": 0,
+                        "message": null,
+                        "outcome": "pass",
+                        "reason": null,
+                        "title": "Read sufficiency"
+                      }
+                    ],
+                    "completedAt": "2026-11-15T13:41:12Z",
+                    "id": "5d2a9c71-8e34-4b06-a1f7-3c9e0d5b6a42",
+                    "kind": "onboarding",
+                    "startedAt": "2026-11-15T13:41:03Z",
+                    "verdict": "refused"
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectionVerificationResult"
+                }
+              }
+            },
+            "description": "The completed run and the connection as it stands after it"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/IdempotencyKeyReuse"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "503": {
+            "$ref": "#/components/responses/DirectoryUnavailable"
+          }
+        },
+        "summary": "Verify a draft connection (the onboarding rights check)",
+        "tags": [
+          "connections"
+        ],
+        "x-activediq-limits": {
+          "class": "write",
+          "maxBodyBytes": 1024
+        },
+        "x-activediq-parity": [
+          "ADM-002"
+        ],
+        "x-activediq-stability": "preview",
+        "x-permission": "connections.verify"
       }
     },
     "/directory/explorer/nodes/{objectGuid}": {

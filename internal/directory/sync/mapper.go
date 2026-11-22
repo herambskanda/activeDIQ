@@ -441,6 +441,13 @@ func (m *Mapper) principal(out *Mapped, set attrSet) error {
 		}
 		has := len(vs) > 0
 		o.HasSPN = &has
+		// The whole list, not the 64 kept for search: a cluster class value must not fall off the end.
+		spns, _, err := texts(set, "servicePrincipalName", 1024)
+		if err != nil {
+			return err
+		}
+		cluster := inventory.IsClusterSPN(spns)
+		o.ClusterSPN = &cluster
 	}
 	out.PrimaryGroup = m.primaryGroup(o)
 	return nil

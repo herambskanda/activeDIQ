@@ -4,9 +4,14 @@
 //
 // The static list is the one source for everything that must recognise a secret attribute by name,
 // the fitness-domain-keys check (no column named for one outside the sealed allow-list) among them.
+// The operation runner may not import this package (the kernel imports nothing above it), so it takes
+// IsStatic through operation.Config.SecretAttr, which the composition root supplies.
 package secretattr
 
-import "slices"
+import (
+	"slices"
+	"strings"
+)
 
 // static is §3.7's static list, as the schema's ldapDisplayName spells each attribute.
 var static = []string{
@@ -18,5 +23,20 @@ var static = []string{
 	"msPKIAccountCredentials", "msPKIDPAPIMasterKeys",
 }
 
+// staticFold is static, lower-cased: AD attribute names are case-insensitive.
+var staticFold = func() map[string]struct{} {
+	m := make(map[string]struct{}, len(static))
+	for _, a := range static {
+		m[strings.ToLower(a)] = struct{}{}
+	}
+	return m
+}()
+
 // Static returns a copy of the static list.
 func Static() []string { return slices.Clone(static) }
+
+// IsStatic reports whether name is on the static list, ignoring case.
+func IsStatic(name string) bool {
+	_, ok := staticFold[strings.ToLower(name)]
+	return ok
+}

@@ -1,8 +1,219 @@
+# Directory connections: create, read and verify (T-1920), connection health (T-1834), count (T-1842).
 # TM-D17 hybrid-trust attestation of an Entra connection (threat model section 6.8, DM-10.I7).
 # Start and SetMaxAge need connections.takeover.attest over the connection's entra_tenant scope and a fresh
 # step-up (section 7.4). The callback is the browser's return from the IdP (AN-11): it carries no
 # credential of ours, so the state it presents is the credential.
 paths:
+  /connections:
+    post:
+      tags: [connections]
+      operationId: createConnection
+      summary: Create a directory connection (a draft)
+      description: >-
+        Creates a connection in the draft state (DM-10, spec L1) and answers it with its id. Nothing is read
+        from the directory and nothing is activated: the connection has no directoryIdentity until a
+        verification (verifyConnection) reads it. The connection binds an existing directory credential by
+        credentialId (a gMSA, a keytab reference or an Entra certificate registered through the credential
+        flow); this operation never accepts a password, keytab or key, so a secret cannot travel in this
+        body. An AD forest needs transport ldaps or starttls, and an Entra tenant takes none. There is no
+        option to skip certificate validation. Needs a fresh step-up (TM section 7.4, directory credential or
+        connection changes). The Idempotency-Key is the request ID of the audit event: a retry with the same
+        key and body answers the connection already created and changes nothing, and the same key with a
+        different body is refused. A credential that does not exist, or that another connection already
+        binds, answers 400 with a per-field error.
+      x-permission: connections.manage
+      x-activediq-stability: preview
+      x-activediq-limits:
+        class: write
+        maxBodyBytes: 2048
+      x-activediq-parity: [ADM-002]
+      parameters:
+        - $ref: modules/connections.yaml#/components/parameters/ConnectionIdempotencyKey
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: modules/connections.yaml#/components/schemas/ConnectionCreate
+            example:
+              kind: ad_forest
+              displayName: corp.example.com
+              credentialId: 7b1d4e90-3c52-4f0a-8a61-0e2f9d6c4b13
+              transport: ldaps
+      responses:
+        "201":
+          description: The connection is created, in draft
+          content:
+            application/json:
+              schema:
+                $ref: modules/connections.yaml#/components/schemas/Connection
+              example:
+                id: 3f0c8a52-6a1e-4c1b-9d57-2a7b1e5c9a10
+                kind: ad_forest
+                displayName: corp.example.com
+                state: draft
+                transport: ldaps
+                directoryIdentity: null
+                credentialId: 7b1d4e90-3c52-4f0a-8a61-0e2f9d6c4b13
+                lastVerificationId: null
+                verifiedAt: null
+                createdAt: "2026-11-15T13:40:00Z"
+                updatedAt: "2026-11-15T13:40:00Z"
+        "400":
+          $ref: shared/problems.yaml#/components/responses/Validation
+        "401":
+          $ref: shared/problems.yaml#/components/responses/StepUpRequired
+        "403":
+          $ref: shared/problems.yaml#/components/responses/Forbidden
+        "413":
+          $ref: shared/problems.yaml#/components/responses/PayloadTooLarge
+        "415":
+          $ref: shared/problems.yaml#/components/responses/UnsupportedMediaType
+        "422":
+          $ref: shared/problems.yaml#/components/responses/IdempotencyKeyReuse
+        "429":
+          $ref: shared/problems.yaml#/components/responses/RateLimited
+        "500":
+          $ref: shared/problems.yaml#/components/responses/Internal
+  /connections/{connectionId}:
+    get:
+      tags: [connections]
+      operationId: getConnection
+      summary: Read a directory connection
+      description: >-
+        Answers one connection the caller's connections.read grant covers: its kind, name, DM-10 lifecycle
+        state, transport, verified directory identity (null until a verification has read it), the id of the
+        credential it binds (a reference, never material) and the time of its last verification. A connection
+        outside the grant, or in another tenant, answers 404, the same as one that does not exist. The
+        answer carries no secret, bind identity or findings; the per-check result of a run is the answer of
+        verifyConnection, which needs connections.verify (FR-16).
+      x-permission: connections.read
+      x-activediq-stability: preview
+      x-activediq-limits:
+        class: read
+      x-activediq-parity: [ADM-002]
+      parameters:
+        - $ref: modules/connections.yaml#/components/parameters/ConnectionId
+      responses:
+        "200":
+          description: The connection
+          content:
+            application/json:
+              schema:
+                $ref: modules/connections.yaml#/components/schemas/Connection
+              example:
+                id: 3f0c8a52-6a1e-4c1b-9d57-2a7b1e5c9a10
+                kind: ad_forest
+                displayName: corp.example.com
+                state: draft
+                transport: ldaps
+                directoryIdentity: 0b4f1c3e-52d7-4a68-9e0b-6c1d7a3f8e25
+                credentialId: 7b1d4e90-3c52-4f0a-8a61-0e2f9d6c4b13
+                lastVerificationId: 5d2a9c71-8e34-4b06-a1f7-3c9e0d5b6a42
+                verifiedAt: "2026-11-15T13:41:12Z"
+                createdAt: "2026-11-15T13:40:00Z"
+                updatedAt: "2026-11-15T13:41:12Z"
+        "401":
+          $ref: shared/problems.yaml#/components/responses/Unauthenticated
+        "403":
+          $ref: shared/problems.yaml#/components/responses/Forbidden
+        "404":
+          $ref: shared/problems.yaml#/components/responses/NotFound
+        "429":
+          $ref: shared/problems.yaml#/components/responses/RateLimited
+        "500":
+          $ref: shared/problems.yaml#/components/responses/Internal
+  /connections/{connectionId}/verify:
+    post:
+      tags: [connections]
+      operationId: verifyConnection
+      summary: Verify a draft connection (the onboarding rights check)
+      description: >-
+        Runs the onboarding verification (spec section 7, TM section 6.5 for AD and 6.6 for Entra) against a
+        connection in draft and answers the recorded run: one row per check, each pass, warn, fail,
+        could_not_verify or not_run with a stable reason code and a fixed, safe message. The run ends back in
+        draft whatever the verdict (DM-10.I10); it never activates. A verdict of pass needs every required
+        check answered, and an over-privilege or read-sufficiency question that could not be answered is
+        could_not_verify, never a pass. The run is synchronous: the answer is the completed run, and a run
+        that did not complete (the connector stream ended without its completion message) is answered 503,
+        records no result and can be repeated. A connection that is not a draft answers 409 wrong_state.
+        Reasons and messages never carry a DN, object name, account name, directory result text or secret;
+        the objects behind a finding are read through the findings view, which needs connections.verify and
+        is not part of this answer. The Idempotency-Key is the request ID of the audit events: a retry with
+        the same key answers the run already recorded and does not start another.
+      x-permission: connections.verify
+      x-activediq-stability: preview
+      x-activediq-limits:
+        class: write
+        maxBodyBytes: 1024
+      x-activediq-parity: [ADM-002]
+      parameters:
+        - $ref: modules/connections.yaml#/components/parameters/ConnectionId
+        - $ref: modules/connections.yaml#/components/parameters/ConnectionIdempotencyKey
+      responses:
+        "200":
+          description: The completed run and the connection as it stands after it
+          content:
+            application/json:
+              schema:
+                $ref: modules/connections.yaml#/components/schemas/ConnectionVerificationResult
+              example:
+                connection:
+                  id: 3f0c8a52-6a1e-4c1b-9d57-2a7b1e5c9a10
+                  kind: ad_forest
+                  displayName: corp.example.com
+                  state: draft
+                  transport: ldaps
+                  directoryIdentity: 0b4f1c3e-52d7-4a68-9e0b-6c1d7a3f8e25
+                  credentialId: 7b1d4e90-3c52-4f0a-8a61-0e2f9d6c4b13
+                  lastVerificationId: 5d2a9c71-8e34-4b06-a1f7-3c9e0d5b6a42
+                  verifiedAt: "2026-11-15T13:41:12Z"
+                  createdAt: "2026-11-15T13:40:00Z"
+                  updatedAt: "2026-11-15T13:41:12Z"
+                verification:
+                  id: 5d2a9c71-8e34-4b06-a1f7-3c9e0d5b6a42
+                  kind: onboarding
+                  verdict: refused
+                  startedAt: "2026-11-15T13:41:03Z"
+                  completedAt: "2026-11-15T13:41:12Z"
+                  checkListVersion: 1
+                  checks:
+                    - check: V5
+                      title: Identity
+                      outcome: pass
+                      reason: null
+                      message: null
+                      findingCount: 0
+                    - check: V7
+                      title: Over-privilege
+                      outcome: fail
+                      reason: tier0_group_member
+                      message: The identity is a member of a Tier-0 group.
+                      findingCount: 1
+                    - check: V8
+                      title: Read sufficiency
+                      outcome: pass
+                      reason: null
+                      message: null
+                      findingCount: 0
+        "401":
+          $ref: shared/problems.yaml#/components/responses/Unauthenticated
+        "403":
+          $ref: shared/problems.yaml#/components/responses/Forbidden
+        "404":
+          $ref: shared/problems.yaml#/components/responses/NotFound
+        "409":
+          $ref: shared/problems.yaml#/components/responses/Conflict
+        "413":
+          $ref: shared/problems.yaml#/components/responses/PayloadTooLarge
+        "422":
+          $ref: shared/problems.yaml#/components/responses/IdempotencyKeyReuse
+        "429":
+          $ref: shared/problems.yaml#/components/responses/RateLimited
+        "500":
+          $ref: shared/problems.yaml#/components/responses/Internal
+        "503":
+          $ref: shared/problems.yaml#/components/responses/DirectoryUnavailable
   /connections/health:
     get:
       tags: [connections]
@@ -223,15 +434,187 @@ paths:
           $ref: shared/problems.yaml#/components/responses/Internal
 components:
   parameters:
+    ConnectionIdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: The request ID. It names the audit events of the change and makes a retry safe.
+      schema:
+        type: string
+        minLength: 8
+        maxLength: 128
+        pattern: ^[A-Za-z0-9._~-]+$
     ConnectionId:
       name: connectionId
       in: path
       required: true
-      description: The Entra connection.
+      description: The connection.
       schema:
         type: string
         format: uuid
   schemas:
+    ConnectionKind:
+      description: ad_forest (a whole AD forest) or entra_tenant.
+      type: string
+      x-activediq-enum: open
+      enum: [ad_forest, entra_tenant]
+    ConnectionTransport:
+      description: How an AD connection secures LDAP. There is no third value and no way to skip certificate validation.
+      type: string
+      x-activediq-enum: open
+      enum: [ldaps, starttls]
+    ConnectionKindInput:
+      description: The kinds createConnection accepts.
+      type: string
+      enum: [ad_forest, entra_tenant]
+    ConnectionTransportInput:
+      description: The transports createConnection accepts.
+      type: string
+      enum: [ldaps, starttls]
+    ConnectionLifecycleState:
+      description: The DM-10 lifecycle state. Health is a separate reading (ConnectionHealthState).
+      type: string
+      x-activediq-enum: open
+      enum: [draft, verifying, active, suspended, decommissioning, removed, discarded]
+    ConnectionCreate:
+      description: >-
+        What createConnection needs. transport is required for ad_forest and must be absent for
+        entra_tenant. There is no field for a secret.
+      type: object
+      required: [kind, displayName, credentialId]
+      additionalProperties: false
+      properties:
+        kind:
+          $ref: modules/connections.yaml#/components/schemas/ConnectionKindInput
+        displayName:
+          type: string
+          minLength: 1
+          maxLength: 200
+        credentialId:
+          description: The directory credential to bind, by id. A reference, never material.
+          type: string
+          format: uuid
+        transport:
+          $ref: modules/connections.yaml#/components/schemas/ConnectionTransportInput
+    Connection:
+      description: One directory connection (DM-10). Nothing here is a credential or a bind identity. transport is absent for an Entra tenant.
+      type: object
+      required: [id, kind, displayName, state, directoryIdentity, credentialId, lastVerificationId, verifiedAt, createdAt, updatedAt]
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          format: uuid
+        kind:
+          $ref: modules/connections.yaml#/components/schemas/ConnectionKind
+        displayName:
+          type: string
+          maxLength: 200
+        state:
+          $ref: modules/connections.yaml#/components/schemas/ConnectionLifecycleState
+        transport:
+          $ref: modules/connections.yaml#/components/schemas/ConnectionTransport
+        directoryIdentity:
+          description: The forest root NC objectGUID or the Entra tenant id, in lower-case UUID text. Null until a verification has read it.
+          type: [string, "null"]
+          format: uuid
+        credentialId:
+          type: string
+          format: uuid
+        lastVerificationId:
+          type: [string, "null"]
+          format: uuid
+        verifiedAt:
+          description: When the last recorded verification completed, UTC. Null when none has.
+          type: [string, "null"]
+          format: date-time
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    VerificationKind:
+      description: Why the run happened. verifyConnection records onboarding runs.
+      type: string
+      x-activediq-enum: open
+      enum: [onboarding]
+    VerificationVerdict:
+      description: pass, refused (over-privilege only, overridable), could_not_verify or failed.
+      type: string
+      x-activediq-enum: open
+      enum: [pass, refused, could_not_verify, failed]
+    VerificationOutcome:
+      description: The result of one check. warn is shown and does not block; could_not_verify blocks where the answer decides a security verdict.
+      type: string
+      x-activediq-enum: open
+      enum: [pass, warn, fail, could_not_verify, not_run]
+    VerificationCheck:
+      description: >-
+        One check of the run (V1 to V9 for an AD forest, EV1 to EV5 for an Entra tenant). reason is a stable
+        code, null on a pass; message is a fixed text for that code. Neither carries a DN, an object or
+        account name, a directory result text or a secret.
+      type: object
+      required: [check, title, outcome, reason, message, findingCount]
+      additionalProperties: false
+      properties:
+        check:
+          type: string
+          pattern: ^(V[1-9]|EV[1-5])$
+        title:
+          type: string
+          maxLength: 128
+        outcome:
+          $ref: modules/connections.yaml#/components/schemas/VerificationOutcome
+        reason:
+          type: [string, "null"]
+          pattern: ^[a-z0-9_.]{1,64}$
+        message:
+          type: [string, "null"]
+          maxLength: 512
+        findingCount:
+          description: Findings the run recorded under this check. The findings themselves are not in this answer.
+          type: integer
+          minimum: 0
+          maximum: 50000
+    ConnectionVerification:
+      description: One recorded onboarding run (DM-24), without its findings.
+      type: object
+      required: [id, kind, verdict, startedAt, completedAt, checkListVersion, checks]
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          format: uuid
+        kind:
+          $ref: modules/connections.yaml#/components/schemas/VerificationKind
+        verdict:
+          $ref: modules/connections.yaml#/components/schemas/VerificationVerdict
+        startedAt:
+          type: string
+          format: date-time
+        completedAt:
+          type: string
+          format: date-time
+        checkListVersion:
+          type: integer
+          minimum: 1
+          maximum: 1000
+        checks:
+          type: array
+          maxItems: 16
+          items:
+            $ref: modules/connections.yaml#/components/schemas/VerificationCheck
+    ConnectionVerificationResult:
+      description: The completed run and the connection after it.
+      type: object
+      required: [connection, verification]
+      additionalProperties: false
+      properties:
+        connection:
+          $ref: modules/connections.yaml#/components/schemas/Connection
+        verification:
+          $ref: modules/connections.yaml#/components/schemas/ConnectionVerification
     ConnectionHealthList:
       description: One row per readable connection. Not paged, because a tenant has few connections; at most 256.
       type: object

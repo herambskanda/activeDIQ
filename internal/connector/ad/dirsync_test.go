@@ -135,7 +135,7 @@ func TestDecodeChangeNormalisesAndStrips(t *testing.T) {
 		attr("ms-Mcs-AdmPwd", "laps"),
 		attr("whenChanged", "20260101000000.0Z"), // not requested: ignored, not a secret, not counted
 	)
-	oc, dropped, err := s.decodeChange(e, wantSet("member", "description", "displayName", "pwdLastSet"))
+	oc, dropped, err := s.decodeChange(e, wantSet("member", "description", "displayName", "pwdLastSet"), true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -196,26 +196,33 @@ func TestDecodeChangeStates(t *testing.T) {
 	notDeleted := ldapEntry("CN=a", rawAttr("objectGUID", g.Bytes()), attr("isDeleted", "FALSE"), attr("isRecycled", "FALSE"))
 	for _, c := range []struct {
 		e    *ldap.Entry
+		bin  bool
 		want ChangeState
-	}{{live, StateLive}, {del, StateDeleted}, {rec, StateRecycled}, {recFirst, StateRecycled}, {delFirst, StateDeleted}, {notDeleted, StateLive}} {
-		oc, _, err := s.decodeChange(c.e, wantSet())
+	}{
+		{live, true, StateLive}, {live, false, StateLive}, {notDeleted, false, StateLive},
+		// Recycle Bin on: DELETED is restorable, RECYCLED is not, isRecycled wins in any attribute order.
+		{del, true, StateDeleted}, {delFirst, true, StateDeleted}, {rec, true, StateRecycled}, {recFirst, true, StateRecycled},
+		// Recycle Bin off (T-1270): every deleted object is a TOMBSTONE, never RECYCLED, never DELETED.
+		{del, false, StateTombstone}, {delFirst, false, StateTombstone}, {rec, false, StateTombstone}, {recFirst, false, StateTombstone},
+	} {
+		oc, _, err := s.decodeChange(c.e, wantSet(), c.bin)
 		if err != nil || oc.State != c.want || oc.HasParent {
-			t.Errorf("%s: %+v %v", c.e.DN, oc, err)
+			t.Errorf("%s bin=%v: %+v %v", c.e.DN, c.bin, oc, err)
 		}
 	}
-	oc, _, _ := s.decodeChange(del, wantSet())
+	oc, _, _ := s.decodeChange(del, wantSet(), true)
 	if oc.DN != del.DN || len(oc.Attributes) != 1 || oc.Attributes[0].Name != "lastKnownParent" {
 		t.Errorf("tombstone: %+v", oc)
 	}
 	// An entry with no objectGUID, or a malformed one, is an error and never an anonymous change.
-	if _, _, err := s.decodeChange(ldapEntry("CN=x"), wantSet()); CodeOf(err) != CodeProtocol {
+	if _, _, err := s.decodeChange(ldapEntry("CN=x"), wantSet(), true); CodeOf(err) != CodeProtocol {
 		t.Errorf("missing GUID: %v", err)
 	}
-	if _, _, err := s.decodeChange(ldapEntry("CN=x", rawAttr("objectGUID", []byte{1, 2})), wantSet()); CodeOf(err) != CodeProtocol {
+	if _, _, err := s.decodeChange(ldapEntry("CN=x", rawAttr("objectGUID", []byte{1, 2})), wantSet(), true); CodeOf(err) != CodeProtocol {
 		t.Errorf("short GUID: %v", err)
 	}
 	// An unexpected range on a feed entry fails the batch rather than guessing.
-	if _, _, err := s.decodeChange(ldapEntry("CN=x", rawAttr("objectGUID", g.Bytes()), attr("member;range=0-1499", "a")), wantSet("member")); CodeOf(err) != CodeProtocol {
+	if _, _, err := s.decodeChange(ldapEntry("CN=x", rawAttr("objectGUID", g.Bytes()), attr("member;range=0-1499", "a")), wantSet("member"), true); CodeOf(err) != CodeProtocol {
 		t.Errorf("paging range: %v", err)
 	}
 }
@@ -225,7 +232,7 @@ func TestDecodeChangeMergesSplitRangeAttributes(t *testing.T) {
 	g := guid.GUID{7}
 	e := ldapEntry("CN=G", rawAttr("objectGUID", g.Bytes()),
 		attr("member;range=1-1", "a"), attr("member;range=1-1", "b"))
-	oc, _, err := s.decodeChange(e, wantSet("member"))
+	oc, _, err := s.decodeChange(e, wantSet("member"), true)
 	if err != nil || len(oc.Attributes) != 1 || len(oc.Attributes[0].Values) != 2 {
 		t.Fatalf("%+v %v", oc, err)
 	}
@@ -311,5 +318,25 @@ func TestDirSyncRequestHasNoFlagsOrControls(t *testing.T) {
 	}
 	if want := []string{"NC", "Cookie", "Attributes"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("DirSyncRequest fields %v, want %v", got, want)
+	}
+}
+
+func TestHasRecycleBinFeature(t *testing.T) {
+	const base = "CN=Optional Features,CN=Directory Service,CN=Windows NT,CN=Services,CN=Configuration,DC=lab,DC=test"
+	for _, c := range []struct {
+		name string
+		in   []string
+		want bool
+	}{
+		{"none", nil, false},
+		{"recycle bin", []string{"CN=Recycle Bin Feature," + base}, true},
+		{"case", []string{"cn=recycle bin feature," + base}, true},
+		{"other feature", []string{"CN=Privileged Access Management Feature," + base}, false},
+		{"unparseable then bin", []string{"not a dn", "CN=Recycle Bin Feature," + base}, true},
+		{"cn is a parent, not the object", []string{"CN=X,CN=Recycle Bin Feature," + base}, false},
+	} {
+		if got := hasRecycleBinFeature(c.in); got != c.want {
+			t.Errorf("%s: %v", c.name, got)
+		}
 	}
 }

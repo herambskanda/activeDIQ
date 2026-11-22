@@ -111,7 +111,7 @@ func npmDir(root, rel, name string) bool {
 // .go file there that belongs to our module, and a nested go.mod can be pulled in with a replace
 // directive, so every .go file and go.mod is scanned like any other (T-0083). There is no
 // structural skip: fail closed, and use a reviewed allowlist if an npm package ever ships Go.
-func scanGoOnly(root, rel, module string, checks Checks, out *[]Finding) error {
+func scanGoOnly(root, rel string, env *scanEnv, checks Checks, out *[]Finding) error {
 	return filepath.WalkDir(filepath.Join(root, filepath.FromSlash(rel)), func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -128,7 +128,7 @@ func scanGoOnly(root, rel, module string, checks Checks, out *[]Finding) error {
 			return nil
 		}
 		if strings.EqualFold(filepath.Ext(r), ".go") || d.Name() == "go.mod" || isNativeSource(r) {
-			return scanFile(root, r, module, checks, out)
+			return scanFile(root, r, env, checks, out)
 		}
 		return nil
 	})
@@ -167,6 +167,13 @@ func dirHasSuffix(dir string, suffixes ...string) bool {
 // covers the syntactic half of FF-SP1 to FF-SP3; the go/analysis passes run through Analyze.
 func Scan(root string, checks Checks) ([]Finding, error) {
 	module, _ := modulePath(filepath.Join(root, "go.mod"))
+	env := &scanEnv{module: module}
+	if checks["FF-SP2"] {
+		var cerr error
+		if env.cred, cerr = loadCredentialTypes(root, module); cerr != nil {
+			return nil, cerr
+		}
+	}
 	var out []Finding
 	entered, err := enteredDirs(root, module)
 	if err != nil {
@@ -186,7 +193,7 @@ func Scan(root string, checks Checks) ([]Finding, error) {
 				return fs.SkipDir
 			}
 			if rel != "." && (npmDir(root, rel, d.Name()) || buildOutDir(root, rel, d.Name())) {
-				if err := scanGoOnly(root, rel, module, checks, &out); err != nil {
+				if err := scanGoOnly(root, rel, env, checks, &out); err != nil {
 					return err
 				}
 				return fs.SkipDir
@@ -211,12 +218,12 @@ func Scan(root string, checks Checks) ([]Finding, error) {
 				return nil
 			}
 			// A symlinked file is scanned through the link, as Go compiles it.
-			return scanFile(root, rel, module, checks, &out)
+			return scanFile(root, rel, env, checks, &out)
 		}
 		if isSkippedPath(rel) && !underEntered(rel, entered) {
 			return nil // a file of a skipped directory that no shipped package reaches
 		}
-		return scanFile(root, rel, module, checks, &out)
+		return scanFile(root, rel, env, checks, &out)
 	})
 	if err != nil {
 		return nil, err
@@ -242,7 +249,7 @@ func inRootSkipped(rel string) bool {
 	return nested && rootSkipped[top]
 }
 
-func scanFile(root, rel, module string, checks Checks, out *[]Finding) error {
+func scanFile(root, rel string, env *scanEnv, checks Checks, out *[]Finding) error {
 	ext := strings.ToLower(filepath.Ext(rel))
 	base := filepath.Base(rel)
 	switch {
@@ -251,7 +258,7 @@ func scanFile(root, rel, module string, checks Checks, out *[]Finding) error {
 		if err != nil {
 			return err
 		}
-		if err := scanGo(rel, src, module, checks, out); err != nil {
+		if err := scanGo(rel, src, env, checks, out); err != nil {
 			return fmt.Errorf("%s: %w", rel, err)
 		}
 		scanGoCheckLinkname(rel, src, checks, out)

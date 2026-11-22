@@ -238,6 +238,14 @@ func sdBytes(owner string, aces ...tace) []byte {
 
 // ---- a baseline forest ----
 
+// readReportsACEs are the default Authenticated Users read of all properties, inherited by every
+// child: what V8's directReports/manager read check (T-1749) finds on a healthy head.
+func readReportsACEs() []tace {
+	return []tace{{mask: dsReadProp, flags: aceFlagContainerInherit, trustee: "S-1-5-11"}}
+}
+
+func headSD() []byte { return sdBytes(daSID, readReportsACEs()...) }
+
 type world struct {
 	f        *fakeAD
 	id       *ad.Entry
@@ -261,6 +269,12 @@ func newWorld(t *testing.T) *world {
 	for _, n := range neverDelegateAttrs {
 		f.schemaAttr(n, 0)
 	}
+	for _, n := range reportAttrs {
+		f.schemaAttr(n, 0)
+	}
+	for _, n := range reportClasses {
+		f.schemaClass(n)
+	}
 	w.da, w.daG = f.obj("CN=Domain Admins,CN=Users,DC=lab,DC=test", daSID, nil,
 		map[string][][]byte{"nTSecurityDescriptor": {sdBytes(daSID, tace{mask: dsFullControl, trustee: daSID})}})
 	w.t0, w.t0G = f.obj("CN=AdminSDHolder,CN=System,DC=lab,DC=test", "", nil,
@@ -270,7 +284,7 @@ func newWorld(t *testing.T) *world {
 	f.obj("CN=Domain Users,CN=Users,DC=lab,DC=test", dusSID, nil, nil)
 	// The bound root NC head (guidN(7), the testDirectory() forest root): V8's first-run default.
 	root := guidN(7)
-	f.byGUID[root.String()] = ad.NewEntry("DC=lab,DC=test", map[string][][]byte{"objectGUID": {root.Bytes()}})
+	f.byGUID[root.String()] = ad.NewEntry("DC=lab,DC=test", map[string][][]byte{"objectGUID": {root.Bytes()}, "nTSecurityDescriptor": {headSD()}})
 	w.set = tier0.NewADSet()
 	w.set.Add(w.daG, tier0.C1)
 	w.set.Add(w.t0G, tier0.C3)
@@ -628,10 +642,11 @@ func TestV9ExcessAndMissing(t *testing.T) {
 		tace{mask: dsWriteProp, objType: &w.attrMem, flags: 0x02, trustee: idSIDt},    // benign WP, no finding
 		tace{mask: dsCreateChild, objType: &classUserG, flags: 0x02, trustee: idSIDt}, // R3 expectation met
 		tace{mask: dsCreateChild, flags: 0x02, trustee: idSIDt},                       // create all child objects
+		readReportsACEs()[0],
 	)})
 	ou2, ou2G := w.f.obj("OU=Other,DC=lab,DC=test", "", nil, nil)
 	w.putRaw(ou2, "nTSecurityDescriptor", [][]byte{sdBytes(daSID,
-		tace{mask: dsCreateChild, objType: &classUserG, flags: 0x02, trustee: idSIDt})})
+		tace{mask: dsCreateChild, objType: &classUserG, flags: 0x02, trustee: idSIDt}, readReportsACEs()[0])})
 	// a tier0 root is skipped: it is judged, and blocks, in V7
 	t0root := w.t0G
 	r := w.run(t, ADInput{ManagedRoots: []adguid.GUID{ouG, ou2G, t0root},
@@ -961,7 +976,8 @@ func TestV8EmptyManagedDomainsReadsBoundRoot(t *testing.T) {
 	t.Run("non-empty list leaves the root alone", func(t *testing.T) {
 		w := newWorld(t)
 		w.f.fail[root.String()] = &ad.Error{Code: ad.CodeInsufficientRights}
-		_, g := w.f.obj("DC=other,DC=test", domS, nil, nil)
+		oe, g := w.f.obj("DC=other,DC=test", domS, nil, nil)
+		w.putRaw(oe, "nTSecurityDescriptor", [][]byte{headSD()})
 		r := w.run(t, ADInput{ManagedDomains: []adguid.GUID{g}, RootNC: &root})
 		if r.Verdict != v1.VerificationVerdict_VERIFICATION_VERDICT_PASS || w.f.read[root.String()] {
 			t.Fatalf("root must not be added: %v %v", r.Verdict, codes(r))
@@ -976,6 +992,85 @@ func TestV8EmptyManagedDomainsReadsBoundRoot(t *testing.T) {
 			Snapshot: func(context.Context) (*tier0.ADSet, error) { return set, nil }})
 		if err != nil || r.Verdict != v1.VerificationVerdict_VERIFICATION_VERDICT_COULD_NOT_VERIFY || r.WriteGateOpenable || count(r, CodeUnverifiedAD) == 0 {
 			t.Fatalf("%v %v %v", r.Verdict, codes(r), err)
+		}
+	})
+}
+
+// TestV8ReportsRead: Read on directReports and manager for user, contact and computer in the
+// managed scope (T-1749). LDAP drops an unreadable attribute silently, so an OBJECT_DELETE
+// manager check would pass on "no reports" without it.
+func TestV8ReportsRead(t *testing.T) {
+	var inh byte = aceFlagContainerInherit
+	for _, tc := range []struct {
+		name string
+		aces func(w *world) []tace
+		want int // missing.read_reports findings
+		attr string
+	}{
+		{"default authenticated read-all", func(*world) []tace { return readReportsACEs() }, 0, ""},
+		{"no read ACE at all", func(*world) []tace { return nil }, 6, ""},
+		{"read of other attribute only", func(w *world) []tace {
+			return []tace{{mask: dsReadProp, objType: &w.attrMem, flags: inh, trustee: "S-1-5-11"}}
+		}, 6, ""},
+		{"read of directReports and manager by attribute", func(w *world) []tace {
+			dr, m := w.f.attrs["directreports"].ID, w.f.attrs["manager"].ID
+			return []tace{{mask: dsReadProp, objType: &dr, flags: inh, trustee: "S-1-5-11"}, {mask: dsReadProp, objType: &m, flags: inh, trustee: "S-1-5-11"}}
+		}, 0, ""},
+		{"read of directReports only", func(w *world) []tace {
+			dr := w.f.attrs["directreports"].ID
+			return []tace{{mask: dsReadProp, objType: &dr, flags: inh, trustee: "S-1-5-11"}}
+		}, 3, "manager"},
+		{"deny of directReports beats read-all", func(w *world) []tace {
+			dr := w.f.attrs["directreports"].ID
+			return append([]tace{{deny: true, mask: dsReadProp, objType: &dr, flags: inh, trustee: "S-1-5-11"}}, readReportsACEs()...)
+		}, 3, "directReports"},
+		{"read-all not inheritable to children", func(*world) []tace {
+			return []tace{{mask: dsReadProp, trustee: "S-1-5-11"}}
+		}, 6, ""},
+		{"read-all inheritable to the user class only", func(w *world) []tace {
+			u := w.f.attrs["user"].ID
+			return []tace{{mask: dsReadProp, inh: &u, flags: inh, trustee: "S-1-5-11"}}
+		}, 4, ""},
+		{"read granted to a trustee the identity does not hold", func(*world) []tace {
+			return []tace{{mask: dsReadProp, flags: inh, trustee: "S-1-5-4"}}
+		}, 6, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newWorld(t)
+			ou, ouG := w.f.obj("OU=Managed,DC=lab,DC=test", "", nil, nil)
+			w.putRaw(ou, "nTSecurityDescriptor", [][]byte{sdBytes(daSID, tc.aces(w)...)})
+			r := w.run(t, ADInput{ManagedRoots: []adguid.GUID{ouG}})
+			if n := count(r, CodeMissingReports); n != tc.want {
+				t.Fatalf("missing x%d, want %d: %v", n, tc.want, codes(r))
+			}
+			if tc.want == 0 {
+				if r.Verdict != v1.VerificationVerdict_VERIFICATION_VERDICT_PASS {
+					t.Fatalf("%v %v", r.Verdict, codes(r))
+				}
+				return
+			}
+			if r.Verdict != v1.VerificationVerdict_VERIFICATION_VERDICT_REFUSED {
+				t.Fatalf("must block: %v", r.Verdict)
+			}
+			for _, f := range r.Findings {
+				if f.Code != CodeMissingReports {
+					continue
+				}
+				if f.Check != v8 || f.Kind != v1.FindingKind_FINDING_KIND_MISSING_RIGHT || f.Severity != v1.FindingSeverity_FINDING_SEVERITY_BLOCK {
+					t.Errorf("wrong shape: %v", f.RightsFinding)
+				}
+				if n := f.Right.GetAd().GetObjectTypeName(); n != "directReports" && n != "manager" || tc.attr != "" && n != tc.attr {
+					t.Errorf("right names %q", n)
+				}
+			}
+		})
+	}
+	t.Run("unreadable DACL is not a pass", func(t *testing.T) {
+		w := newWorld(t)
+		_, ouG := w.f.obj("OU=Managed,DC=lab,DC=test", "", nil, nil) // no descriptor returned
+		r := w.run(t, ADInput{ManagedRoots: []adguid.GUID{ouG}})
+		if r.Verdict == v1.VerificationVerdict_VERIFICATION_VERDICT_PASS {
+			t.Fatalf("%v %v", r.Verdict, codes(r))
 		}
 	})
 }
