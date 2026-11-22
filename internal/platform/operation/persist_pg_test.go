@@ -345,11 +345,11 @@ type prig struct {
 }
 
 type rigOpt struct {
-	gate     Gate
-	irrev    bool
-	attempts int
-	slots    int
-	stepUp   bool
+	gate       Gate
+	irrev      bool
+	attempts   int
+	slots      int
+	stepUp     bool
 	stepUpWhen func(Input) (bool, error)
 	secretIn   bool
 	class      Reversibility

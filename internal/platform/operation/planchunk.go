@@ -56,14 +56,14 @@ func (r *Runner) startChunkedPlan(ctx context.Context, t tenant.ID, op opRecord,
 		if cur.State != OpPlanning || cur.Revision != op.Revision {
 			return ErrConflict
 		}
-		for _, q := range []string{
-			`DELETE FROM public.operation_steps WHERE tenant_id = $1::uuid AND operation_id = $2::uuid`,
-			`DELETE FROM public.operation_items WHERE tenant_id = $1::uuid AND operation_id = $2::uuid`,
-			`DELETE FROM public.operation_plan_chunks WHERE tenant_id = $1::uuid AND operation_id = $2::uuid`,
-		} {
-			if _, err := tx.Exec(ctx, q, t.String(), op.ID); err != nil {
-				return fmt.Errorf("operation: clearing the plan: %w", err)
-			}
+		if _, err := tx.Exec(ctx, `DELETE FROM public.operation_steps WHERE tenant_id = $1::uuid AND operation_id = $2::uuid`, t.String(), op.ID); err != nil {
+			return fmt.Errorf("operation: clearing the plan: %w", err)
+		}
+		if _, err := tx.Exec(ctx, `DELETE FROM public.operation_items WHERE tenant_id = $1::uuid AND operation_id = $2::uuid`, t.String(), op.ID); err != nil {
+			return fmt.Errorf("operation: clearing the plan: %w", err)
+		}
+		if _, err := tx.Exec(ctx, `DELETE FROM public.operation_plan_chunks WHERE tenant_id = $1::uuid AND operation_id = $2::uuid`, t.String(), op.ID); err != nil {
+			return fmt.Errorf("operation: clearing the plan: %w", err)
 		}
 		if _, err := tx.Exec(ctx, `UPDATE public.operations SET plan_items = $3, approved_by = NULL, approved_plan_hash = NULL, approved_at = NULL
 WHERE tenant_id = $1::uuid AND id = $2::uuid`, t.String(), op.ID, n); err != nil {

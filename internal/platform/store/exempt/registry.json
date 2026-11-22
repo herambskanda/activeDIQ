@@ -239,6 +239,11 @@
   "platformJobs": [],
   "probeValues": [
     {
+      "column": "public.operation_plan_chunks.chunk_hash",
+      "value": "0000000000000000000000000000000000000000000000000000000000000000",
+      "reason": "CHECK: chunk_hash is 64 lowercase hex characters (operation_plan_chunks_chunk_hash_check); the probe row carries an all-zero placeholder."
+    },
+    {
       "column": "public.migration_jobs.state",
       "value": "quarantined",
       "reason": "CHECK: state is one of a closed set and ties limit_hit, source_sha256 and finished_at to it (migration_jobs_check*); the probe row is an ordinary quarantined job."

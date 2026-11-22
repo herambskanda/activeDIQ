@@ -1,4 +1,4 @@
--- 0094_operation_plan_chunks: durable record of the plan chunks of a bulk operation (ADR-0005 rule 6,
+-- 0096_operation_plan_chunks: durable record of the plan chunks of a bulk operation (ADR-0005 rule 6,
 -- job kind operation.plan; T-2073). Owner: internal/platform/operation.
 --
 -- A bulk operation plans in chunk jobs of operations.chunk_size items. A chunk's rows (items, steps, this
@@ -9,7 +9,7 @@
 
 -- write-class: operation_plan_chunks system
 CREATE TABLE public.operation_plan_chunks (
-  tenant_id uuid NOT NULL,
+  tenant_id uuid NOT NULL REFERENCES public.tenants (id),
   operation_id uuid NOT NULL,
   plan_revision integer NOT NULL CHECK (plan_revision >= 1),
   chunk_no integer NOT NULL CHECK (chunk_no >= 0),
