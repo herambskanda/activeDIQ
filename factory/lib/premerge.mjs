@@ -76,6 +76,20 @@ export const PRE_MERGE_DEFAULTS = Object.freeze({
   // so the failure costs no gate run. A pass changes nothing: the ticket still gets the full gate. Off by default.
   prescreen_ahead: false,
   prescreen_argv: ['make', 'prescreen'],
+  // Merge plan 5.4: how many tickets are pre-screened at the same time, and how far down the line it looks (0 = as many as the
+  // next train). With `prescreen_argv` set to the light filter (`bash factory/bin/light-filter.sh`) this is the stage that sends a
+  // failing ticket back before it uses a gate run.
+  prescreen_parallel: 1,
+  prescreen_lookahead: 0,
+  // Merge plan 5.1: before a ticket is refused for new findings, run the failing jobs once more in the same
+  // candidate tree. A finding counts only if it shows up in both runs, so a flaky test (a block-count tolerance,
+  // a timing check) no longer refuses a good ticket. A `make` command re-runs just the targets that failed
+  // (`FAILED <target>` findings); any other command is run again whole. Off by default.
+  retry_failed_jobs: false,
+  // Merge plan 5.2: a saved baseline of `main` (the result of the gate command on a tree) is only reused on the UTC day
+  // it was made. A check that depends on the date (an expiring deferral) can fail on an unchanged tree after
+  // midnight; without this the old result keeps being used and every ticket looks like it adds the finding. Off by default.
+  baseline_daily_refresh: false,
 });
 
 /**
@@ -110,6 +124,18 @@ export function preMergeSettings(config) {
   }
   if (!Array.isArray(s.prescreen_argv) || !s.prescreen_argv.length || s.prescreen_argv.some((a) => typeof a !== 'string')) {
     throw new FactoryError('dispatcher.pre_merge.prescreen_argv must be a non-empty array of strings');
+  }
+  if (!Number.isInteger(s.prescreen_parallel) || s.prescreen_parallel < 1) {
+    throw new FactoryError('dispatcher.pre_merge.prescreen_parallel must be a whole number of at least 1');
+  }
+  if (!Number.isInteger(s.prescreen_lookahead) || s.prescreen_lookahead < 0) {
+    throw new FactoryError('dispatcher.pre_merge.prescreen_lookahead must be a whole number, 0 or more');
+  }
+  if (typeof s.retry_failed_jobs !== 'boolean') {
+    throw new FactoryError('dispatcher.pre_merge.retry_failed_jobs must be true or false');
+  }
+  if (typeof s.baseline_daily_refresh !== 'boolean') {
+    throw new FactoryError('dispatcher.pre_merge.baseline_daily_refresh must be true or false');
   }
   if (!Number.isInteger(s.reserved_slots) || s.reserved_slots < 0) {
     throw new FactoryError('dispatcher.pre_merge.reserved_slots must be a whole number, 0 or more');
@@ -501,9 +527,11 @@ async function cachedRuns(ctx, settings) {
   let names;
   try { names = fs.readdirSync(dir).filter((n) => n.startsWith('baseline-') && n.endsWith(`-${tag}.json`)); } catch { return []; }
   const entries = [];
+  const today = (ctx.now?.() ?? new Date()).toISOString().slice(0, 10);
   for (const n of names) {
     try {
       const file = path.join(dir, n);
+      if (settings.baseline_daily_refresh && new Date(fs.statSync(file).mtimeMs).toISOString().slice(0, 10) !== today) continue; // made on an earlier UTC day
       const hit = JSON.parse(fs.readFileSync(file, 'utf8'));
       const tree = hit.tree ?? await treeOf(ctx, n.split('-')[1]);
       if (tree) entries.push({ hit, tree, mtime: fs.statSync(file).mtimeMs, name: n.replace(/^baseline-|\.json$/g, '') });
@@ -743,6 +771,34 @@ async function checkMigrationNumbering(ctx, settings, dir, mainSha, subject, { s
   };
 }
 
+/**
+ * Merge plan 5.1: run the jobs that failed once more in the candidate tree and keep only the findings that appear in
+ * both runs. `make`: just the failed targets (`FAILED <target>` keys, same flags); any other command: the whole command.
+ * Returns null when it cannot be scoped or the re-run could not finish (the first run's findings then stand).
+ * @returns {Promise<{argv: string[], log: string, confirmed: Map<string, number>, dropped: string[]}|null>}
+ */
+async function retryFailedJobs(ctx, settings, dir, head, log, members, { signal } = {}) {
+  let argv = settings.argv;
+  if (settings.argv[0] === 'make') {
+    const targets = [...new Set([...head.keys()].map((k) => /^FAILED (\S+)$/.exec(k)?.[1]).filter(Boolean))];
+    if (!targets.length) return null;
+    argv = ['make', ...settings.argv.slice(1).filter((a) => a.startsWith('-')), ...targets];
+  }
+  const log2 = log.replace(/\.log$/, '-retry.log');
+  const ran = await runLogged(argv, dir, log2, { timeoutMs: settings.timeout_minutes * 60_000, signal, env: gateEnv(ctx), timing: false });
+  if (ran.aborted) throw new FactoryError(`pre-merge: the re-run of the failed jobs was stopped (${log2})`);
+  if (ran.timedOut) return null;
+  const { kept: head2 } = excuseRefFindings(extractFindings(readLog(log2), [fs.realpathSync(dir), dir]), members.map(branchName));
+  const confirmed = new Map();
+  const dropped = [];
+  for (const [key, count] of head) {
+    const again = Math.min(count, head2.get(key) ?? 0);
+    if (again > 0) confirmed.set(key, again);
+    if (again < count) dropped.push(key);
+  }
+  return { argv, log: log2, confirmed, dropped };
+}
+
 const mainNumbering = new Map(); // main commit → whether the numbering check fails on main alone
 
 /**
@@ -882,31 +938,44 @@ export async function runPreMergeTrain(ctx, tickets, { signal, argv } = {}) {
         throw new FactoryError(`pre-merge: ${base.note}; ${head.size || onlyExcused ? `${fresh.length} finding(s) of the merge result are not in it, so the gate cannot tell whether ${main} or the branch adds them${named}${fresh.length > 10 ? '\n  …' : ''}` : 'the merge result has no recognisable finding line'}. Logs: ${log}`);
       }
     }
-    const fresh = newFindings(base.code === 0 ? new Map() : base.findings, head);
+    let fresh = newFindings(base.code === 0 ? new Map() : base.findings, head);
+    let retried = null;
+    if (settings.retry_failed_jobs && fresh.length) { // about to refuse: does it reproduce?
+      retried = await retryFailedJobs(ctx, settings, dir, head, log, members, { signal });
+      if (retried) fresh = newFindings(base.code === 0 ? new Map() : base.findings, retried.confirmed);
+    }
+    const retryNote = retried ? (retried.dropped.length ? `; re-ran ${retried.argv.join(' ')} once: ${retried.dropped.length} finding(s) did not reproduce and are not counted (${retried.dropped.slice(0, 3).join(' | ').slice(0, 220)})` : `; re-ran ${retried.argv.join(' ')} once: the findings reproduced`) : '';
     const total = (m) => [...m.values()].reduce((a, b) => a + b, 0);
     const lines = fresh.map((f) => (f.known ? `${f.key}  (${f.extra} more than the ${f.known} on ${main})` : f.extra > 1 ? `${f.key}  (${f.extra} times)` : f.key));
-    if (base.code === 0 && !onlyExcused) {
+    const flakyCleared = Boolean(retried) && fresh.length === 0; // every new finding failed to reproduce on the re-run
+    if (base.code === 0 && !onlyExcused && !flakyCleared) {
       return {
         status: 'blocked', mode: 'main-green', findings: lines, log, baseLog: base.log, ...outcome,
-        summary: `${main} is green and ${settings.argv.join(' ')} fails on the merge result${lines.length ? '' : ' with no recognisable finding line; read the log'}${reuse}`,
+        summary: `${main} is green and ${settings.argv.join(' ')} fails on the merge result${lines.length ? '' : ' with no recognisable finding line; read the log'}${reuse}${retryNote}`,
       };
     }
     if (!head.size && !onlyExcused) {
       return {
         status: 'blocked', mode: 'unrecognised', findings: [], log, baseLog: base.log, ...outcome,
-        summary: `${settings.argv.join(' ')} fails on the merge result and the log has no recognisable finding line, so it cannot be compared with the red ${main}; read the log${reuse}`,
+        summary: `${settings.argv.join(' ')} fails on the merge result and the log has no recognisable finding line, so it cannot be compared with the red ${main}; read the log${reuse}${retryNote}`,
       };
     }
     if (fresh.length) {
       return {
-        status: 'blocked', mode: 'new-findings', findings: lines, log, baseLog: base.log, ...outcome,
-        summary: `${main} is red (${total(base.findings)} known findings) and the merge result adds ${lines.length} that ${main} does not have${reuse}`,
+        status: 'blocked', mode: 'new-findings', findings: lines, log, baseLog: base.log, ...(retried ? { retry: { argv: retried.argv, log: retried.log, dropped: retried.dropped } } : {}), ...outcome,
+        summary: `${main} is red (${total(base.findings)} known findings) and the merge result adds ${lines.length} that ${main} does not have${reuse}${retryNote}`,
       };
+    }
+    if (flakyCleared) { // do not cache a run that contained findings which did not reproduce: they would inflate the next baseline
+      return withRenumber({
+        status: 'pass', mode: 'ratchet', findings: [], log, baseLog: base.log, retry: { argv: retried.argv, log: retried.log, dropped: retried.dropped }, ...outcome,
+        summary: withTiming(`${base.code === 0 ? `${main} is green` : `${main} is red (${total(base.findings)} known findings)`}; after re-running the failed jobs once the merge result adds no finding that ${main} does not have${reuse}${retryNote}`),
+      });
     }
     await recordBaseline(ctx, settings, headTree, { code: ran.code, findings: head, log }, name);
     return withRenumber({
       status: 'pass', mode: 'ratchet', findings: [], log, baseLog: base.log, ...outcome,
-      summary: withTiming(base.code === 0 ? `${main} is green; the merge result is red only for ${excused.length} branch finding(s) that are not the candidate's${reuse}` : `${main} is red (${total(base.findings)} known findings); the merge result adds none (${total(head)} findings, all already on ${main})${reuse}`),
+      summary: withTiming(base.code === 0 ? `${main} is green; the merge result is red only for ${excused.length} branch finding(s) that are not the candidate's${reuse}${retryNote}` : `${main} is red (${total(base.findings)} known findings); the merge result adds none (${total(head)} findings, all already on ${main})${reuse}${retryNote}`),
     });
   } finally {
     await dropWorktree(ctx, dir);

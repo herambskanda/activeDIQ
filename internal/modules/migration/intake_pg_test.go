@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/hex"
 	"errors"
+	"github.com/skenzeriq/activediq/internal/directory/attr/secretattr"
 	"os"
 	"slices"
 	"sync"
@@ -102,7 +103,7 @@ func setup(t *testing.T, s *storetest.Server) *env {
 		t.Fatal(err)
 	}
 	rec := &recorder{}
-	runner, err := operation.NewRunner(operation.Config{DB: db, Audit: rec, Facts: facts{}, Registry: reg, Now: time.Now,
+	runner, err := operation.NewRunner(operation.Config{SecretAttr: secretattr.IsStatic, DB: db, Audit: rec, Facts: facts{}, Registry: reg, Now: time.Now,
 		Authz: granted{"ann": true, "bob": true, "cy": true, "di": true, "eve": true}})
 	if err != nil {
 		t.Fatal(err)

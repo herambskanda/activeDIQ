@@ -185,6 +185,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/connections": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create a directory connection (a draft)
+         * @description Creates a connection in the draft state (DM-10, spec L1) and answers it with its id. Nothing is read from the directory and nothing is activated: the connection has no directoryIdentity until a verification (verifyConnection) reads it. The connection binds an existing directory credential by credentialId (a gMSA, a keytab reference or an Entra certificate registered through the credential flow); this operation never accepts a password, keytab or key, so a secret cannot travel in this body. An AD forest needs transport ldaps or starttls, and an Entra tenant takes none. There is no option to skip certificate validation. Needs a fresh step-up (TM section 7.4, directory credential or connection changes). The Idempotency-Key is the request ID of the audit event: a retry with the same key and body answers the connection already created and changes nothing, and the same key with a different body is refused. A credential that does not exist, or that another connection already binds, answers 400 with a per-field error.
+         */
+        post: operations["createConnection"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/connections/{connectionId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read a directory connection
+         * @description Answers one connection the caller's connections.read grant covers: its kind, name, DM-10 lifecycle state, transport, verified directory identity (null until a verification has read it), the id of the credential it binds (a reference, never material) and the time of its last verification. A connection outside the grant, or in another tenant, answers 404, the same as one that does not exist. The answer carries no secret, bind identity or findings; the per-check result of a run is the answer of verifyConnection, which needs connections.verify (FR-16).
+         */
+        get: operations["getConnection"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/connections/{connectionId}/takeover-attestation": {
         parameters: {
             query?: never;
@@ -219,6 +259,26 @@ export interface paths {
          */
         put: operations["setTakeoverAttestationMaxAge"];
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/connections/{connectionId}/verify": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Verify a draft connection (the onboarding rights check)
+         * @description Runs the onboarding verification (spec section 7, TM section 6.5 for AD and 6.6 for Entra) against a connection in draft and answers the recorded run: one row per check, each pass, warn, fail, could_not_verify or not_run with a stable reason code and a fixed, safe message. The run ends back in draft whatever the verdict (DM-10.I10); it never activates. A verdict of pass needs every required check answered, and an over-privilege or read-sufficiency question that could not be answered is could_not_verify, never a pass. The run is synchronous: the answer is the completed run, and a run that did not complete (the connector stream ended without its completion message) is answered 503, records no result and can be repeated. A connection that is not a draft answers 409 wrong_state. Reasons and messages never carry a DN, object name, account name, directory result text or secret; the objects behind a finding are read through the findings view, which needs connections.verify and is not part of this answer. The Idempotency-Key is the request ID of the audit events: a retry with the same key answers the run already recorded and does not start another.
+         */
+        post: operations["verifyConnection"];
         delete?: never;
         options?: never;
         head?: never;
@@ -3063,6 +3123,44 @@ export interface components {
             /** Format: uuid */
             parentGuid: string;
         };
+        /** @description One directory connection (DM-10). Nothing here is a credential or a bind identity. transport is absent for an Entra tenant. */
+        Connection: {
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: uuid */
+            credentialId: string;
+            /**
+             * Format: uuid
+             * @description The forest root NC objectGUID or the Entra tenant id, in lower-case UUID text. Null until a verification has read it.
+             */
+            directoryIdentity: string | null;
+            displayName: string;
+            /** Format: uuid */
+            id: string;
+            kind: components["schemas"]["ConnectionKind"];
+            /** Format: uuid */
+            lastVerificationId: string | null;
+            state: components["schemas"]["ConnectionLifecycleState"];
+            transport?: components["schemas"]["ConnectionTransport"];
+            /** Format: date-time */
+            updatedAt: string;
+            /**
+             * Format: date-time
+             * @description When the last recorded verification completed, UTC. Null when none has.
+             */
+            verifiedAt: string | null;
+        };
+        /** @description What createConnection needs. transport is required for ad_forest and must be absent for entra_tenant. There is no field for a secret. */
+        ConnectionCreate: {
+            /**
+             * Format: uuid
+             * @description The directory credential to bind, by id. A reference, never material.
+             */
+            credentialId: string;
+            displayName: string;
+            kind: components["schemas"]["ConnectionKindInput"];
+            transport?: components["schemas"]["ConnectionTransportInput"];
+        };
         /** @description The health of one connection. Nothing here is a credential or an identity the connection binds as. */
         ConnectionHealth: {
             /** @description Domain controllers that answered the last probe. */
@@ -3090,9 +3188,52 @@ export interface components {
          * @enum {string}
          */
         ConnectionHealthState: "synced" | "lagging" | "dc_unreachable" | "suspended" | (string & {});
+        /**
+         * @description ad_forest (a whole AD forest) or entra_tenant.
+         * @enum {string}
+         */
+        ConnectionKind: "ad_forest" | "entra_tenant" | (string & {});
+        /**
+         * @description The kinds createConnection accepts.
+         * @enum {string}
+         */
+        ConnectionKindInput: "ad_forest" | "entra_tenant";
+        /**
+         * @description The DM-10 lifecycle state. Health is a separate reading (ConnectionHealthState).
+         * @enum {string}
+         */
+        ConnectionLifecycleState: "draft" | "verifying" | "active" | "suspended" | "decommissioning" | "removed" | "discarded" | (string & {});
         /** @description How many connections the tenant has. A count only; no connection is identified. */
         ConnectionSummary: {
             connectionCount: number;
+        };
+        /**
+         * @description How an AD connection secures LDAP. There is no third value and no way to skip certificate validation.
+         * @enum {string}
+         */
+        ConnectionTransport: "ldaps" | "starttls" | (string & {});
+        /**
+         * @description The transports createConnection accepts.
+         * @enum {string}
+         */
+        ConnectionTransportInput: "ldaps" | "starttls";
+        /** @description One recorded onboarding run (DM-24), without its findings. */
+        ConnectionVerification: {
+            checkListVersion: number;
+            checks: components["schemas"]["VerificationCheck"][];
+            /** Format: date-time */
+            completedAt: string;
+            /** Format: uuid */
+            id: string;
+            kind: components["schemas"]["VerificationKind"];
+            /** Format: date-time */
+            startedAt: string;
+            verdict: components["schemas"]["VerificationVerdict"];
+        };
+        /** @description The completed run and the connection after it. */
+        ConnectionVerificationResult: {
+            connection: components["schemas"]["Connection"];
+            verification: components["schemas"]["ConnectionVerification"];
         };
         ContactCreate: {
             attributes?: components["schemas"]["ObjectAttributeSet"];
@@ -4235,6 +4376,8 @@ export interface components {
             ouExclude: components["schemas"]["ReportOuRef"][];
             ouInclude: components["schemas"]["ReportOuRef"][];
             period?: components["schemas"]["ReportPeriod"];
+            /** @description Keys of the hidden groups the run included in its rows. */
+            showHidden: string[];
             subjects: components["schemas"]["ReportSubjectRef"][];
         };
         /**
@@ -4744,6 +4887,8 @@ export interface components {
             ouExclude?: components["schemas"]["ReportOuRef"][];
             ouInclude?: components["schemas"]["ReportOuRef"][];
             period?: components["schemas"]["ReportPeriod"];
+            /** @description Keys of the definition's hidden groups to include in the rows instead of only counting them in the header (for example probable service accounts). A key the definition does not declare is refused; a locked group cannot be shown. Absent keeps every hidden group hidden. Stored with the run parameters. */
+            showHidden?: string[];
             subjects?: components["schemas"]["ReportSubjectRef"][];
         };
         /** @description Visible progress (FR-11). */
@@ -5114,6 +5259,31 @@ export interface components {
             namingContext: string;
             newPassword: components["schemas"]["SecretInput"];
         };
+        /** @description One check of the run (V1 to V9 for an AD forest, EV1 to EV5 for an Entra tenant). reason is a stable code, null on a pass; message is a fixed text for that code. Neither carries a DN, an object or account name, a directory result text or a secret. */
+        VerificationCheck: {
+            check: string;
+            /** @description Findings the run recorded under this check. The findings themselves are not in this answer. */
+            findingCount: number;
+            message: string | null;
+            outcome: components["schemas"]["VerificationOutcome"];
+            reason: string | null;
+            title: string;
+        };
+        /**
+         * @description Why the run happened. verifyConnection records onboarding runs.
+         * @enum {string}
+         */
+        VerificationKind: "onboarding" | (string & {});
+        /**
+         * @description The result of one check. warn is shown and does not block; could_not_verify blocks where the answer decides a security verdict.
+         * @enum {string}
+         */
+        VerificationOutcome: "pass" | "warn" | "fail" | "could_not_verify" | "not_run" | (string & {});
+        /**
+         * @description pass, refused (over-privilege only, overridable), could_not_verify or failed.
+         * @enum {string}
+         */
+        VerificationVerdict: "pass" | "refused" | "could_not_verify" | "failed" | (string & {});
         /** @description The six digits the caller read back, held as a secret and destroyed after the request. */
         VerifyCallerVerificationRequest: {
             code: components["schemas"]["SecretInput"];
@@ -5798,8 +5968,10 @@ export interface components {
         CallerVerificationChallengeId: string;
         /** @description Makes a retry safe. Honoured for 24 hours per technician and operation. */
         CallerVerificationKey: string;
-        /** @description The Entra connection. */
+        /** @description The connection. */
         ConnectionId: string;
+        /** @description The request ID. It names the audit events of the change and makes a retry safe. */
+        ConnectionIdempotencyKey: string;
         /** @description Only reports of this category. */
         DefinitionCategory: components["schemas"]["ReportCategory"];
         /** @description The report definition. */
@@ -6133,12 +6305,113 @@ export interface operations {
             501: components["responses"]["NotImplemented"];
         };
     };
+    createConnection: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The request ID. It names the audit events of the change and makes a retry safe. */
+                "Idempotency-Key": components["parameters"]["ConnectionIdempotencyKey"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "credentialId": "7b1d4e90-3c52-4f0a-8a61-0e2f9d6c4b13",
+                 *       "displayName": "corp.example.com",
+                 *       "kind": "ad_forest",
+                 *       "transport": "ldaps"
+                 *     }
+                 */
+                "application/json": components["schemas"]["ConnectionCreate"];
+            };
+        };
+        responses: {
+            /** @description The connection is created, in draft */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "createdAt": "2026-11-15T13:40:00Z",
+                     *       "credentialId": "7b1d4e90-3c52-4f0a-8a61-0e2f9d6c4b13",
+                     *       "directoryIdentity": null,
+                     *       "displayName": "corp.example.com",
+                     *       "id": "3f0c8a52-6a1e-4c1b-9d57-2a7b1e5c9a10",
+                     *       "kind": "ad_forest",
+                     *       "lastVerificationId": null,
+                     *       "state": "draft",
+                     *       "transport": "ldaps",
+                     *       "updatedAt": "2026-11-15T13:40:00Z",
+                     *       "verifiedAt": null
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Connection"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["StepUpRequired"];
+            403: components["responses"]["Forbidden"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            422: components["responses"]["IdempotencyKeyReuse"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    getConnection: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The connection. */
+                connectionId: components["parameters"]["ConnectionId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The connection */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "createdAt": "2026-11-15T13:40:00Z",
+                     *       "credentialId": "7b1d4e90-3c52-4f0a-8a61-0e2f9d6c4b13",
+                     *       "directoryIdentity": "0b4f1c3e-52d7-4a68-9e0b-6c1d7a3f8e25",
+                     *       "displayName": "corp.example.com",
+                     *       "id": "3f0c8a52-6a1e-4c1b-9d57-2a7b1e5c9a10",
+                     *       "kind": "ad_forest",
+                     *       "lastVerificationId": "5d2a9c71-8e34-4b06-a1f7-3c9e0d5b6a42",
+                     *       "state": "draft",
+                     *       "transport": "ldaps",
+                     *       "updatedAt": "2026-11-15T13:41:12Z",
+                     *       "verifiedAt": "2026-11-15T13:41:12Z"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Connection"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
     startTakeoverAttestation: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                /** @description The Entra connection. */
+                /** @description The connection. */
                 connectionId: components["parameters"]["ConnectionId"];
             };
             cookie?: never;
@@ -6166,7 +6439,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description The Entra connection. */
+                /** @description The connection. */
                 connectionId: components["parameters"]["ConnectionId"];
             };
             cookie?: never;
@@ -6192,6 +6465,92 @@ export interface operations {
             415: components["responses"]["UnsupportedMediaType"];
             429: components["responses"]["RateLimited"];
             500: components["responses"]["Internal"];
+        };
+    };
+    verifyConnection: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The request ID. It names the audit events of the change and makes a retry safe. */
+                "Idempotency-Key": components["parameters"]["ConnectionIdempotencyKey"];
+            };
+            path: {
+                /** @description The connection. */
+                connectionId: components["parameters"]["ConnectionId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The completed run and the connection as it stands after it */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "connection": {
+                     *         "createdAt": "2026-11-15T13:40:00Z",
+                     *         "credentialId": "7b1d4e90-3c52-4f0a-8a61-0e2f9d6c4b13",
+                     *         "directoryIdentity": "0b4f1c3e-52d7-4a68-9e0b-6c1d7a3f8e25",
+                     *         "displayName": "corp.example.com",
+                     *         "id": "3f0c8a52-6a1e-4c1b-9d57-2a7b1e5c9a10",
+                     *         "kind": "ad_forest",
+                     *         "lastVerificationId": "5d2a9c71-8e34-4b06-a1f7-3c9e0d5b6a42",
+                     *         "state": "draft",
+                     *         "transport": "ldaps",
+                     *         "updatedAt": "2026-11-15T13:41:12Z",
+                     *         "verifiedAt": "2026-11-15T13:41:12Z"
+                     *       },
+                     *       "verification": {
+                     *         "checkListVersion": 1,
+                     *         "checks": [
+                     *           {
+                     *             "check": "V5",
+                     *             "findingCount": 0,
+                     *             "message": null,
+                     *             "outcome": "pass",
+                     *             "reason": null,
+                     *             "title": "Identity"
+                     *           },
+                     *           {
+                     *             "check": "V7",
+                     *             "findingCount": 1,
+                     *             "message": "The identity is a member of a Tier-0 group.",
+                     *             "outcome": "fail",
+                     *             "reason": "tier0_group_member",
+                     *             "title": "Over-privilege"
+                     *           },
+                     *           {
+                     *             "check": "V8",
+                     *             "findingCount": 0,
+                     *             "message": null,
+                     *             "outcome": "pass",
+                     *             "reason": null,
+                     *             "title": "Read sufficiency"
+                     *           }
+                     *         ],
+                     *         "completedAt": "2026-11-15T13:41:12Z",
+                     *         "id": "5d2a9c71-8e34-4b06-a1f7-3c9e0d5b6a42",
+                     *         "kind": "onboarding",
+                     *         "startedAt": "2026-11-15T13:41:03Z",
+                     *         "verdict": "refused"
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["ConnectionVerificationResult"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            413: components["responses"]["PayloadTooLarge"];
+            422: components["responses"]["IdempotencyKeyReuse"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+            503: components["responses"]["DirectoryUnavailable"];
         };
     };
     listConnectionHealth: {

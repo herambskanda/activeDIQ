@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 
@@ -157,7 +158,7 @@ func TestFamilyUndoAndPreview(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		rn, err := operation.NewRunner(operation.Config{DB: db, Audit: ch, Authz: grantAll{}, Registry: reg})
+		rn, err := operation.NewRunner(operation.Config{SecretAttr: testSecretAttr, DB: db, Audit: ch, Authz: grantAll{}, Registry: reg})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -189,4 +190,14 @@ func TestFamilyUndoAndPreview(t *testing.T) {
 			t.Fatalf("unknown: %v", err)
 		}
 	})
+}
+
+// testSecretAttr stands in for the catalogue's static list (internal/directory/attr/secretattr), which
+// platform tests may not import: the composition root supplies the real predicate (AG-9).
+func testSecretAttr(name string) bool {
+	switch strings.ToLower(name) {
+	case "unicodepwd", "ms-mcs-admpwd", "mslaps-password", "msfve-recoverypassword":
+		return true
+	}
+	return false
 }

@@ -239,6 +239,14 @@ If `make ci` fails on a fresh clone, that is a bug in the scaffold; file an `ops
   - **O8 (pipeline behaviour, T-0393)** reads `internal/platform/operation/o8_manifest_test.go` (it parses the Go source; the list is never copied into the tool), then runs every test the manifest names with `go test -json -count=1` and fails, as `<dir> <Test>: O8 [pipeline behaviour] …`, when a named test is missing (renamed or deleted), fails, is skipped, or has a skipped subtest. **No Docker is a failure, not a skip**: the Postgres tests need the Docker daemon, exactly as `fitness-audit` does. A clause the manifest lists as a `Gap` prints `pending O8 <id>: T-nnnn …` (today the non-ancestry scope roots on T-0824, undo of a failed item T-0830, the Provenance implementation T-0831); when the ticket lands, the manifest owner moves the clause to `Tests`. Tests in `lab`-tagged files must exist but are listed `not run` unless you pass `-o8-lab` (`make lab-up` first, then `go run ./tools/fitness/operation -o8-lab`); a failing run of the lab arm fails the check. Proof: `go test ./tools/fitness/operation` (o8_test.go runs a real `go test` in a throw-away module: failing, skipped, subtest-skipped, renamed, deleted, unbuildable and gap-without-ticket each fail; the clean tree passes).
 - **`fitness-safeprim`** (FF-SP1 to FF-SP3, safe-primitives §8): each finding reads
   `file:line: FF-SPn [rule] message`. `make fitness-safeprim` re-runs it alone;
+  `go run ./tools/fitness/safeprim -p3` runs only the static half of activation row P3 (ADR-0002: the
+  `ldap-library`, `kerberos-library`, `graph-library`, `credential-sealed-import`, `credential-local-import`,
+  `directory-credential-type` and `directory-credential-unseal` rules); the fitness-profiles activation table runs
+  it as the P3 row's `static` command. The library lists are `LDAPLibraries`, `KerberosLibraries` and
+  `GraphLibraries` in `tools/analyzers/policy/policy.go`: add a new directory, Kerberos or Entra library there and
+  nowhere else. The credential types are read from `internal/connector/credential` (every exported type except
+  `policy.CredentialPassable`), so a type added there is fenced with no edit to the checker. A lab test outside
+  `internal/connector` that needs a keytab uses `internal/connector/ad/adtest`.
   `go run ./tools/fitness/safeprim -checks FF-SP1,FF-SP3 -no-analyzers` runs a subset without the
   type-aware passes. The same passes run as `go vet -vettool=$(go build -o /tmp/safeprim-vet ./tools/vettool && echo /tmp/safeprim-vet) ./...`.
   The web half is `eslint` (rule names `no-hand-built-security-string`, `no-quote-doubling`,

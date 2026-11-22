@@ -25,7 +25,11 @@ trap cleanup EXIT
 
 # The lab env file is KEY=VALUE; export only what the server and the checks need (the passwords never reach a log).
 set -a; . "$WIN_LAB_ENV"; set +a
-export WIN_LAB_DC_ADDR WIN_LAB_SVC_PASSWORD WIN_LAB_CA WIN_LAB_TLS_NAME="${WIN_LAB_TLS_NAME:-dc1.win.activediq.test}"
+export WIN_LAB_DC_ADDR WIN_LAB_CA WIN_LAB_TLS_NAME="${WIN_LAB_TLS_NAME:-dc1.win.activediq.test}"
+# T-1267: the win lab binds with the svc-activediq keytab (gssapi-lab keytab), like the shipping connector; no password reaches the server.
+unset WIN_LAB_SVC_PASSWORD
+export WIN_LAB_SVC_KEYTAB="${WIN_LAB_SVC_KEYTAB:-$(dirname "$WIN_LAB_ENV")/.win-lab-svc.keytab}"
+[ -s "$WIN_LAB_SVC_KEYTAB" ] || { echo "live-user-search: no keytab at $WIN_LAB_SVC_KEYTAB: run lab/windows/bin/gssapi-lab keytab" >&2; exit 2; }
 
 dc1() { "$root/lab/windows/bin/dc1-evidence" "$@"; }
 since="$(dc1 now)"; echo "dc1 clock at start: $since" | tee "$ev/summary.txt"

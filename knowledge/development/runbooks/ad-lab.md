@@ -1,10 +1,10 @@
 ---
 title: "Runbook: the AD lab (Samba 4 AD DC in Docker)"
 date: 2026-10-02
-updated: 2026-10-23
+updated: 2026-11-04
 status: draft
 owner: devops-engineer
-ticket: T-0012, T-0183
+ticket: T-0012, T-0183, T-1070
 ---
 
 # Runbook: the AD lab (Samba 4 AD DC in Docker)
@@ -80,6 +80,7 @@ counts that `make lab-test-live` asserts against the live directory.
 | Groups | ≈ 150: per department `GG-<Dept>-All`, `-Managers`, project groups, a domain-local share group (global→domain-local nesting) and a distribution group; `GG-All-Staff` and `GG-Leadership` (nested); a 6-deep nesting chain; **circular** `GG-Cycle-A→B→C→A`; `GG-Empty`; **`GG-Big` with 3,000 members** (ranged retrieval); groups with specials and Unicode in the CN |
 | Schema (CC-SCH-02 custom case) | custom `attributeSchema` **`activediqLabConfidential`** with `searchFlags` = 512 (0x200) only, added offline by `lab/seed/schema-seed.sh` with `ldbadd --option="dsdb:schema update allowed=true"` because Samba refuses LDAP schema adds. Idempotent; the override is confined to that script (`lab/tests/test_schema_seed.sh` fails if it appears elsewhere). `TestLabSchemaDrivenSecretAttrs` asserts it is secret |
 | Edge-case users (`OU=EdgeCases`) | comma, leading `#`, `+`, double quotes, backslash, `<>;=`, `()*`, accents NFC and NFD, CJK, non-BMP (emoji, math letters), 64-character CN, 20-character sAMAccountName, dot/hyphen, leading and trailing space in the CN |
+| Group-dataset oracle (T-1070, `OU=GroupOracle`) | `GG-Oracle-Top` → `Mid` → `Low` → back to `Top` (three levels and a cycle; two disabled users, a computer, a user reachable by two branches); `GG-Oracle-1501` and `GG-Oracle-6000` (users then computers, `manifest.oracle.n1501/n6000`); `GG-Oracle-Primary` (two users whose `primaryGroupID` points at it) and `GG-Oracle-PrimaryOnly` (one such user, **no `member` value at all**). The primary-group switch is a protocol step in `lab/seed/post-start.sh` (it needs the user to be a member first; the directory then removes the explicit `member` value and refuses to add it back). Foreign security principals cannot be created on Samba: Windows lab only. |
 | Password policy | complexity on, max age **90 days**, lockout after **5** bad passwords (until an admin unlocks) |
 
 The lockout, PSO and expiry cases the report engine must match, with expected results and which run on Samba, are the LAB-LK, LAB-PS, LAB-PW and LAB-AX rows of [`domain/account-state-lab-rows.md`](../domain/account-state-lab-rows.md) (T-1016). They are specified, not yet seeded or run.
@@ -121,6 +122,18 @@ tier (50k users) and a second DC (`2dc`) are not built yet — see §8.
   (`make lab-logs`). It is not a Windows event log (§6).
 
 ## 4. Using the lab in tests
+
+- **Group datasets vs the directory (T-1070):** `make lab-test-groups` (standard-tier lab; tag `lab`).
+  `internal/compose/server/lab_groups_test.go` reads every principal and every ranged `member` list over
+  LDAPS with the production connector, loads them into PostgreSQL 16 and 18 through `Populate`, then compares
+  `inventory.group_members`, `inventory.groups` and `inventory.users` with (1) `tokenGroups` of every account
+  (security groups; distribution groups are never in a token, so they use (2)), (2) an independent walk over
+  the LDAP `member` values plus `primaryGroupID`, (3) `ldapsearch` run inside the DC container with explicit
+  `member;range=` pages. The Windows twin is `TestLabGroupDatasetsMatchLDAPAndTokenGroupsWindows` (tags
+  `lab,windowslab`; needs the same OU seeded on dc1 plus an FSP in `GG-Oracle-Top`). Measured times are logged
+  as `TIMING` lines. Samba reference run: populate of 6,761 objects incl. closure 1m46s (pg16) / 2m16s (pg18);
+  `inventory.groups` 2.5-3.2 s; `inventory.group_members` (40,219 rows) 3.0-3.4 s; reference ranged
+  ldapsearch 0.3-0.7 s; tokenGroups of 6,562 accounts 24 s.
 
 - Integration tests connect with the lab CA and the **service account**, not Administrator, so
   permission errors appear as they will at customers.
@@ -230,6 +243,32 @@ The Windows lab is built from local evaluation VMs on KVM (D-0003, free): see `w
 
 CI: the same commands work on a Linux runner with Docker; wiring `make lab-test` into the pipeline
 belongs to the CI ticket (T-0015).
+
+## 7a. Large tier: 500k synthetic candidates for per-DC read calibration (T-2195)
+
+The `standard` tier (5,000 users) cannot reach the 250k per-DC read cap. For USR-04 / PWD-03 calibration (T-1500)
+the candidates are loaded **DB-side**: the run's stage 1 reads `public.directory_objects`, so 500k synthetic `user`
+rows go straight into Postgres. Lab/CI only; never a migration, never shipped.
+
+```bash
+# the tenant, the connection (ad_forest) and the naming-context GUID must exist; DSN = table-owner login of the LAB database
+export ACTIVEDIQ_LAB_DSN='postgres://<owner>@localhost:5432/<db>'     # never commit it
+lab/seed/load-synthetic.sh <tenant-uuid> <connection-uuid> <nc-uuid> 500000 a
+# -> synthetic users inserted: 500000 (requested 500000, seed a) in <n>s
+```
+
+* Guards: the seed must match `^[a-z0-9]{1,16}$`; the DSN host must be exactly `localhost`, `127.0.0.1`, `::1`, `lab`, `postgres` or `db` (else `LAB_SYNTH_ALLOW_HOST=1`); all values reach psql as quoted variables. Proof: `sh lab/seed/load-synthetic_test.sh`.
+
+* Rows: `sam synth<seed>-<i>`, `@lab.activediq.test`, `OU=Synthetic,<nc dn>`, 4% disabled, `observed_dsa='lab-synthetic'`
+  (use that to find or sweep them; the runtime role cannot delete, the owner can). GUIDs derive from (seed, i), so a
+  rerun inserts nothing; a different seed adds a disjoint set. The lab DC does **not** hold these objects.
+* **Measured** (`ACTIVEDIQ_LAB_SYNTH_ROWS=500000 go test ./internal/directory/inventory -run TestLabSyntheticLoaderTiming -v`,
+  Docker Postgres, all migrations applied, 2026-11-15): 500,000 rows in **28.7 s (PG 18)** and **70.4 s (PG 16,
+  cold image/volume)**. Expect tens of seconds, not minutes.
+* Proof it works: `go test ./internal/directory/inventory -run TestLabSyntheticLoader` (idempotent, disjoint seeds,
+  refuses bad n/seed); removing `ON CONFLICT` from the SQL makes it fail.
+* **Not done here:** the bufconn connector with a measured per-read latency from the lab DC. It needs the `ReadPerDC`
+  handler (T-1143, unmerged), so it is a follow-up ticket; T-1500 times stage 1/3/4 with this load plus that reader.
 
 ## 8. Known limits and follow-ups
 

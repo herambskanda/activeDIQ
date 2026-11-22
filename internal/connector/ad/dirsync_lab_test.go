@@ -235,8 +235,9 @@ func TestLabDirSyncLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Samba (Recycle Bin off) writes isDeleted=TRUE and isRecycled=TRUE on every tombstone, so a delete
-	// arrives as RECYCLED: never restorable. The restorable DELETED branch is covered by unit fixtures.
-	c5, del := step("delete", c4, StateRecycled, nil)
+	// arrives as TOMBSTONE (T-1270): never restorable, and not mislabelled RECYCLED. The DELETED and
+	// RECYCLED branches (Recycle Bin on) are covered by unit fixtures; Windows is T-1257.
+	c5, del := step("delete", c4, StateTombstone, nil)
 	if !strings.Contains(del.DN, "CN=Deleted Objects") || !strings.Contains(strings.ToLower(del.DN), strings.ToLower(ug.String())) {
 		t.Errorf("tombstone DN %q lacks the Deleted Objects container or the GUID", del.DN)
 	}
@@ -254,7 +255,7 @@ func TestLabDirSyncLifecycle(t *testing.T) {
 	// All of it in one resume from the prime: the changes collapse to the final state.
 	all, _ := feedCycle(t, s, prime.Cookie, "displayName")
 	collapsed, ok := changeOf(all, ug)
-	if !ok || collapsed.State != StateRecycled || !strings.Contains(collapsed.DN, "CN=Deleted Objects") {
+	if !ok || collapsed.State != StateTombstone || !strings.Contains(collapsed.DN, "CN=Deleted Objects") {
 		t.Errorf("collapsed: %+v ok=%v", collapsed, ok)
 	}
 

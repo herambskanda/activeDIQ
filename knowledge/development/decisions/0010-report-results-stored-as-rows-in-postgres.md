@@ -136,7 +136,7 @@ Rules:
 - **Long run transactions.** A large run holds one transaction with an open cursor while it
   copies the rows, which holds back the vacuum horizon during that time.
 - Sorting a stored result by a column scans the run's rows: there is no per-column index.
-  p95 is measured on the scale tier (reports-2a Q4). The budget is `[PROPOSED]` 3 s for 1M rows.
+  p95 is measured on the scale tier (reports-2a Q4). The budget is 3 s for 1M rows, **confirmed by T-0972**: first-page sort p95 over 30 samples is 2.5 s (asc) and 2.3 s (desc) on PG16 and 0.73 s on PG18, so PG16 passes with only about 0.5 s of headroom; a regression there is the signal to add a sort-key index.
 - Sort order for text is the casefolded byte order (`COLLATE "C"` over the sort key), not a locale
   collation.
 

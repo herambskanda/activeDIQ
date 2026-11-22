@@ -178,7 +178,10 @@ type Observation struct {
 	LastLogonTimestamp time.Time
 	// HasSPN says whether servicePrincipalName has a value (nil: not read). The values themselves are
 	// not stored.
-	HasSPN     *bool
+	HasSPN *bool
+	// ClusterSPN says a servicePrincipalName value has a failover-cluster class (nil: not read); set it
+	// with IsClusterSPN. It feeds the CMP-02 exclusion of cluster objects (T-1477).
+	ClusterSPN *bool
 	InputsRead InputsRead
 
 	// PasswordChange is the Cannot Change Password state the sync classified from the DACL read path
@@ -332,6 +335,11 @@ type Populated struct {
 	// CloudSeen counts Entra rows whose cloud_seen_at moved in this call.
 	CloudSeen              int
 	Members, PrimaryGroups int
+	// AncestryOverBudget counts moved containers whose descendants were left to the fail-closed state
+	// (ancestry_complete = false, out of scope, Unknown) because rewriting them would pass the ancestry
+	// budget (TM-D32). The cycle still commits; a full pass repairs the rows. The caller raises the health
+	// event naming the connection.
+	AncestryOverBudget int
 }
 
 // Populator writes DM-16 rows and the DM-17 member and primary-group edges for one connection from a
@@ -443,6 +451,7 @@ func (p Populator) Populate(ctx context.Context, tx store.Tx, connection Connect
 	// The search keys of the objects this call wrote, replaced in this transaction after the loop.
 	keyed := map[GUID][]searchKeyRow{}
 	var keyOrder []GUID
+	rewriteLeft := ancestryBudget.cycle
 	for i := range obs {
 		o := &obs[i]
 		var cloud any
@@ -481,7 +490,7 @@ func (p Populator) Populate(ctx context.Context, tx store.Tx, connection Connect
 			cg, string(attrs[i]), nullTime(o.WhenCreated), nullTime(o.WhenChanged), observed.UTC(), o.ObservedDSA, cloud, string(o.State),
 			syncEnabledVal, cloudManagedVal, nilIfEmpty(o.OnPremisesSecurityIdentifier), o.OnPremisesDomainName, nilIfEmpty(o.OnPremisesImmutableID),
 			o.UserAccountControl, o.PrimaryGroupID, nullTime(o.LastLogonTimestamp), o.HasSPN, int16(o.InputsRead),
-			pwState, nullTime(o.PasswordChangeAt), record, noiseAttributes).
+			pwState, nullTime(o.PasswordChangeAt), record, noiseAttributes, o.ClusterSPN).
 			Scan(&w.inserted, &w.moved, &w.completeChanged)
 		if store.IsNoRows(err) {
 			out.Stale++
@@ -501,12 +510,18 @@ func (p Populator) Populate(ctx context.Context, tx store.Tx, connection Connect
 		keyed[o.Object] = searchKeys(sourceOf(o))
 		// The row moved (its parent or chain changed) or its completeness changed, or it is new and
 		// descendants may be waiting for it: bring the rows below it up to date in this transaction.
+		overBudget := false
 		if w.moved {
-			if err := rewriteDescendants(ctx, tx, connection, o.Object, o.DN); err != nil {
+			var err error
+			if overBudget, err = rewriteDescendants(ctx, tx, connection, o.Object, o.DN, &rewriteLeft); err != nil {
 				return out, err
 			}
+			if overBudget {
+				out.AncestryOverBudget++
+			}
 		}
-		if w.inserted || w.moved || w.completeChanged {
+		// An over-budget subtree stays incomplete: repairing it would walk and rewrite what the budget refused.
+		if !overBudget && (w.inserted || w.moved || w.completeChanged) {
 			if err := repairCompleteness(ctx, tx, connection, o.Object); err != nil {
 				return out, err
 			}
@@ -604,7 +619,7 @@ const upsertObjectSQL = `WITH old AS (
 			consistency_guid, attributes, when_created, when_changed, observed_at, observed_dsa, cloud_seen_at, state,
 			on_prem_sync_enabled, on_prem_cloud_managed, on_prem_sid, on_prem_domain_name, on_prem_immutable_id, ancestry_complete,
 			user_account_control, primary_group_id, last_logon_timestamp, spn_present, inputs_read,
-			password_change_state, password_change_at)
+			password_change_state, password_change_at, cluster_spn)
 		VALUES (NULLIF(current_setting('app.tenant_id', true), '')::uuid, $1::uuid, $2::uuid, $3::uuid, $4, $5,
 			$6::uuid, $7::uuid[], $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19::jsonb, $20, $21, $22, $23, $24, $25,
 			$26, $27, $28, $29, $30,
@@ -617,7 +632,7 @@ const upsertObjectSQL = `WITH old AS (
 					AND p.object_guid = $6::uuid), false)
 			END,
 			$31::bigint, $32::bigint, $33::timestamptz, $34::boolean, $35::smallint,
-			$36::text, $37::timestamptz)
+			$36::text, $37::timestamptz, $40::boolean)
 		ON CONFLICT (tenant_id, connection_id, object_guid) DO UPDATE SET
 			nc_guid = EXCLUDED.nc_guid, kind = EXCLUDED.kind, object_class = EXCLUDED.object_class, parent_guid = EXCLUDED.parent_guid,
 			ancestry = EXCLUDED.ancestry, ancestry_complete = EXCLUDED.ancestry_complete, dn = EXCLUDED.dn, rdn = EXCLUDED.rdn, sid = EXCLUDED.sid,
@@ -632,6 +647,7 @@ const upsertObjectSQL = `WITH old AS (
 			user_account_control = EXCLUDED.user_account_control, primary_group_id = EXCLUDED.primary_group_id,
 			last_logon_timestamp = EXCLUDED.last_logon_timestamp, spn_present = EXCLUDED.spn_present, inputs_read = EXCLUDED.inputs_read,
 			password_change_state = EXCLUDED.password_change_state, password_change_at = EXCLUDED.password_change_at,
+			cluster_spn = EXCLUDED.cluster_spn,
 			cloud_seen_at = GREATEST(d.cloud_seen_at, EXCLUDED.cloud_seen_at)
 		WHERE d.observed_at <= EXCLUDED.observed_at
 		RETURNING (xmax = 0) AS inserted, d.parent_guid, d.ancestry, d.ancestry_complete),
@@ -679,6 +695,11 @@ const upsertObjectSQL = `WITH old AS (
 		COALESCE((SELECT o.ancestry_complete <> ins.ancestry_complete FROM old o), false)
 	FROM ins`
 
+// ancestryBudget bounds the rows one OU move may rewrite (TM-D32, decision work O(descendants x depth)
+// inside the sync transaction). A move delegate chooses the OU and how often it moves, never the budget:
+// per moved container and per Populate call, both constants.
+var ancestryBudget = struct{ move, cycle int }{move: 50_000, cycle: 100_000}
+
 // rewriteDescendants rewrites, in the caller's transaction, the chain of every row below moved: the
 // part up to and including moved is kept, and what follows it becomes moved's current chain. The
 // chain is nearest parent first, so a descendant's old chain beyond moved (its old ancestors) is
@@ -686,15 +707,37 @@ const upsertObjectSQL = `WITH old AS (
 // the row gets an empty chain and ancestry_complete = false, which is "unknown" and out of scope,
 // never a stale chain.
 //
-// Rows are found by ancestry (a grandchild whose parent is not yet synced is still below moved), so
-// this is a scan until the GIN index on ancestry (row B3) lands. It runs only for a row that moved.
-// The dn snapshots of those rows follow in the same transaction (DM-16.I5, rewriteDescendantDNs).
-func rewriteDescendants(ctx context.Context, tx store.Tx, connection ConnectionID, moved GUID, movedDN string) error {
+// Rows are found by ancestry (a grandchild whose parent is not yet synced is still below moved) through
+// the GIN index on ancestry. The probe reads at most min(move budget, cycle budget left) + 1 rows. When
+// the subtree is larger the chains are not rewritten: the rows are only marked ancestry_complete = false
+// (a flag write that touches no indexed column and, on a repeat move, no row at all), which fails closed
+// to out-of-scope. over reports that, left is the cycle's remaining row budget and is reduced by the rows
+// rewritten. It runs only for a row that moved. The dn snapshots of the rewritten rows follow in the same
+// transaction (DM-16.I5, rewriteDescendantDNs), only when the subtree is within budget.
+func rewriteDescendants(ctx context.Context, tx store.Tx, connection ConnectionID, moved GUID, movedDN string, left *int) (over bool, err error) {
+	limit := min(ancestryBudget.move, *left)
+	var n int
+	if err := tx.QueryRow(ctx, `SELECT count(*) FROM (SELECT 1 FROM public.directory_objects d
+			WHERE d.tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid AND d.connection_id = $1::uuid
+			AND d.object_guid <> $2::uuid AND d.ancestry @> ARRAY[$2::uuid] LIMIT $3) s`,
+		string(connection), string(moved), limit+1).Scan(&n); err != nil {
+		return false, writeErr("count descendants", err)
+	}
+	if n > limit {
+		_, err := tx.Exec(ctx, `UPDATE public.directory_objects d SET ancestry_complete = false
+			WHERE d.tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid AND d.connection_id = $1::uuid
+			AND d.object_guid <> $2::uuid AND d.ancestry @> ARRAY[$2::uuid] AND d.ancestry_complete`, string(connection), string(moved))
+		if err != nil {
+			return false, writeErr("mark descendants incomplete", err)
+		}
+		return true, nil
+	}
+	*left -= n
 	// The dn pass reads the chains, so it goes first: a chain too long to store is emptied below.
 	if err := rewriteDescendantDNs(ctx, tx, connection, moved, movedDN); err != nil {
-		return err
+		return false, err
 	}
-	_, err := tx.Exec(ctx, `UPDATE public.directory_objects d SET
+	_, err = tx.Exec(ctx, `UPDATE public.directory_objects d SET
 			ancestry = CASE WHEN array_position(d.ancestry, $2::uuid) + cardinality(m.ancestry) <= 128
 				THEN d.ancestry[1:array_position(d.ancestry, $2::uuid)] || m.ancestry ELSE '{}' END,
 			ancestry_complete = d.ancestry_complete AND array_position(d.ancestry, $2::uuid) + cardinality(m.ancestry) <= 128
@@ -703,9 +746,9 @@ func rewriteDescendants(ctx context.Context, tx store.Tx, connection ConnectionI
 		AND d.tenant_id = m.tenant_id AND d.connection_id = m.connection_id AND d.object_guid <> m.object_guid
 		AND d.ancestry @> ARRAY[$2::uuid]`, string(connection), string(moved))
 	if err != nil {
-		return writeErr("rewrite descendants", err)
+		return false, writeErr("rewrite descendants", err)
 	}
-	return nil
+	return false, nil
 }
 
 // repairCompleteness recomputes ancestry_complete for every row reachable below root through
@@ -937,4 +980,18 @@ func uniq(s []string) map[string]bool {
 		m[x] = true
 	}
 	return m
+}
+
+// IsClusterSPN reports whether any servicePrincipalName value is of a failover-cluster class: the text
+// before the first '/' equals MSClusterVirtualServer or MSServerCluster, case-insensitively (ad-expert,
+// T-1477). Equality on the class, never a substring: MSServerClusterMgmtAPI is on cluster nodes, which are
+// ordinary servers, and a host name that contains "cluster" proves nothing.
+func IsClusterSPN(spns []string) bool {
+	for _, v := range spns {
+		class, _, ok := strings.Cut(v, "/")
+		if ok && (strings.EqualFold(class, "MSClusterVirtualServer") || strings.EqualFold(class, "MSServerCluster")) {
+			return true
+		}
+	}
+	return false
 }

@@ -16,6 +16,9 @@ type SchemaObject struct {
 	ID          adguid.GUID
 	Class       bool // classSchema, not attributeSchema
 	SearchFlags int32
+	// PropSet is attributeSecurityGUID, the rightsGuid of the property set an attribute belongs to
+	// (nil: none, or a class).
+	PropSet *adguid.GUID
 }
 
 // searchFlagConfidential is fCONFIDENTIAL (searchFlags bit 7): reading the attribute needs
@@ -94,7 +97,7 @@ func (d SessionDirectory) schema(ctx context.Context, term ldapfilter.Filter, cl
 	var found bool
 	err = d.S.Search(ctx, ad.SearchRequest{
 		Base: dn.DNRef(nm.Schema), Scope: ad.ScopeSubtree, Filter: ldapfilter.And(kind, term),
-		Attributes: []string{"objectGUID", "lDAPDisplayName", "schemaIDGUID", "searchFlags", "objectClass"},
+		Attributes: []string{"objectGUID", "lDAPDisplayName", "schemaIDGUID", "searchFlags", "objectClass", "attributeSecurityGUID"},
 	}, func(e *ad.Entry) error {
 		raw := e.Raw("schemaIDGUID")
 		if len(raw) != 1 || found {
@@ -110,6 +113,11 @@ func (d SessionDirectory) schema(ctx context.Context, term ldapfilter.Filter, cl
 			return nil
 		}
 		out = SchemaObject{Name: names[0], ID: g, SearchFlags: sf}
+		if ps := e.Raw("attributeSecurityGUID"); len(ps) == 1 {
+			if pg, perr := adguid.FromBytes(ps[0]); perr == nil {
+				out.PropSet = &pg
+			}
+		}
 		for _, c := range e.Strings("objectClass") {
 			if c == "classSchema" {
 				out.Class = true
