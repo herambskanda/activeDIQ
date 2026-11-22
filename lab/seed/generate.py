@@ -371,6 +371,7 @@ def generate(tier: str, seed: int, now: int, user_pw: str, svc_pw: str) -> tuple
 
     # ---- computers --------------------------------------------------------------------------
     comp_state = {"stale": 0, "disabled": 0}
+    comp_dns: list[str] = []
     for i in range(cfg["computers"]):
         dept = DEPARTMENTS[rng.choices(range(len(DEPARTMENTS)), weights=[d[1] for d in DEPARTMENTS])[0]][0]
         name = f"WS-{dept[:4].upper()}-{i + 1:04d}"
@@ -380,6 +381,7 @@ def generate(tier: str, seed: int, now: int, user_pw: str, svc_pw: str) -> tuple
             uac, comp_state["disabled"] = UAC_WORKSTATION | 2, comp_state["disabled"] + 1
         elif kind < 0.13:
             age, comp_state["stale"] = step(120, 700, 20), comp_state["stale"] + 1
+        comp_dns.append(f"CN={name},{dept_ous[dept]['computers']}")
         aged_writer(age).entry(f"CN={name},{dept_ous[dept]['computers']}", [
             ("objectClass", "top"), ("objectClass", "person"), ("objectClass", "organizationalPerson"),
             ("objectClass", "user"), ("objectClass", "computer"), ("cn", name),
@@ -501,6 +503,42 @@ def generate(tier: str, seed: int, now: int, user_pw: str, svc_pw: str) -> tuple
     # computers group
     g_comp = add_group("GG-Servers", org_groups_ou, GT_GLOBAL_SECURITY, "Server computer accounts")
     mems.modify_add(g_comp, "member", [f"CN={n},{servers_ou}" for n in server_names])
+
+    # ---- T-1070: group-dataset oracle groups (inventory.groups / group_members vs LDAP + tokenGroups) -------
+    # Names are fixed; counts are recorded in the manifest.oracle block. Deterministic: picks are by index,
+    # no rng draw, so adding this block does not move any other object. Foreign security principals and the
+    # primaryGroupID switch are protocol-level (Samba cannot add an FSP; primaryGroupID needs the user to be
+    # a member first) -> post-start.sh reads manifest.oracle.primary and applies it.
+    oracle_ou = add_ou("GroupOracle", managed)
+    disabled_users = [u for u in users if u["state"] == "disabled"]
+    live_users = [u for u in users if u["state"] == "normal"]
+    top = add_group("GG-Oracle-Top", oracle_ou, GT_UNIVERSAL_SECURITY, "T-1070 three-level nesting with a cycle (top)")
+    mid = add_group("GG-Oracle-Mid", oracle_ou, GT_UNIVERSAL_SECURITY, "T-1070 nesting level 2")
+    low = add_group("GG-Oracle-Low", oracle_ou, GT_UNIVERSAL_SECURITY, "T-1070 nesting level 3, loops back to Top")
+    mems.modify_add(top, "member", [mid, live_users[20]["dn"]])
+    mems.modify_add(mid, "member", [low, disabled_users[0]["dn"], comp_dns[0]])
+    mems.modify_add(low, "member", [top, live_users[21]["dn"], disabled_users[1]["dn"]])
+    # one user in two branches: must appear once in Top's effective members
+    mems.modify_add(top, "member", [live_users[21]["dn"]])
+    m1501 = add_group("GG-Oracle-1501", oracle_ou, GT_GLOBAL_SECURITY, "T-1070 1501 members: one past the first range page")
+    m6000 = add_group("GG-Oracle-6000", oracle_ou, GT_GLOBAL_SECURITY, "T-1070 6000 members: users then computers")
+    pool = [u["dn"] for u in users] + comp_dns
+    n1501, n6000 = min(1501, len(pool)), min(6000, len(pool))
+    mems.modify_add(m1501, "member", pool[:n1501])
+    mems.modify_add(m6000, "member", pool[:n6000])
+    # primary group: two groups, three users (2 + 1). After post-start no user has a `member` value for its
+    # primary group (the directory removes it), so PrimaryOnly has no member values at all.
+    g_prim = add_group("GG-Oracle-Primary", oracle_ou, GT_GLOBAL_SECURITY, "T-1070 primary group of two users")
+    g_only = add_group("GG-Oracle-PrimaryOnly", oracle_ou, GT_GLOBAL_SECURITY, "T-1070 one member, only through primaryGroupID")
+    manifest["oracle"] = {
+        "ou": oracle_ou, "top": top, "mid": mid, "low": low, "g1501": m1501, "g6000": m6000,
+        "n1501": n1501, "n6000": n6000, "disabled_members": [disabled_users[0]["sam"], disabled_users[1]["sam"]],
+        "primary": [
+            {"group": g_prim, "user": live_users[30]["dn"]},
+            {"group": g_prim, "user": live_users[31]["dn"]},
+            {"group": g_only, "user": live_users[32]["dn"]},
+        ],
+    }
 
     samples: dict[str, list[dict]] = {}
     for u in users:
