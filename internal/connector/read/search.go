@@ -134,7 +134,7 @@ func (h *Handler) ScopedSearch(ctx context.Context, req *connectorv1.ScopedSearc
 		if has {
 			parent = write.GUIDToWire(pg)
 		}
-		entry, _, err := h.build(e, id, parent, canon)
+		entry, _, err := h.build(e, id, parent, canon, true)
 		if err != nil {
 			return errUndecodable
 		}
