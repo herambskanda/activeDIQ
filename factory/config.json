@@ -31,6 +31,7 @@
       "prescreen_lookahead": 3,
       "retry_failed_jobs": true,
       "baseline_daily_refresh": true,
+      "train_prescreened_max": 4,
       "train_size_max": 2,
       "train_size": 1,
       "max_gate_failures": 2,

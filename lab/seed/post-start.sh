@@ -31,3 +31,29 @@ done
 n=$(ldapsearch -H "$LDAPS" -x -D "svc-activediq@lab.activediq.test" -w "$LAB_SVC_PASSWORD" -b "OU=Managed,$BASEDN" \
   "(&(objectCategory=person)(objectClass=user)(lockoutTime>=1))" dn 2>/dev/null | grep -c '^dn:' || true)
 echo "[lab] locked-out accounts: $n"
+
+# T-1070: primary-group oracle. primaryGroupID can only point at a group the user is a member of, so add the
+# membership and switch the primary group. The directory itself drops the now-redundant explicit `member`
+# value (AD and Samba both), so the user is a member ONLY through primaryGroupID (the case inventory.groups
+# must not call empty). Neither AD nor Samba lets the `member` value be added back (samldb: "already set via
+# primaryGroupID"), so a primary-group member is never also an explicit one.
+python3 - "$MANIFEST" <<'PY' | while IFS='|' read -r gdn udn; do
+import json, sys
+for p in json.load(open(sys.argv[1])).get("oracle", {}).get("primary", []):
+    print(f'{p["group"]}|{p["user"]}')
+PY
+  rid=$(ldapsearch -H "$LDAPS" -x -D "svc-activediq@lab.activediq.test" -w "$LAB_SVC_PASSWORD" -LLL -b "$gdn" -s base objectSid 2>/dev/null \
+    | python3 -c "import sys,base64; l=[x for x in sys.stdin.read().split('\n') if x.startswith('objectSid::')]; b=base64.b64decode(l[0].split(':: ')[1]); print(int.from_bytes(b[-4:],'little'))")
+  ldapmodify -H "$LDAPS" -x -D "svc-activediq@lab.activediq.test" -w "$LAB_SVC_PASSWORD" >/dev/null <<LDIF || { echo "[lab] primary group step failed for $udn" >&2; exit 1; }
+dn: $gdn
+changetype: modify
+add: member
+member: $udn
+
+dn: $udn
+changetype: modify
+replace: primaryGroupID
+primaryGroupID: $rid
+LDIF
+done
+echo "[lab] primary-group oracle applied"

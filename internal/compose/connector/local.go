@@ -19,7 +19,9 @@ type Local struct {
 	// EnrollmentDir holds the enrolled mTLS leaf, key, pinned CA bundle and server endpoints (fleet/dial).
 	EnrollmentDir string `json:"enrollment_dir"`
 	// DataDir holds the durable baseline, tier0 records, write-gate ratchet and C13 pins. It must survive
-	// restarts; the connector reloads it and never rebuilds it.
+	// restarts; the connector reloads it and never rebuilds it. At startup the connector runs
+	// ownerfile.EnsureDir on this directory and on its parent, so the parent must be the connector's
+	// own state root (service identity only), not a shared directory such as /var/lib.
 	DataDir string `json:"data_dir"`
 	// Servers are the DC hosts (host or host:port, LDAPS only), tried in order.
 	Servers []string `json:"servers"`
