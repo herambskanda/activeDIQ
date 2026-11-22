@@ -1,0 +1,52 @@
+#!/usr/bin/env python3
+"""T-1510 lab run on dc1: where do msDS-ReplAllInboundNeighbors/PendingOps/ConnectionFailures/LinkFailures live, does the
+Monitor Active Directory Replication right alone (on the partition head) let a non-administrator read them, what does a
+principal with no right get, and does DirSync under LDAP_DIRSYNC_OBJECT_SECURITY deliver a delete and its originating time
+to non-replicating accounts (TM-D31 rules 3 and 7).
+
+  repl-rights-lab run [LOGFILE]   run guest/repl-rights.ps1 on dc1, print the findings, write the raw output to LOGFILE if given.
+                                  Exit 0 = run valid (clean-up verified, principals unprivileged, no-right read is an entry);
+                                  exit 3 = run invalid; findings may still say "INCONCLUSIVE" (a single-DC lab, see the log).
+
+Wrap in the shared lock:  lab/windows/bin/with-dc1-lock lab/windows/bin/repl-rights-lab run
+Lab DC only (A-0025). Creates and removes OU=T1510-Lab and one ACE on the partition heads; writes nothing else.
+Needs: pip install pywinrm requests-ntlm. Credentials come from WIN_LAB_ENV and are never printed.
+"""
+import datetime, os, sys
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "lib"))
+import dc1winrm, replrights as rr
+
+
+def main(argv):
+    env, _, addr = dc1winrm.load_env("repl-rights-lab")  # T-1279: no DC address, no run: before the lock, a build or a connection
+    if len(argv) < 2 or argv[1] != "run" or len(argv) > 3:
+        sys.exit(__doc__)
+    if not env.get("WIN_LAB_SVC_PASSWORD"):
+        sys.exit("repl-rights-lab: WIN_LAB_SVC_PASSWORD missing from the lab env file")
+    dc = dc1winrm.DC(env, addr)
+    dc.put_bytes(rr.guest_bytes(), rr.REMOTE_PS1)
+    started = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%MZ")
+    rc, out = dc.ps(rr.run_command(env["WIN_LAB_SVC_PASSWORD"]))
+    finished = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%MZ")
+    out = out.replace(env["WIN_LAB_SVC_PASSWORD"], "<redacted>")
+    if len(argv) == 3:
+        with open(argv[2], "w") as f:
+            f.write(out)
+    try:
+        r = rr.parse(out)
+    except ValueError as e:
+        print(out[-3000:])
+        sys.exit(f"repl-rights-lab: {e} (powershell exit {rc})")
+    facts, bad = rr.conclusions(r)
+    print(rr.render(r, facts, bad, started, finished))
+    print()
+    for k in ("location", "mon_right_sufficient", "no_right_gets_values"):
+        print(f"{k}: {facts[k]}")
+    if bad:
+        print("repl-rights-lab: INVALID RUN: " + "; ".join(bad), file=sys.stderr)
+        sys.exit(3)
+
+
+if __name__ == "__main__":
+    main(sys.argv)
