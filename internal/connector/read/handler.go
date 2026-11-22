@@ -57,6 +57,8 @@ type Handler struct {
 	now  func() time.Time
 	log  *slog.Logger
 	feed feedLimits
+	// perDC and perDomain are the ReadPerDC caps, shared by every call of the handler.
+	perDC, perDomain *limiter
 }
 
 // Option configures a Handler.
@@ -70,7 +72,8 @@ func New(src Source, opts ...Option) (*Handler, error) {
 	if src == nil {
 		return nil, errors.New("read: a source is required")
 	}
-	h := &Handler{src: src, now: time.Now, log: slog.Default(), feed: feedLimits{maxPages: defaultFeedPages, deadline: defaultFeedDeadline}}
+	h := &Handler{src: src, now: time.Now, log: slog.Default(), feed: feedLimits{maxPages: defaultFeedPages, deadline: defaultFeedDeadline},
+		perDC: &limiter{size: DefaultPerDCOps}, perDomain: &limiter{size: DefaultPerDomainOps}}
 	for _, o := range opts {
 		o(h)
 	}

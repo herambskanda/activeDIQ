@@ -65,7 +65,7 @@ func Of(name string, syn ldapfilter.Syntax, raw []byte) (*connectorv1.AttributeV
 			return nil, err
 		}
 		if _, ferr := filetime.FieldFor(name); ferr == nil {
-			return &connectorv1.AttributeValue{Value: &connectorv1.AttributeValue_Time{Time: timeOf(n)}}, nil
+			return &connectorv1.AttributeValue{Value: &connectorv1.AttributeValue_Time{Time: TimeOf(n)}}, nil
 		}
 		return &connectorv1.AttributeValue{Value: &connectorv1.AttributeValue_Int64Value{Int64Value: n}}, nil
 	case ldapfilter.SynGenTime:
@@ -95,9 +95,9 @@ func Octets(raw []byte) *connectorv1.AttributeValue {
 	return &connectorv1.AttributeValue{Value: &connectorv1.AttributeValue_Octets{Octets: append([]byte(nil), raw...)}}
 }
 
-// timeOf maps the Integer8 form of a FILETIME attribute: 0 and max stay the two "never" sentinels,
+// TimeOf maps the Integer8 form of a FILETIME attribute: 0 and max stay the two "never" sentinels,
 // a beyond-range value keeps its ticks.
-func timeOf(n int64) *connectorv1.TimeValue {
+func TimeOf(n int64) *connectorv1.TimeValue {
 	switch {
 	case n == 0:
 		return &connectorv1.TimeValue{Kind: &connectorv1.TimeValue_Sentinel{Sentinel: connectorv1.TimeSentinel_TIME_SENTINEL_ZERO}}
