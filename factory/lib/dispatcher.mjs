@@ -485,8 +485,10 @@ export class Dispatcher {
       for (const t of finished) if (code(t) && await this.passedPrescreen(t)) screened.add(t.id);
       if (screened.size) size = this.screenedTrainSize(settings);
     }
-    if (settings.train_size_max >= 2 && size !== this.lastTrainSize) {
-      appendEvent(this.ctx, { actor: 'dispatcher', kind: 'dispatcher', text: `merge train size is now ${size} (largest allowed ${settings.train_size_max}; it follows the pass rate of the last gate verdicts)` });
+    if ((settings.train_size_max >= 2 || screened.size) && size !== this.lastTrainSize) {
+      appendEvent(this.ctx, { actor: 'dispatcher', kind: 'dispatcher', text: screened.size
+        ? `merge train size is now ${size} (largest allowed ${settings.train_prescreened_max}; ${screened.size} pre-screened ticket(s) in line)`
+        : `merge train size is now ${size} (largest allowed ${settings.train_size_max}; it follows the pass rate of the last gate verdicts)` });
       this.lastTrainSize = size;
     }
     const train = [];
@@ -554,6 +556,7 @@ export class Dispatcher {
     const head = this.heldOnMain.size ? await mainSha(ctx) : null;
     let reach = settings.prescreen_lookahead || Math.max(1, effectiveTrainSize(ctx, settings));
     if (settings.train_prescreened_max >= 2) reach = Math.max(reach, settings.train_prescreened_max * 2); // enough screened tickets to fill a train
+    let reopened = 0;
     for (const ticket of orderDoneQueue(done, all).slice(0, reach)) {
       if (this.prescreenRuns.size >= settings.prescreen_parallel) return;
       if (this.prescreenRuns.has(ticket.id)) continue;
@@ -561,6 +564,9 @@ export class Dispatcher {
       if (head && this.heldOnMain.get(ticket.id) === head) continue;
       const sha = (await git(ctx.root, ['rev-parse', '--verify', '-q', `refs/heads/${branchName(ticket.id)}`])).stdout.trim();
       if (!sha || this.prescreened.get(ticket.id) === sha) continue;
+      // Merge plan 5.5: a ticket that conflicts with main would take a place in the window and never pass, and with screened
+      // tickets in line the train builder skips it. Send it back now, as the train builder does, at most 5 per pass.
+      if (reopened < MAX_CONFLICT_REOPENS_PER_PASS) { if (await this.reopenIfConflicting(ticket)) { reopened++; continue; } }
       this.prescreened.set(ticket.id, sha); // set first: a run that throws is not retried every tick
       const abort = new AbortController();
       const promise = this.guard(`pre-screen ${ticket.id}`, () => this.prescreenOne(ticket, settings, abort.signal))
