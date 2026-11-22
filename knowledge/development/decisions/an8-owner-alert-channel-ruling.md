@@ -74,6 +74,12 @@ All four touch `internal/platform/authn`, so they are a chain, one dependency ea
 
 Tickets: T-1544 (1), T-1545 (2, depends T-1544), T-1546 (3, depends T-1545), T-1547 (4, depends T-1546). The director cancels T-0801 once they exist.
 
+## Implementation notes (T-1544)
+
+- The alert fires when the break-glass **password** step is accepted, not when the pending sign-in later commits (§7.6 rule 1): a stolen password alone is worth telling the owner about. The body therefore says "password accepted".
+- A row is `settled_at` once no Delivery of it is queued or failed; it is `given_up_at` (audit + banner) only when every Delivery was given up. Settled rows leave the drain's scan, so sent history cannot hide a later give-up.
+- Failures are counted in fixed one-hour windows; up to 18 failures across a window edge can pass without an alert (9 an hour never alerts under any design).
+
 ## Citations
 
 Cited from `threat-model.md` §7.6 rule 4 (alert channel and failure mode) and `console-sso.md` FSSO-3.

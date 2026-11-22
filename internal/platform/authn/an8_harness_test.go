@@ -5,24 +5,19 @@ package authn
 // The five tests below pin WHAT the spec requires of the break-glass password step, through the an8Target
 // seam: they say nothing about how a handler is built. Two targets satisfy the seam:
 //
-//   - realAN8Target (an8_real_test.go) is the real handler of T-0200. Until T-0200 lands it reports
-//     "not built" and the tests skip with a loud XFAIL line naming T-0200. T-0200 must not merge until it
-//     fills that one function in and the tests pass against it. A skip here is never a pass.
+//   - realAN8Target (an8_real_test.go) is the real handler (T-1544, test an8_alerts): the store at its
+//     port is a throwaway PostgreSQL database, the clock fixed, the key table small. A target that cannot
+//     be built fails the test; there is no skip path, so a skip is never mistaken for a pass.
 //   - refAN8 (an8_ref_test.go) is a labelled reference MODEL of the spec, not product code. The meta
 //     tests run the five assertions against it, and against deliberately broken mutants, to prove the
 //     assertions accept a correct implementation and bite on each violation.
 
 import (
-	"context"
-	"errors"
 	"fmt"
 	"sort"
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/skenzeriq/activediq/internal/platform/apihost/apitypes"
-	"github.com/skenzeriq/activediq/internal/platform/authn/api"
 )
 
 // an8Resp is everything a caller can observe of one AN-8 answer.
@@ -65,21 +60,12 @@ const (
 
 var an8Seeds = an8Seed{Known: "bg-admin", Password: "correct horse battery staple", NonLocal: "corp-user", Disabled: "bg-old"}
 
-// newRealTarget builds the target for a test: the real handler when it is built, else the XFAIL skip.
+// newRealTarget builds the real handler for a test (it skips only when no PostgreSQL is available).
 func newRealTarget(t *testing.T) an8Target {
 	t.Helper()
 	tg, ok := realAN8Target(t, an8Seeds)
 	if !ok {
-		// A skip is never a pass: the moment the stub is replaced without wiring realAN8Target, fail.
-		_, err := Handlers{}.SignInBreakGlassPassword(context.Background(), api.SignInBreakGlassPasswordInput{})
-		var p *apitypes.Problem
-		if !errors.As(err, &p) || p.Status != 501 {
-			t.Fatalf("the AN-8 handler is no longer the 501 stub (got %v) but realAN8Target is not wired: "+
-				"T-0200 must fill in an8_real_test.go so these tests run against it", err)
-		}
-		t.Skipf("XFAIL T-0200: the AN-8 handler is still a 501 stub, so this spec test cannot run against it; " +
-			"T-0200 must wire realAN8Target (an8_real_test.go) and this test must pass before it merges. " +
-			"The assertions are proven by TestAN8AssertionsAgainstReference.")
+		t.Fatal("realAN8Target must build the real AN-8 handler (an8_real_test.go)")
 	}
 	return tg
 }
