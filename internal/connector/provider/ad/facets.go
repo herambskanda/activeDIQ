@@ -21,6 +21,8 @@ var (
 	_ provider.Describer       = (*ADProvider)(nil)
 	_ provider.PasswordChanger = (*ADProvider)(nil)
 	_ provider.Feeder          = (*ADProvider)(nil)
+	_ provider.ChangeTimer     = (*ADProvider)(nil)
+	_ provider.SignInResolver  = (*ADProvider)(nil)
 )
 
 // sessionOK is true only when the provider's directory and bound-DC binder are still both over the
@@ -108,6 +110,22 @@ func (p *ADProvider) ReadPasswordChange(ctx context.Context, id guid.GUID) (guid
 		return guid.GUID{}, sd.PasswordChangeNotConfirmed, provider.ErrNoBoundDC
 	}
 	return p.sess.ReadPasswordChange(ctx, dn.GUIDRef(id))
+}
+
+// AttrChangeTimes implements provider.ChangeTimer.
+func (p *ADProvider) AttrChangeTimes(ctx context.Context, id guid.GUID, attrs []string) (map[string]adconn.AttrChange, error) {
+	if !p.sessionOK() {
+		return nil, provider.ErrNoBoundDC
+	}
+	return p.sess.AttrChangeTimes(ctx, id, attrs)
+}
+
+// ResolveSignInName implements provider.SignInResolver.
+func (p *ADProvider) ResolveSignInName(ctx context.Context, name string) (adconn.SignInUser, error) {
+	if !p.sessionOK() {
+		return adconn.SignInUser{}, provider.ErrNoBoundDC
+	}
+	return p.sess.ResolveSignInName(ctx, name)
 }
 
 // ManagesNC implements provider.Feeder.

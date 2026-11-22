@@ -42,6 +42,7 @@ type searchLab struct {
 	client connectorv1.ConnectorClient
 	ident  *connectorv1.DirectoryIdentity
 	stamp  string
+	src    *adprov.ADProvider
 }
 
 func newSearchLab(t *testing.T) *searchLab { return newSearchLabSchema(t, nil) }
@@ -77,6 +78,7 @@ func newSearchLabSchema(t *testing.T, extra []ldapfilter.AttrInfo) *searchLab {
 	l.ident = &connectorv1.DirectoryIdentity{Identity: &connectorv1.DirectoryIdentity_AdForest{AdForest: &connectorv1.AdForestIdentity{
 		ForestRootNcGuid: l.guid(t, labDom)}}}
 	prov := adprov.NewADProvider(sess, nil, l.ident, &memPins{})
+	l.src = prov
 	l.client = start(t, prov)
 	return l
 }

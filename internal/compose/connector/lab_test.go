@@ -16,14 +16,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/go-krb5/krb5/iana/etypeID"
-	"github.com/go-krb5/krb5/keytab"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
 	"github.com/skenzeriq/activediq/internal/compose/config"
 	"github.com/skenzeriq/activediq/internal/compose/connector"
 	"github.com/skenzeriq/activediq/internal/connector/ad"
+	"github.com/skenzeriq/activediq/internal/connector/ad/adtest"
 	"github.com/skenzeriq/activediq/internal/directory/attr/guid"
 	"github.com/skenzeriq/activediq/internal/directory/dn"
 	"github.com/skenzeriq/activediq/internal/platform/fleet"
@@ -67,20 +66,9 @@ samba-tool domain exportkeytab /tmp/t0703.keytab --principal=` + labAccount + `@
 		t.Fatalf("docker cp: %v\n%s", err, out)
 	}
 	_ = exec.Command("docker", "exec", ctr, "rm", "-f", "/tmp/t0703.keytab").Run()
-	kt, err := keytab.Load(full)
+	b, err := adtest.AESOnlyKeytab(full)
 	if err != nil {
-		t.Fatal(err)
-	}
-	kept := kt.Entries[:0]
-	for _, e := range kt.Entries {
-		if e.Key.KeyType == etypeID.AES128_CTS_HMAC_SHA1_96 || e.Key.KeyType == etypeID.AES256_CTS_HMAC_SHA1_96 {
-			kept = append(kept, e)
-		}
-	}
-	kt.Entries = kept
-	b, err := kt.Marshal()
-	if err != nil || len(kept) == 0 {
-		t.Fatalf("keytab: %v (%d AES entries)", err, len(kept))
+		t.Fatalf("keytab: %v", err)
 	}
 	return b
 }

@@ -46,6 +46,113 @@ func (c *adCheck) v8() {
 			c.cannot(v8, &dg, err)
 		}
 	}
+	c.v8Reports(doms)
+}
+
+// reportAttrs are the attributes whose absence from a read hides a relationship: directReports is
+// the back-link OBJECT_DELETE checks as CLEAR_MANAGER, manager its forward link (T-1749).
+var reportAttrs = []string{"directReports", "manager"}
+
+// reportClasses are the classes that carry them.
+var reportClasses = []string{"user", "contact", "computer"}
+
+// v8Reports: Read on directReports and manager for user, contact and computer in the managed
+// scope. LDAP leaves out an attribute the bound identity cannot read, so without the right a
+// manager looks like it has no reports and the delete check passes when it must refuse. The scope
+// roots' DACLs are judged (the domain NC heads when no root is managed): an inheritable allow for
+// the identity's token, with no applicable deny, per attribute and class. A DACL that cannot be
+// read or parsed is COULD_NOT_VERIFY, never a pass.
+func (c *adCheck) v8Reports(doms []adguid.GUID) {
+	scope := c.in.ManagedRoots
+	if len(scope) == 0 {
+		scope = doms
+	}
+	type target struct {
+		attr  *provider.SchemaObject
+		class *provider.SchemaObject
+	}
+	var ts []target
+	for _, an := range reportAttrs {
+		a, err := c.attrByName(an)
+		if err != nil {
+			c.cannot(v8, nil, err)
+			return
+		}
+		if a == nil {
+			continue // the forest's schema has no such attribute: nothing to read
+		}
+		for _, cn := range reportClasses {
+			cl, err := c.classByName(cn)
+			if err != nil {
+				c.cannot(v8, nil, err)
+				return
+			}
+			if cl != nil {
+				ts = append(ts, target{a, cl})
+			}
+		}
+	}
+	for _, sg := range scope {
+		if _, isT0 := c.set[sg.String()]; isT0 {
+			continue // a tier0 root is judged in V7, as V9 does
+		}
+		e, err := c.d.Read(c.ctx, dn.GUIDRef(sg), []string{"nTSecurityDescriptor"}, ad.ReadOptions{SD: ad.DefaultSDFlags()})
+		if err != nil {
+			if isDeniedRead(err) {
+				continue // the head's own read failure is reported above (domains) or by V9 (roots)
+			}
+			c.cannot(v8, &sg, err)
+			continue
+		}
+		raw := e.Raw("nTSecurityDescriptor")
+		if len(raw) != 1 {
+			c.cannot(v8, &sg, errors.New("nTSecurityDescriptor not returned"))
+			continue
+		}
+		d, err := parseSD(raw[0])
+		if err != nil {
+			c.cannot(v8, &sg, err)
+			continue
+		}
+		for _, t := range ts {
+			if readsChildProp(d, c.tokens, t.attr, t.class.ID) {
+				continue
+			}
+			c.add(&v1.RightsFinding{Check: v8, Kind: v1.FindingKind_FINDING_KIND_MISSING_RIGHT, Severity: v1.FindingSeverity_FINDING_SEVERITY_BLOCK,
+				Code: CodeMissingReports, Right: adRight(v1.AdRightKind_AD_RIGHT_KIND_READ_PROPERTY, &t.attr.ID, dsReadProp, t.attr.Name),
+				Source: &v1.RightSource{Source: &v1.RightSource_ExpectedBy{ExpectedBy: v1.RightsFamily_RIGHTS_FAMILY_AD_R1_INVENTORY}},
+				Family: v1.RightsFamily_RIGHTS_FAMILY_AD_R1_INVENTORY}, sg, t.attr.Name+"|"+t.class.Name)
+		}
+	}
+}
+
+// readsChildProp reports whether the DACL, as inherited by a child of the given class, lets the
+// token read the attribute: an allow with Read Property (all properties, the attribute, or its
+// property set; GenericAll too) that is inheritable to the class, and no deny of it. A deny
+// anywhere wins here, the safe direction for a read-sufficiency check.
+func readsChildProp(d *descriptor, tokens map[string]bool, attr *provider.SchemaObject, class adguid.GUID) bool {
+	allowed := false
+	for _, a := range d.aces {
+		if !tokens[a.trustee.String()] || a.flags&aceFlagContainerInherit == 0 {
+			continue
+		}
+		if a.hasInh && a.inhType != class {
+			continue
+		}
+		if a.hasType && a.objType != attr.ID && (attr.PropSet == nil || a.objType != *attr.PropSet) {
+			continue
+		}
+		if a.deny {
+			if a.mask&(dsReadProp|maskGenericAll) != 0 {
+				return false
+			}
+			continue
+		}
+		if a.mask&dsReadProp != 0 || a.mask&maskGenericAll != 0 || a.mask&dsFullControl == dsFullControl {
+			allowed = true
+		}
+	}
+	return allowed
 }
 
 // lowestWriteFamily is the family an excess finding is reported against: the first enabled write

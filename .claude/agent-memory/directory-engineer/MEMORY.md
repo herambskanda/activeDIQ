@@ -31,6 +31,7 @@
 - [ChangeFeed lessons](feed-lessons.md) — T-1194: Samba omits cn in DirSync, LDAP result 200 = unreachable, Feeder golden-list trap
 - [search meta lessons](search-meta-lessons.md) — T-1097: chips via users dataset + ExecAll, derivation fixture traps, Entra cloud-only rule
 - [sync cursor lessons](sync-cursor-lessons.md) — T-1190: fitness traps (tenant_id guard, SQL const, platform_leases), fencing limits
+- [amplification lessons](amplification-lessons.md) — T-1528: PSO applies cap, ancestry budget, enum label trap, suite timeout
 - [sync engine lessons](sync-engine-lessons.md) — T-1191: RLS owner-update trap, lease release in rigs, per-NC lease, CompleteScan no cookie
 - [TokenSet lessons](tokenset-lessons.md) — T-1741: epoch-scoped export, putRaw whitelist trap, compose/server slow+red
 - [write kinds lessons](write-kinds-lessons.md) — T-1623/T-1632: class-dependent guard = recheck in body, writechange codec, h.ops test substitution needs testChange(), schema allow-list, sync tests hang
@@ -51,3 +52,4 @@
 - [per-DC count lessons](perdc-count-lessons.md) — T-1499: Describe-based DCsInScope, Services.PerDC wiring, reports tests hang without Postgres
 - [printers lessons](printers-lessons.md) — T-1719: new kind = two CHECKs + resync, OU path is dn (RP11), lab seed without rng draws
 - [EP-11 provider lessons](ep11-provider-lessons.md) — T-1005: facets, loaded-host lab run traps, refusal pkg
+- [DC-log join lessons](dcjoin-lessons.md) — T-1636: smbcontrol all, runner ctx gaps, enable/disable skipped, lab rig recipe

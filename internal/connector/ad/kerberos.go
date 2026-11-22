@@ -138,10 +138,53 @@ func bindWithKeytab(conn *ldap.Conn, k Kerberos, cb *krb5gssapi.ChannelBinding, 
 	if ktErr != nil {
 		return fail(CodeInvalidArgument, "keytab unreadable", nil)
 	}
+	if err := dropNonAESKeys(kt); err != nil {
+		return err
+	}
 	if keytabParsed != nil {
 		keytabParsed(kt)
 	}
 	return gssapiHandshake(conn, k, kt, conf, cb, spnHost)
+}
+
+// dropNonAESKeys removes every keytab entry whose key is not AES (etype 17 or 18, the only ones
+// krb5Config requests) and wipes the removed keys. The pinned go-krb5 does not enforce
+// PermittedEnctypes: it takes the pre-authentication etype from the ETYPE-INFO2 of an
+// unauthenticated KRB-ERROR and the reply key from the AS-REP's etype, so a rogue or on-path KDC
+// could otherwise make the client encrypt its timestamp with the account's RC4 key (the NT hash)
+// and hand an offline-crackable blob to an attacker (T-0856, TM-TB3-T14). With no RC4 key in the
+// keytab the client cannot answer such a request at all. A keytab left with no AES key is refused.
+func dropNonAESKeys(kt *keytab.Keytab) error {
+	kept := kt.Entries[:0]
+	for _, e := range kt.Entries {
+		if e.Key.KeyType == etypeID.AES256_CTS_HMAC_SHA1_96 || e.Key.KeyType == etypeID.AES128_CTS_HMAC_SHA1_96 {
+			kept = append(kept, e)
+			continue
+		}
+		clear(e.Key.KeyValue)
+	}
+	clear(kt.Entries[len(kept):]) // drop the stale struct copies left behind by the compaction
+	kt.Entries = kept
+	if len(kept) == 0 {
+		return fail(CodeInvalidArgument, "keytab has no AES keys", nil)
+	}
+	return nil
+}
+
+// checkKeytab parses the keytab only to refuse an unusable one before any network traffic; the
+// parsed copy is wiped before it returns.
+func (k Kerberos) checkKeytab() error {
+	var kt *keytab.Keytab
+	var ktErr error
+	k.Keytab.Expose(func(b []byte) {
+		kt = keytab.New()
+		ktErr = kt.Unmarshal(b)
+	})
+	defer zeroKeytab(kt)
+	if ktErr != nil {
+		return fail(CodeInvalidArgument, "keytab unreadable", nil)
+	}
+	return dropNonAESKeys(kt)
 }
 
 // keytabParsed is a test seam: it receives the parsed keytab so a test can inspect it after the

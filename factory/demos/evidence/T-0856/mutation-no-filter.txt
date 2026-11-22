@@ -1,0 +1,5 @@
+--- FAIL: TestKDCOfferingOnlyRC4PreauthGetsNoTimestamp (0.02s)
+--- FAIL: TestBindWithKeytabRC4OnlyZeroisesAndFails (0.00s)
+FAIL
+FAIL	github.com/skenzeriq/activediq/internal/connector/ad	0.445s
+FAIL

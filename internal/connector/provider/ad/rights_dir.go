@@ -69,7 +69,7 @@ func (d SessionDirectory) schema(ctx context.Context, term ldapfilter.Filter, cl
 	var found bool
 	err = d.S.Search(ctx, adconn.SearchRequest{
 		Base: dn.DNRef(nm.Schema), Scope: adconn.ScopeSubtree, Filter: ldapfilter.And(kind, term),
-		Attributes: []string{"objectGUID", "lDAPDisplayName", "schemaIDGUID", "searchFlags", "objectClass"},
+		Attributes: []string{"objectGUID", "lDAPDisplayName", "schemaIDGUID", "searchFlags", "objectClass", "attributeSecurityGUID"},
 	}, func(e *adconn.Entry) error {
 		raw := e.Raw("schemaIDGUID")
 		if len(raw) != 1 || found {
@@ -85,6 +85,11 @@ func (d SessionDirectory) schema(ctx context.Context, term ldapfilter.Filter, cl
 			return nil
 		}
 		out = provider.SchemaObject{Name: names[0], ID: g, SearchFlags: sf}
+		if ps := e.Raw("attributeSecurityGUID"); len(ps) == 1 {
+			if pg, perr := adguid.FromBytes(ps[0]); perr == nil {
+				out.PropSet = &pg
+			}
+		}
 		for _, c := range e.Strings("objectClass") {
 			if c == "classSchema" {
 				out.Class = true

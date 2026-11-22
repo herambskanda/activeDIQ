@@ -477,3 +477,16 @@ func TestPoolFunctionSQL(t *testing.T) {
 		t.Errorf("fleetsql may name the function; want 2 findings, got:\n%s", dump(fs))
 	}
 }
+
+// T-1701: a windows-only file is type-checked and analysed (it used to be invisible to the host-GOOS load).
+func TestWindowsOnlyFilesAreAnalysed(t *testing.T) {
+	root := build(t, map[string]string{
+		"internal/platform/agent/mint_windows.go": `package agent
+
+import "fx.test/internal/platform/tenant"
+
+func Mint() tenant.ID { return tenant.ID{3} } // line 5
+`,
+	})
+	wantAt(t, runStatic(t, root, nil), RuleMint, "internal/platform/agent/mint_windows.go", 5)
+}

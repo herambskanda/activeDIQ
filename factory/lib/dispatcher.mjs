@@ -141,9 +141,10 @@ export class Dispatcher {
     this.runShadow = runShadowGate; // (ctx, ticket, {mainSha, branchSha, verdict, signal}) → record; replaceable in tests
     this.shadowRun = null; // shadow gate in flight (logs only, never blocks or decides anything)
     this.shadowAbort = null;
-    this.prescreenRun = null; // merge plan 4.4: pre-screen of a ticket at the front of the line, in flight
-    this.prescreenAbort = null;
+    this.prescreenRuns = new Map(); // merge plan 4.4/5.4: ticket id -> {promise, abort} of each pre-screen in flight
     this.prescreened = new Map(); // ticket id → the branch commit already pre-screened
+    this.prescreenPass = new Map(); // merge plan 5.5: ticket id → the branch commit that passed the pre-screen
+    this.screenedSize = null; // merge plan 5.5: the size of the next train of pre-screened tickets (pre_merge.train_prescreened_max)
     this.verifyRun = null; // post-merge ci-full check in flight (never blocks a merge)
     this.verifyAbort = null;
     this.nextVerifyAt = 0; // ms; the cooldown between verify runs
@@ -476,7 +477,14 @@ export class Dispatcher {
     const pending = done.filter((t) => (code(t) ? t.links?.worktree : stranded.has(t.id)));
     const finished = orderDoneQueue(await this.settleLanded(pending), listEntities(this.ctx, 'tickets'));
     const head = this.heldOnMain.size ? await mainSha(this.ctx) : null;
-    const size = effectiveTrainSize(this.ctx, settings);
+    let size = effectiveTrainSize(this.ctx, settings);
+    // Merge plan 5.5: with train_prescreened_max set, a train is built only from tickets that passed the pre-screen on their
+    // current branch commit, so it is big without being likely to fail. With none of them in line, the usual size applies.
+    const screened = new Set();
+    if (gated && settings.train_prescreened_max >= 2) {
+      for (const t of finished) if (code(t) && await this.passedPrescreen(t)) screened.add(t.id);
+      if (screened.size) size = this.screenedTrainSize(settings);
+    }
     if (settings.train_size_max >= 2 && size !== this.lastTrainSize) {
       appendEvent(this.ctx, { actor: 'dispatcher', kind: 'dispatcher', text: `merge train size is now ${size} (largest allowed ${settings.train_size_max}; it follows the pass rate of the last gate verdicts)` });
       this.lastTrainSize = size;
@@ -493,6 +501,7 @@ export class Dispatcher {
         continue;
       }
       if ((this.gateRetryAt.get(ticket.id) ?? 0) > this.#nowMs()) continue;
+      if (screened.size && !screened.has(ticket.id)) continue; // not pre-screened yet: it waits its turn, the screened ones go first
       if (size > 1) { // a ticket that does not merge cleanly with main would take a slot and give nothing back
         if (reopened >= MAX_CONFLICT_REOPENS_PER_PASS) { if (await this.conflictsWithMain(ticket)) continue; }
         else if (await this.reopenIfConflicting(ticket)) { reopened++; continue; }
@@ -536,28 +545,57 @@ export class Dispatcher {
    * pre-screened once per branch commit, and given up on after MAX_PRESCREEN_FAILURES so it cannot loop.
    */
   async prescreenAhead(settings) {
-    if (!settings.prescreen_ahead || this.prescreenRun || this.stopping || !this.gateLanes.length) return;
+    if (!settings.prescreen_ahead || this.stopping || !this.gateLanes.length) return;
+    if (this.prescreenRuns.size >= settings.prescreen_parallel) return;
     const { ctx } = this;
     const claimed = new Set(this.gateLanes.flatMap((lane) => lane.ids));
     const all = listEntities(ctx, 'tickets');
     const done = all.filter((t) => t.status === 'done' && !claimed.has(t.id) && isCodeType(ctx.config, t.type) && t.links?.worktree);
     const head = this.heldOnMain.size ? await mainSha(ctx) : null;
-    for (const ticket of orderDoneQueue(done, all).slice(0, Math.max(1, effectiveTrainSize(ctx, settings)))) {
+    let reach = settings.prescreen_lookahead || Math.max(1, effectiveTrainSize(ctx, settings));
+    if (settings.train_prescreened_max >= 2) reach = Math.max(reach, settings.train_prescreened_max * 2); // enough screened tickets to fill a train
+    for (const ticket of orderDoneQueue(done, all).slice(0, reach)) {
+      if (this.prescreenRuns.size >= settings.prescreen_parallel) return;
+      if (this.prescreenRuns.has(ticket.id)) continue;
       if ((ticket.tags ?? []).includes(EMBARGO_TAG) || (ticket.prescreen_failures ?? 0) >= MAX_PRESCREEN_FAILURES) continue;
       if (head && this.heldOnMain.get(ticket.id) === head) continue;
       const sha = (await git(ctx.root, ['rev-parse', '--verify', '-q', `refs/heads/${branchName(ticket.id)}`])).stdout.trim();
       if (!sha || this.prescreened.get(ticket.id) === sha) continue;
       this.prescreened.set(ticket.id, sha); // set first: a run that throws is not retried every tick
-      this.prescreenAbort = new AbortController();
-      this.prescreenRun = this.guard(`pre-screen ${ticket.id}`, () => this.prescreenOne(ticket, settings, this.prescreenAbort.signal))
-        .finally(() => { this.prescreenRun = null; this.prescreenAbort = null; this.requestTick = true; this.wake?.(); });
-      return;
+      const abort = new AbortController();
+      const promise = this.guard(`pre-screen ${ticket.id}`, () => this.prescreenOne(ticket, settings, abort.signal))
+        .finally(() => { this.prescreenRuns.delete(ticket.id); this.requestTick = true; this.wake?.(); });
+      this.prescreenRuns.set(ticket.id, { promise, abort });
     }
+  }
+
+  /** True when the ticket's branch is at the commit that passed the pre-screen (a worker adding commits voids it). */
+  async passedPrescreen(ticket) {
+    const sha = this.prescreenPass.get(ticket.id);
+    if (!sha) return false;
+    const now = (await git(this.ctx.root, ['rev-parse', '--verify', '-q', `refs/heads/${branchName(ticket.id)}`])).stdout.trim();
+    if (now === sha) return true;
+    this.prescreenPass.delete(ticket.id);
+    return false;
+  }
+
+  /** The size of the next train of pre-screened tickets: starts at 4, grows by one per clean train, halves per refused one. */
+  screenedTrainSize(settings) {
+    const max = settings.train_prescreened_max;
+    this.screenedSize = Math.min(max, Math.max(2, this.screenedSize ?? Math.min(4, max)));
+    return this.screenedSize;
+  }
+
+  /** Wait for every pre-screen in flight (tests, shutdown). */
+  async prescreenIdle() {
+    while (this.prescreenRuns.size) await Promise.all([...this.prescreenRuns.values()].map((r) => r.promise));
   }
 
   async prescreenOne(ticket, settings, signal) {
     const { ctx } = this;
+    const sha = this.prescreened.get(ticket.id);
     const verdict = await this.runGate(ctx, [ticket], { signal, argv: settings.prescreen_argv });
+    if (verdict.status === 'pass' && sha) this.prescreenPass.set(ticket.id, sha);
     if (verdict.status !== 'blocked' || verdict.mainBroken) return;
     const now = listEntities(ctx, 'tickets').find((t) => t.id === ticket.id);
     if (!now || now.status !== 'done' || this.gateLanes.some((lane) => lane.ids.includes(ticket.id))) return; // it moved on meanwhile
@@ -860,7 +898,7 @@ export class Dispatcher {
     }
   }
 
-  async gateGroup(group, signal) {
+  async gateGroup(group, signal, split = false) {
     const { ctx } = this;
     const main = ctx.config.dispatcher.main_branch;
     const settings = preMergeSettings(ctx.config);
@@ -885,6 +923,12 @@ export class Dispatcher {
         actor: 'dispatcher', kind: 'dispatcher',
         text: `fast lane (${fl.argv.join(' ')}) on ${ids.join(', ')} ${result} in ${fl.seconds}s — ${agreement}. Logging only; does not affect this merge. Log: ${fl.log}`,
       });
+    }
+    if (!split && group.length > 1 && settings.train_prescreened_max >= 2 && group.every((t) => this.prescreenPass.has(t.id)) && !verdict.mainBroken) {
+      const before = this.screenedTrainSize(settings);
+      if (verdict.status === 'pass') this.screenedSize = Math.min(settings.train_prescreened_max, before + 1);
+      else if (verdict.status === 'blocked') this.screenedSize = Math.max(2, Math.floor(before / 2));
+      if (this.screenedSize !== before) appendEvent(ctx, { actor: 'dispatcher', kind: 'dispatcher', text: `train of pre-screened tickets ${verdict.status === 'pass' ? 'passed' : 'was refused'}: the next one holds up to ${this.screenedSize}` });
     }
     const conflicts = verdict.conflicts ?? [];
     const memberIds = verdict.members ?? ids;
@@ -917,17 +961,17 @@ export class Dispatcher {
           this.refuseTicket(ticket, { ...verdict, findings: own, summary: `${verdict.summary} (in a train with ${memberIds.filter((m) => m !== id).join(', ')}; these findings are in files only ${id} changed)` }, settings, main);
         }
         const rest = members.filter((t) => plan.keep.includes(t.id));
-        if (rest.length && !this.stopping) await this.gateGroup(rest, signal);
+        if (rest.length && !this.stopping) await this.gateGroup(rest, signal, true);
         for (const id of suspects) {
           if (this.stopping) break;
-          await this.gateGroup(members.filter((t) => t.id === id), signal); // its own verdict: a pass merges it, a refusal is its strike
+          await this.gateGroup(members.filter((t) => t.id === id), signal, true); // its own verdict: a pass merges it, a refusal is its strike
         }
         return;
       }
       appendEvent(ctx, { actor: 'dispatcher', kind: 'dispatcher', text: `pre-merge gate refused the train ${memberIds.join(', ')}: ${verdict.summary}; splitting it in halves to find the ticket that adds the findings` });
       const [first, second] = splitTrain(members);
-      await this.gateGroup(first, signal);
-      if (!this.stopping) await this.gateGroup(second, signal);
+      await this.gateGroup(first, signal, true);
+      if (!this.stopping) await this.gateGroup(second, signal, true);
       return;
     }
     // With more than one gate lane in flight (pre_merge.concurrency), a sibling lane can land on
@@ -1211,9 +1255,9 @@ export class Dispatcher {
       for (const lane of this.gateLanes) lane.abort.abort();
       await this.gateIdle();
     }
-    if (this.prescreenRun) { // restart only; the pre-screen belongs to this process
-      this.prescreenAbort?.abort();
-      await this.prescreenRun;
+    if (this.prescreenRuns.size) { // restart only; the pre-screens belong to this process
+      for (const r of this.prescreenRuns.values()) r.abort.abort();
+      await this.prescreenIdle();
     }
     if (this.verifyRun) { // restart only; a verify belongs to this process the same way a gate does
       this.verifyAbort?.abort();
@@ -1261,7 +1305,7 @@ export class Dispatcher {
     for (const lane of this.gateLanes) lane.abort.abort();
     this.verifyAbort?.abort();
     this.shadowAbort?.abort();
-    this.prescreenAbort?.abort();
+    for (const r of this.prescreenRuns.values()) r.abort.abort();
     this.wake?.();
   }
 

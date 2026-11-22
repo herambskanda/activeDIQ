@@ -66,6 +66,22 @@ type ChildCounter interface {
 	CountChildren(ctx context.Context, id adguid.GUID, limit uint32) (n uint32, capped bool, err error)
 }
 
+// ChangeTimer is the optional per-attribute change-time half of the object-reading facets (T-2343,
+// spec ENH-09 4.13).
+type ChangeTimer interface {
+	// AttrChangeTimes returns the last originating change time of each named attribute on the
+	// object. An attribute whose metadata is missing or undecodable is reported Known = false, never
+	// as a zero time.
+	AttrChangeTimes(ctx context.Context, id adguid.GUID, attrs []string) (map[string]ad.AttrChange, error)
+}
+
+// SignInResolver is the optional exact sign-in-name half of the object-reading facets (T-2343): one
+// user by sAMAccountName or UPN, with the disabled, expired and must-change flags. A wildcard,
+// ambiguous or missing name is an ad.CodeObjectNotFound error.
+type SignInResolver interface {
+	ResolveSignInName(ctx context.Context, name string) (ad.SignInUser, error)
+}
+
 // Feeder is the change-feed half of the object-reading facets (connector-contract §6). A provider
 // without it answers ChangeFeed with CAPABILITY_UNSUPPORTED.
 type Feeder interface {
@@ -99,6 +115,9 @@ type SchemaObject struct {
 	ID          adguid.GUID
 	Class       bool // classSchema, not attributeSchema
 	SearchFlags int32
+	// PropSet is attributeSecurityGUID, the rightsGuid of the property set an attribute belongs to
+	// (nil: none, or a class).
+	PropSet *adguid.GUID
 }
 
 // RightsDirectory is everything the AD rights check reads through.

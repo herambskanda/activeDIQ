@@ -45,3 +45,24 @@ func LivePrivileged(ctx context.Context, tx store.Tx, connection ConnectionID) (
 	}
 	return u.privileged, nil
 }
+
+// SetAncestryBudget lowers the OU-move rewrite budget (rows per moved container, rows per Populate call)
+// for a test and returns the function that restores it. Not for parallel tests.
+func SetAncestryBudget(move, cycle int) (restore func()) {
+	old := ancestryBudget
+	ancestryBudget = struct{ move, cycle int }{move, cycle}
+	return func() { ancestryBudget = old }
+}
+
+// SetPSOAppliesBudget lowers the msDS-PSOAppliesTo caps (active edges per PSO, per connection) for a test.
+func SetPSOAppliesBudget(perPSO, perConn int) (restore func()) {
+	old := psoApplies
+	psoApplies = struct{ perPSO, perConn int }{perPSO, perConn}
+	return func() { psoApplies = old }
+}
+
+// PSOAppliesBudget reports the caps in force.
+func PSOAppliesBudget() (perPSO, perConn int) { return psoApplies.perPSO, psoApplies.perConn }
+
+// AncestryBudgetInForce reports the OU-move rewrite budget in force.
+func AncestryBudgetInForce() (move, cycle int) { return ancestryBudget.move, ancestryBudget.cycle }

@@ -25,41 +25,7 @@ func TestLargeResultPageTimings(t *testing.T) {
 	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
 		e := setup(t, s)
 		ctx := context.Background()
-		sample := e.create(alice, `{}`)
-		e.work()
-		first, err := e.svc.Page(ctx, e.tid, chainOf(alice), sample.ID, run.PageQuery{Limit: 1})
-		if err != nil || len(first.Rows) != 1 {
-			t.Fatalf("sample page: %v %+v", err, first)
-		}
-		cells, _ := jsonv2.Marshal(first.Rows[0].Cells)
-		var sortKeys string
-		if err := e.db.WithTenant(ctx, e.tid, func(ctx context.Context, tx store.Tx) error {
-			return tx.QueryRow(ctx, `SELECT sort_keys::text FROM public.report_run_rows WHERE run_id = $1::uuid LIMIT 1`, sample.ID.String()).Scan(&sortKeys)
-		}); err != nil {
-			t.Fatal(err)
-		}
-		big := e.create(alice, `{"columns":["sam"]}`)
-		if err := e.ownerExec(`UPDATE public.report_runs SET state = 'running', attempt = 1, started_at = now() WHERE id = $1::uuid`, big.ID.String()); err != nil {
-			t.Fatal(err)
-		}
-		t0 := time.Now()
-		for lo := int64(0); lo < int64(n); lo += 5000 { // batches, as the job writes them
-			hi := min(lo+5000, int64(n))
-			if err := e.ownerExec(`INSERT INTO public.report_run_rows (tenant_id, run_id, row_key, ordinal, cells, sort_keys)
-				SELECT NULLIF(current_setting('app.tenant_id', true), '')::uuid, $1::uuid, 'k' || g, g, $2::jsonb,
-				       jsonb_build_object('sam', lpad(((g::bigint * 7919) % $5::bigint)::text, 10, '0'))
-				FROM generate_series($4::bigint, $6::bigint - 1) AS g WHERE $3 <> ''`, big.ID.String(), string(cells), sortKeys, lo, int64(n), hi); err != nil {
-				t.Fatal(err)
-			}
-		}
-		t.Logf("%d rows inserted in %v", n, time.Since(t0))
-		if err := e.ownerExec(`UPDATE public.report_runs SET state = 'succeeded', row_count = $2, digest = decode(repeat('ab', 32), 'hex'),
-			as_of = now(), expires_at = now() + interval '1 hour', finished_at = now() WHERE id = $1::uuid`, big.ID.String(), int64(n)); err != nil {
-			t.Fatal(err)
-		}
-		if err := e.d.ExecOwner(ctx, `ANALYZE public.report_run_rows`); err != nil { // autovacuum does this in production
-			t.Fatal(err)
-		}
+		big := storeBigRun(t, e, n)
 		time1 := func(name string, q run.PageQuery) {
 			t0 := time.Now()
 			p, err := e.svc.Page(ctx, e.tid, chainOf(alice), big.ID, q)
@@ -84,4 +50,47 @@ func cursorAt(t *testing.T, runID, sort string, desc bool, off int64) string {
 		t.Fatal(err)
 	}
 	return base64.RawURLEncoding.EncodeToString(b)
+}
+
+// storeBigRun stores an n-row succeeded run (one "sam" sort key column, scattered values) through the guards a job
+// passes, and returns its id. Shared by the scale measurements.
+func storeBigRun(t *testing.T, e *env, n int) run.Run {
+	t.Helper()
+	ctx := context.Background()
+	sample := e.create(alice, `{}`)
+	e.work()
+	first, err := e.svc.Page(ctx, e.tid, chainOf(alice), sample.ID, run.PageQuery{Limit: 1})
+	if err != nil || len(first.Rows) != 1 {
+		t.Fatalf("sample page: %v %+v", err, first)
+	}
+	cells, _ := jsonv2.Marshal(first.Rows[0].Cells)
+	var sortKeys string
+	if err := e.db.WithTenant(ctx, e.tid, func(ctx context.Context, tx store.Tx) error {
+		return tx.QueryRow(ctx, `SELECT sort_keys::text FROM public.report_run_rows WHERE run_id = $1::uuid LIMIT 1`, sample.ID.String()).Scan(&sortKeys)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	big := e.create(alice, `{"columns":["sam"]}`)
+	if err := e.ownerExec(`UPDATE public.report_runs SET state = 'running', attempt = 1, started_at = now() WHERE id = $1::uuid`, big.ID.String()); err != nil {
+		t.Fatal(err)
+	}
+	t0 := time.Now()
+	for lo := int64(0); lo < int64(n); lo += 5000 { // batches, as the job writes them
+		hi := min(lo+5000, int64(n))
+		if err := e.ownerExec(`INSERT INTO public.report_run_rows (tenant_id, run_id, row_key, ordinal, cells, sort_keys)
+			SELECT NULLIF(current_setting('app.tenant_id', true), '')::uuid, $1::uuid, 'k' || g, g, $2::jsonb,
+			       jsonb_build_object('sam', lpad(((g::bigint * 7919) % $5::bigint)::text, 10, '0'))
+			FROM generate_series($4::bigint, $6::bigint - 1) AS g WHERE $3 <> ''`, big.ID.String(), string(cells), sortKeys, lo, int64(n), hi); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Logf("%d rows inserted in %v", n, time.Since(t0))
+	if err := e.ownerExec(`UPDATE public.report_runs SET state = 'succeeded', row_count = $2, digest = decode(repeat('ab', 32), 'hex'),
+		as_of = now(), expires_at = now() + interval '1 hour', finished_at = now() WHERE id = $1::uuid`, big.ID.String(), int64(n)); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.d.ExecOwner(ctx, `ANALYZE public.report_run_rows`); err != nil { // autovacuum does this in production
+		t.Fatal(err)
+	}
+	return big
 }

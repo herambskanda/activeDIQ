@@ -57,6 +57,7 @@ const (
 	CodeDelegProto          = "over.delegation_protocol_transition"
 	CodeDelegRBCD           = "over.delegation_rbcd"
 	CodeMissingRead         = "missing.read_domain"
+	CodeMissingReports      = "missing.read_reports"
 	CodeMissingFamily       = "missing.family_right"
 	CodeUnverifiedAD        = "unverified.ad"
 )

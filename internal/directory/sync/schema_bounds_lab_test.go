@@ -3,11 +3,7 @@
 package sync_test
 
 import (
-	"bufio"
-	dirsync "github.com/skenzeriq/activediq/internal/directory/sync"
-	"os"
 	"os/exec"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -16,47 +12,42 @@ import (
 // T-1250 AC1: every mapper bound on an attribute a non-admin can write is at or above the schema's
 // rangeUpper, read from the schema NC of the running Samba lab (make lab-up). Samba's schema is the
 // Samba schema: this proves the check mechanism and Samba's values only. Windows Server's rangeUpper
-// stays [UNVERIFIED] until T-1243/T-1715 runs the same check there; Samba must not stand in for it.
+// is read by the windowslab twin of this test (schema_bounds_windows_lab_test.go, T-1880); Samba must not stand in for it.
 func Test_lab_mapper_bounds_cover_the_schema_range_upper(t *testing.T) {
-	env := map[string]string{}
-	f, err := os.Open(filepath.Join("..", "..", "..", "lab", ".lab.env"))
-	if err != nil {
-		t.Fatalf("lab not up (make lab-up): %v", err)
-	}
-	defer f.Close()
-	sc := bufio.NewScanner(f)
-	for sc.Scan() {
-		l := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(sc.Text()), "export "))
-		if k, v, ok := strings.Cut(l, "="); ok && !strings.HasPrefix(l, "#") {
-			env[k] = strings.Trim(v, `"'`)
-		}
-	}
+	env := readEnvFile(t, labDir(".lab.env"))
 	c := env["LAB_CONTAINER"]
-	attrsRead := []string{"sAMAccountName", "userPrincipalName", "displayName", "mail", "company", "description",
-		"dNSHostName", "operatingSystem", "operatingSystemVersion"}
-	m := mapper(dirsync.Config{})
-	for _, a := range attrsRead {
+	hits := 0
+	for _, a := range boundsAttrs {
 		out, err := exec.Command("docker", "exec", c, "ldbsearch", "-H", "/var/lib/samba/private/sam.ldb",
 			"-b", "CN=Schema,CN=Configuration,DC=lab,DC=activediq,DC=test", "-s", "one",
-			"(lDAPDisplayName="+a+")", "rangeUpper").CombinedOutput()
+			schemaFilter(t, a), "rangeUpper").CombinedOutput()
 		if err != nil {
 			t.Fatalf("ldbsearch %s: %v\n%s", a, err, out)
 		}
 		upper := 0
 		for _, l := range strings.Split(string(out), "\n") {
 			if v, ok := strings.CutPrefix(l, "rangeUpper: "); ok {
-				upper, _ = strconv.Atoi(strings.TrimSpace(v))
+				n, err := strconv.Atoi(strings.TrimSpace(v))
+				if err != nil {
+					t.Fatalf("%s: unparsable rangeUpper %q: %v", a, v, err)
+				}
+				upper = n
 			}
 		}
 		if upper == 0 {
-			t.Logf("%s: no rangeUpper in the Samba schema; skipped (Windows check: T-1243)", a)
+			t.Logf("%s: no rangeUpper in the Samba schema; skipped (Windows: schema_bounds_windows_lab_test.go)", a)
 			continue
 		}
-		// A value of exactly rangeUpper characters (multi-byte, so a byte count would refuse it) must map.
-		v := strings.Repeat("é", upper)
-		e := entry(90, "CN=PC1,OU=Staff,DC=lab,DC=test", gid(ouGUID), attrs(nil).classes("top", "computer").with(a, txt(v)))
-		if _, err := m.Map(e); err != nil {
+		hits++
+		if err := mapsAtRangeUpper(a, upper); err != nil {
 			t.Errorf("%s: a value of its rangeUpper (%d chars) is refused: %v", a, upper, err)
 		}
 	}
+	// A wrong base DN or a renamed schema makes every lookup empty; that must fail, not pass unchecked.
+	// Samba's schema carries rangeUpper for 7 of the 9 attributes (T-1250 run 2026-11-07).
+	if hits < minSambaHits {
+		t.Fatalf("only %d of %d attributes had a rangeUpper in the schema, want at least %d: the lookup is checking nothing", hits, len(boundsAttrs), minSambaHits)
+	}
 }
+
+const minSambaHits = 7
