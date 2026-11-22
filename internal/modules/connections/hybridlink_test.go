@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/skenzeriq/activediq/internal/directory/attr/secretattr"
 	"testing"
 	"time"
 
@@ -75,7 +76,7 @@ func newLinkEnv(t *testing.T, s *storetest.Server) *linkEnv {
 		t.Fatal(err)
 	}
 	both := map[string]bool{"naming_context": true, "entra_tenant": true}
-	runner, err := operation.NewRunner(operation.Config{DB: db, Audit: rec, Registry: r, Now: time.Now, Authz: scopes{
+	runner, err := operation.NewRunner(operation.Config{SecretAttr: secretattr.IsStatic, DB: db, Audit: rec, Registry: r, Now: time.Now, Authz: scopes{
 		"both": both, "adonly": {"naming_context": true}, "entraonly": {"entra_tenant": true}, "none": {},
 		"tok": both,
 	}})

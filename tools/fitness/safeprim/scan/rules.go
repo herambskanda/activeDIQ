@@ -30,12 +30,31 @@ type importRule struct {
 	GeneratedHome bool
 	TestsExempt   bool
 	LabExempt     bool // a policy.LabBuilds file (build tag lab, never in a production binary) may import it
+	P3            bool // part of the static half of activation row P3 (ADR-0002 P3), which safeprim -p3 runs
 	Msg           string
 }
 
+// modulePrefix is the module path the exact import paths below are written against.
+const modulePrefix = "github.com/skenzeriq/activediq/"
+
 var importRules = []importRule{
-	{Rule: "ldap-library", Prefixes: []string{"github.com/go-ldap/"}, Home: []string{policy.Connector},
-		Msg: "the LDAP library is imported only by internal/connector (" + refP1 + ")"},
+	// ADR-0002 P3 bullet 2: the directory, Kerberos and Graph/Entra client libraries are named once, in
+	// policy, and the connector root is their only home.
+	{Rule: "ldap-library", Prefixes: policy.LDAPLibraries, Home: []string{policy.Connector}, P3: true,
+		Msg: "the LDAP library is imported only by internal/connector (" + refP1 + ", ADR-0002 P3)"},
+	{Rule: "kerberos-library", Prefixes: policy.KerberosLibraries, Home: []string{policy.Connector}, P3: true,
+		Msg: "a Kerberos, GSSAPI or NTLM library is imported only by internal/connector (ADR-0002 P3)"},
+	{Rule: "graph-library", Prefixes: policy.GraphLibraries, Home: []string{policy.Connector}, P3: true,
+		Msg: "a Microsoft Graph or Entra client library is imported only by internal/connector (ADR-0002 P3)"},
+	// ADR-0002 P3 bullet 3, import half (blueprint §7.3): the sealed source unseals DM-11 rows and is
+	// wired only by the server's composition root for the embedded connector; the local source is also
+	// wired by the remote connector's root. Neither may be linked anywhere else.
+	{Rule: "credential-sealed-import", Prefixes: []string{modulePrefix + policy.CredentialSealed},
+		Home: []string{policy.Connector, policy.ComposeServer}, P3: true,
+		Msg: "credential/sealed unseals directory credentials and is imported only by internal/connector and internal/compose/server (ADR-0002 P3, blueprint §7.3)"},
+	{Rule: "credential-local-import", Prefixes: []string{modulePrefix + policy.CredentialLocal},
+		Home: []string{policy.Connector, policy.ComposeServer, policy.ComposeConn}, P3: true,
+		Msg: "credential/local is imported only by internal/connector and the connector and server composition roots (ADR-0002 P3, blueprint §7.3)"},
 	// T-0313: the AD connector package is a directory client. Only other connectors and the
 	// authorisation layer import it; a feature module reaches AD through the connector contract.
 	{Rule: "ad-connector-import", Exact: []string{"github.com/skenzeriq/activediq/internal/connector/ad"},

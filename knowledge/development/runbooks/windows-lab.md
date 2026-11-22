@@ -542,6 +542,8 @@ Run log, dc1 before/after state and the broken-run proof: `windows-lab-runs/T-05
 proof needs a reboot cycle and was not run. The test accounts stay on dc1 for the T-0846 fix; remove with `Remove-ADUser svc-t0566-gssapi`
 and `Remove-ADServiceAccount gmsa-t0566`.
 
+**Lab server bind (T-1267).** The server's Windows lab bootstrap binds as the shipping connector does (GSSAPI + channel binding, keytab), not with a password. `gssapi-lab keytab` (under `with-dc1-lock`) runs `guest/svc-keytab.ps1` (ktpass AES256 for `svc-activediq`, existing password kept) and writes `.win-lab-svc.keytab` beside the env file (gitignored, 0600); the lab server reads it from `WIN_LAB_SVC_KEYTAB` (`live-user-search.sh` defaults it). The Samba lab keeps its simple bind (no keytab/CBT lab on CI Samba; GSSAPI+CBT is proven on Samba by T-0560). Run log: `windows-lab-runs/T-1267-win-lab-gssapi-20261105.md`.
+
 ## 16. dc1 clock and time source (T-0850)
 
 **What was wrong.** dc1 (the PDC emulator) ran on `Local CMOS Clock` (`Type: NT5DS`, no peer) and its clock sat about 12h30m
@@ -764,3 +766,27 @@ writes `userParameters` via ADSI `IADsTSUserEx` or a plain LDAP modify, reads ea
 user with a per-run random password (never printed) to test the ordinary-user read, and deletes it. Needs `pip install pywinrm requests-ntlm`
 and `WIN_LAB_DC_ADDR`. The fixture users stay on dc1 for ADUC comparison (spec V4); `Remove-ADOrganizationalUnit tspfix -Recursive` clears them. Findings:
 `knowledge/development/domain/userparameters-windows-findings.md`. No new tool; pywinrm/requests-ntlm are already in the licence register.
+
+## 22. Schema rangeUpper and unpaired-surrogate evidence (T-1880)
+
+`lab/windows/bin/with-dc1-lock -- make lab-test-sync-windows` (needs `WIN_LAB_DC_ADDR`, `WIN_LAB_ENV`, `WIN_LAB_CA`; pywinrm). Reads
+`rangeUpper` from dc1's schema NC, then creates a throwaway non-admin `t1880creator` and, as it, a MachineAccountQuota computer `T1880PC`
+(both deleted at the end and before the run), writes lone surrogates over raw LDAPS, ADSI and SAMR (`lab/windows/bin/t1880-surrogate-write`
+over WinRM; the password goes on stdin, never argv or the environment) and logs the bytes LDAP returns; the mapper side (CodeBadText on those bytes, bounds at the measured rangeUpper) is pinned offline in `internal/directory/sync/bounds_windows_evidence_test.go`. Findings and the verdict for
+T-1713: `knowledge/development/domain/sync-refusal-bounds.md`.
+
+## 23. Sync mapper golden capture from dc1 (T-1787)
+
+`internal/connector/read` `TestWindowsLabSyncCapture` (tags `lab windowslab`) seeds users with accountExpires
+`0`, `9223372036854775807` and a far-future value plus a never-logged-on user in a throw-away
+`OU=t1787-<stamp>` by LDAPS adds as the lab Administrator, reads them (and the Administrator's real
+lastLogonTimestamp, which is system-only and cannot be written) back through the real ScopedSearch handler with
+the widened sync attribute list, and removes the OU. It refuses to run outside `with-dc1-lock`. Recapture:
+
+```bash
+export WIN_LAB_ENV=<main checkout>/lab/windows/.win-lab.env WIN_LAB_CA=<main checkout>/lab/windows/.win-lab-ca.pem
+lab/windows/bin/with-dc1-lock -- env SYNC_CAPTURE_DIR=$PWD/internal/directory/sync/testdata/windows \
+  go test -tags 'lab windowslab' ./internal/connector/read -run TestWindowsLabSyncCapture
+go test ./internal/directory/sync -run Test_windows_dc
+```
+Recycled/tombstone and raw ranged-member captures stay with T-1205.

@@ -170,19 +170,19 @@ func policyDiff(before *agentpolicy.AddcPolicy, after agentpolicy.AddcPolicy) []
 	}
 	// Banned terms are summarised by count: the list is up to 1 MiB and not a diff line.
 	return []operation.Change{
-		one("password.min_length", b.Password.MinLength, after.Password.MinLength),
-		one("password.max_length", b.Password.MaxLength, after.Password.MaxLength),
-		one("password.classes_required", b.Password.ClassesRequired, after.Password.ClassesRequired),
-		one("password.min_classes", b.Password.MinClasses, after.Password.MinClasses),
-		one("password.banned_terms_count", len(b.Password.BannedTerms), len(after.Password.BannedTerms)),
-		one("password.reject_sam_in_password", b.Password.RejectSAMInPassword, after.Password.RejectSAMInPassword),
-		one("password.reject_display_name_parts", b.Password.RejectDisplayNameParts, after.Password.RejectDisplayNameParts),
-		one("events.collection_enabled", b.Events.CollectionEnabled, after.Events.CollectionEnabled),
-		one("events.channels", b.Events.Channels, after.Events.Channels),
-		one("events.event_ids", b.Events.EventIDs, after.Events.EventIDs),
-		one("events.max_events_per_second", b.Events.MaxEventsPerSecond, after.Events.MaxEventsPerSecond),
-		one("events.batch_max_bytes", b.Events.BatchMaxBytes, after.Events.BatchMaxBytes),
-		one("events.outbox_max_bytes", b.Events.OutboxMaxBytes, after.Events.OutboxMaxBytes),
+		one("password_min_length", b.Password.MinLength, after.Password.MinLength),
+		one("password_max_length", b.Password.MaxLength, after.Password.MaxLength),
+		one("password_classes_required", b.Password.ClassesRequired, after.Password.ClassesRequired),
+		one("password_min_classes", b.Password.MinClasses, after.Password.MinClasses),
+		one("password_banned_terms_count", len(b.Password.BannedTerms), len(after.Password.BannedTerms)),
+		one("password_reject_sam_in_password", b.Password.RejectSAMInPassword, after.Password.RejectSAMInPassword),
+		one("password_reject_display_name_parts", b.Password.RejectDisplayNameParts, after.Password.RejectDisplayNameParts),
+		one("events_collection_enabled", b.Events.CollectionEnabled, after.Events.CollectionEnabled),
+		one("events_channels", b.Events.Channels, after.Events.Channels),
+		one("events_event_ids", b.Events.EventIDs, after.Events.EventIDs),
+		one("events_max_events_per_second", b.Events.MaxEventsPerSecond, after.Events.MaxEventsPerSecond),
+		one("events_batch_max_bytes", b.Events.BatchMaxBytes, after.Events.BatchMaxBytes),
+		one("events_outbox_max_bytes", b.Events.OutboxMaxBytes, after.Events.OutboxMaxBytes),
 	}
 }
 
@@ -313,8 +313,8 @@ func KeyRotate(sg PolicySigner) (operation.Action, error) {
 					Target: authority.TargetRef{GUID: tid, Class: TargetClassAgentPolicy},
 					Kind:   "agentfleet.keyset.rotate",
 					Diff: []operation.Change{
-						{Attribute: "policy_key.active", Before: []string{"current"}, After: []string{"new"}},
-						{Attribute: "policy_key.previous", Before: []string{"active"}, After: []string{"retiring"}},
+						{Attribute: "policy_key_active", Before: []string{"current"}, After: []string{"new"}},
+						{Attribute: "policy_key_previous", Before: []string{"active"}, After: []string{"retiring"}},
 						{Attribute: "reason", Before: []string{"none"}, After: []string{in.Reason}},
 					},
 					Reversibility: operation.Irreversible, ReversibilityReason: "a published keyset is part of the chain agents replay; it is never withdrawn",

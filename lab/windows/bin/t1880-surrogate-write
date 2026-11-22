@@ -1,0 +1,49 @@
+#!/usr/bin/env python3
+"""T-1880 lab driver: as a plain (MachineAccountQuota) creator, write UTF-16 code units into description and the
+full name / display name of a computer account on dc1, over SAMR (WinNT provider) or the ADSI LDAP provider.
+
+  t1880-surrogate-write samr|adsi-ldap COMPUTER CREATOR HEXUNITS     e.g. ... samr T1880PC t1880creator d800
+
+The creator's password is read from stdin (never argv or the environment). Prints one line per attribute: ok or the error.
+Lab dc1 only (A-0025). Run under lab/windows/bin/with-dc1-lock (the Go test that calls this already holds it)."""
+import os, re, sys
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "lib"))
+import dc1winrm
+
+
+def main(argv):
+    env, _, addr = dc1winrm.load_env("t1880-surrogate-write")  # the address gate runs first (T-1279)
+    if len(argv) != 5 or argv[1] not in ("samr", "adsi-ldap"):
+        sys.exit(__doc__)
+    mode, comp, creator, units = argv[1:]
+    pw = sys.stdin.read()
+    if not (re.fullmatch(r"[A-Za-z0-9!-]+", pw) and re.fullmatch(r"[A-Za-z0-9]+", comp)
+            and re.fullmatch(r"[A-Za-z0-9]+", creator) and re.fullmatch(r"[0-9a-fA-F]{4}(,[0-9a-fA-F]{4})*", units)):
+        sys.exit("t1880-surrogate-write: bad argument or password on stdin")
+    ps = dc1winrm.make_ps(env, addr)
+    chars = ",".join(f"0x{u}" for u in units.split(","))
+    if mode == "samr":
+        open_ = f"New-Object DirectoryServices.DirectoryEntry('WinNT://WINLAB/{comp}$,user','WINLAB\\{creator}','{pw}')"
+        props = ("Description", "FullName")
+    else:
+        open_ = (f"New-Object DirectoryServices.DirectoryEntry('LDAP://dc1.win.activediq.test/CN={comp},CN=Computers,"
+                 f"DC=win,DC=activediq,DC=test','{creator}@win.activediq.test','{pw}')")
+        props = ("description", "displayName")
+    script = f"""$ErrorActionPreference='Stop'
+$s = -join ([char[]]@({chars}))
+foreach ($p in '{props[0]}','{props[1]}') {{
+  try {{
+    $e = {open_}
+    $e.Properties[$p].Value = $s
+    $e.CommitChanges()
+    "$p ok"
+  }} catch {{ "$p ERR " + $_.Exception.Message.Replace("`r"," ").Replace("`n"," ") }}
+}}"""
+    rc, out = ps(script)
+    print(out.replace(pw, "***").strip())
+    sys.exit(0 if rc == 0 else 2)
+
+
+if __name__ == "__main__":
+    main(sys.argv)

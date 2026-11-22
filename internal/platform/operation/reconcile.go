@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	"github.com/skenzeriq/activediq/internal/platform/audit"
+	"github.com/skenzeriq/activediq/internal/platform/authority"
 	"github.com/skenzeriq/activediq/internal/platform/jobs"
 	"github.com/skenzeriq/activediq/internal/platform/operation/step"
 	"github.com/skenzeriq/activediq/internal/platform/secret"
@@ -102,7 +103,7 @@ func (r *Runner) reconcileOne(ctx context.Context, t tenant.ID, tx txFunc, c *cl
 	case !ok:
 		return nil
 	}
-	obs, err := c.act.(Observer).Observe(ctx, c.op.Pins, c.plan, c.claimedAt)
+	obs, err := c.act.(Observer).Observe(authority.WithTenant(ctx, c.op.Tenant.String()), c.op.Pins, c.plan, c.claimedAt)
 	if err != nil {
 		return nil // unreadable: the new lease lapses and the next pass tries again
 	}
@@ -177,7 +178,7 @@ func (r *Runner) verifyApplied(ctx context.Context, t tenant.ID, tx txFunc, c *c
 	if err != nil {
 		return err
 	}
-	v, verr := c.act.Verify(ctx, stp, c.plan, Outcome{})
+	v, verr := c.act.Verify(authority.WithTenant(ctx, c.op.Tenant.String()), stp, c.plan, Outcome{})
 	revoke()
 	if errors.Is(verr, ErrDeferVerify) {
 		return nil

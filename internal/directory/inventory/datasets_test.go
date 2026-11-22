@@ -126,7 +126,7 @@ func (e *env) hStructure(t *testing.T, c inventory.ConnectionID) {
 	t.Helper()
 	obs := []inventory.Observation{
 		{Object: inventory.GUID(hDom), NC: inventory.GUID(hDom), Kind: inventory.KindOther, Class: "domainDNS", State: inventory.ObjLive},
-		{Object: inventory.GUID(hOU), NC: inventory.GUID(hDom), Kind: inventory.KindOU, Class: "organizationalUnit", State: inventory.ObjLive,
+		{Object: inventory.GUID(hOU), NC: inventory.GUID(hDom), Kind: inventory.KindOU, Class: "organizationalUnit", State: inventory.ObjLive, DN: "OU=People,DC=example,DC=test", RDN: "OU=People",
 			Parent: inventory.GUID(hDom), Ancestry: []inventory.GUID{inventory.GUID(hDom)}},
 		{Object: inventory.GUID(hSys), NC: inventory.GUID(hDom), Kind: inventory.KindContainer, Class: "container", State: inventory.ObjLive,
 			Parent: inventory.GUID(hDom), Ancestry: []inventory.GUID{inventory.GUID(hDom)}},

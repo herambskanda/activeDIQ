@@ -28,3 +28,17 @@ func TestStaticReturnsACopy(t *testing.T) {
 		t.Fatal("Static exposes the package's list")
 	}
 }
+
+func TestIsStaticIgnoresCase(t *testing.T) {
+	for _, a := range Static() {
+		if !IsStatic(a) {
+			t.Errorf("%s not recognised", a)
+		}
+	}
+	if !IsStatic("UNICODEPWD") || !IsStatic("MS-MCS-ADMPWD") {
+		t.Error("case-insensitive match failed")
+	}
+	if IsStatic("mail") || IsStatic("") {
+		t.Error("false positive")
+	}
+}
