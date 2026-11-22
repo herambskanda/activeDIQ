@@ -141,8 +141,7 @@ export class Dispatcher {
     this.runShadow = runShadowGate; // (ctx, ticket, {mainSha, branchSha, verdict, signal}) → record; replaceable in tests
     this.shadowRun = null; // shadow gate in flight (logs only, never blocks or decides anything)
     this.shadowAbort = null;
-    this.prescreenRun = null; // merge plan 4.4: pre-screen of a ticket at the front of the line, in flight
-    this.prescreenAbort = null;
+    this.prescreenRuns = new Map(); // merge plan 4.4/5.4: ticket id -> {promise, abort} of each pre-screen in flight
     this.prescreened = new Map(); // ticket id → the branch commit already pre-screened
     this.verifyRun = null; // post-merge ci-full check in flight (never blocks a merge)
     this.verifyAbort = null;
@@ -536,23 +535,32 @@ export class Dispatcher {
    * pre-screened once per branch commit, and given up on after MAX_PRESCREEN_FAILURES so it cannot loop.
    */
   async prescreenAhead(settings) {
-    if (!settings.prescreen_ahead || this.prescreenRun || this.stopping || !this.gateLanes.length) return;
+    if (!settings.prescreen_ahead || this.stopping || !this.gateLanes.length) return;
+    if (this.prescreenRuns.size >= settings.prescreen_parallel) return;
     const { ctx } = this;
     const claimed = new Set(this.gateLanes.flatMap((lane) => lane.ids));
     const all = listEntities(ctx, 'tickets');
     const done = all.filter((t) => t.status === 'done' && !claimed.has(t.id) && isCodeType(ctx.config, t.type) && t.links?.worktree);
     const head = this.heldOnMain.size ? await mainSha(ctx) : null;
-    for (const ticket of orderDoneQueue(done, all).slice(0, Math.max(1, effectiveTrainSize(ctx, settings)))) {
+    const reach = settings.prescreen_lookahead || Math.max(1, effectiveTrainSize(ctx, settings));
+    for (const ticket of orderDoneQueue(done, all).slice(0, reach)) {
+      if (this.prescreenRuns.size >= settings.prescreen_parallel) return;
+      if (this.prescreenRuns.has(ticket.id)) continue;
       if ((ticket.tags ?? []).includes(EMBARGO_TAG) || (ticket.prescreen_failures ?? 0) >= MAX_PRESCREEN_FAILURES) continue;
       if (head && this.heldOnMain.get(ticket.id) === head) continue;
       const sha = (await git(ctx.root, ['rev-parse', '--verify', '-q', `refs/heads/${branchName(ticket.id)}`])).stdout.trim();
       if (!sha || this.prescreened.get(ticket.id) === sha) continue;
       this.prescreened.set(ticket.id, sha); // set first: a run that throws is not retried every tick
-      this.prescreenAbort = new AbortController();
-      this.prescreenRun = this.guard(`pre-screen ${ticket.id}`, () => this.prescreenOne(ticket, settings, this.prescreenAbort.signal))
-        .finally(() => { this.prescreenRun = null; this.prescreenAbort = null; this.requestTick = true; this.wake?.(); });
-      return;
+      const abort = new AbortController();
+      const promise = this.guard(`pre-screen ${ticket.id}`, () => this.prescreenOne(ticket, settings, abort.signal))
+        .finally(() => { this.prescreenRuns.delete(ticket.id); this.requestTick = true; this.wake?.(); });
+      this.prescreenRuns.set(ticket.id, { promise, abort });
     }
+  }
+
+  /** Wait for every pre-screen in flight (tests, shutdown). */
+  async prescreenIdle() {
+    while (this.prescreenRuns.size) await Promise.all([...this.prescreenRuns.values()].map((r) => r.promise));
   }
 
   async prescreenOne(ticket, settings, signal) {
@@ -1211,9 +1219,9 @@ export class Dispatcher {
       for (const lane of this.gateLanes) lane.abort.abort();
       await this.gateIdle();
     }
-    if (this.prescreenRun) { // restart only; the pre-screen belongs to this process
-      this.prescreenAbort?.abort();
-      await this.prescreenRun;
+    if (this.prescreenRuns.size) { // restart only; the pre-screens belong to this process
+      for (const r of this.prescreenRuns.values()) r.abort.abort();
+      await this.prescreenIdle();
     }
     if (this.verifyRun) { // restart only; a verify belongs to this process the same way a gate does
       this.verifyAbort?.abort();
@@ -1261,7 +1269,7 @@ export class Dispatcher {
     for (const lane of this.gateLanes) lane.abort.abort();
     this.verifyAbort?.abort();
     this.shadowAbort?.abort();
-    this.prescreenAbort?.abort();
+    for (const r of this.prescreenRuns.values()) r.abort.abort();
     this.wake?.();
   }
 

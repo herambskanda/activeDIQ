@@ -76,6 +76,11 @@ export const PRE_MERGE_DEFAULTS = Object.freeze({
   // so the failure costs no gate run. A pass changes nothing: the ticket still gets the full gate. Off by default.
   prescreen_ahead: false,
   prescreen_argv: ['make', 'prescreen'],
+  // Merge plan 5.4: how many tickets are pre-screened at the same time, and how far down the line it looks (0 = as many as the
+  // next train). With `prescreen_argv` set to the light filter (`bash factory/bin/light-filter.sh`) this is the stage that sends a
+  // failing ticket back before it uses a gate run.
+  prescreen_parallel: 1,
+  prescreen_lookahead: 0,
   // Merge plan 5.1: before a ticket is refused for new findings, run the failing jobs once more in the same
   // candidate tree. A finding counts only if it shows up in both runs, so a flaky test (a block-count tolerance,
   // a timing check) no longer refuses a good ticket. A `make` command re-runs just the targets that failed
@@ -119,6 +124,12 @@ export function preMergeSettings(config) {
   }
   if (!Array.isArray(s.prescreen_argv) || !s.prescreen_argv.length || s.prescreen_argv.some((a) => typeof a !== 'string')) {
     throw new FactoryError('dispatcher.pre_merge.prescreen_argv must be a non-empty array of strings');
+  }
+  if (!Number.isInteger(s.prescreen_parallel) || s.prescreen_parallel < 1) {
+    throw new FactoryError('dispatcher.pre_merge.prescreen_parallel must be a whole number of at least 1');
+  }
+  if (!Number.isInteger(s.prescreen_lookahead) || s.prescreen_lookahead < 0) {
+    throw new FactoryError('dispatcher.pre_merge.prescreen_lookahead must be a whole number, 0 or more');
   }
   if (typeof s.retry_failed_jobs !== 'boolean') {
     throw new FactoryError('dispatcher.pre_merge.retry_failed_jobs must be true or false');
