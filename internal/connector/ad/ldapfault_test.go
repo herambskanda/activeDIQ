@@ -270,7 +270,7 @@ func searchDetail(pkt *ber.Packet) (attrs, controls []string) {
 func (f *fakeUpstream) replAnswer(id int64, attrs []string) (out []*ber.Packet, handled bool) {
 	got := map[string][][]byte{}
 	for _, a := range attrs {
-		base, lo, _, star, isRange := splitRange(a)
+		base, lo, _, star, isRange := SplitRange(a)
 		key := strings.ToLower(base)
 		if !strings.HasPrefix(key, "msds-repl") {
 			continue

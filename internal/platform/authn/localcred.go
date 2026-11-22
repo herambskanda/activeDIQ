@@ -402,13 +402,20 @@ WHERE c.tenant_id = $1::uuid AND c.username_norm = $2`, t.String(), name).Scan(&
 			if err := l.resetThrottle(ctx, tx, t, key); err != nil {
 				return err
 			}
-			return l.record(ctx, tx, t, KindSignInPasswordSucceeded, key, acct, from, now)
+			if err := l.record(ctx, tx, t, KindSignInPasswordSucceeded, key, acct, from, now); err != nil {
+				return err
+			}
+			// The owner alert is written with the outcome and nothing waits on it (RULING AN8-A1).
+			return l.recordUsed(ctx, tx, t, acct, from, now)
 		}
 		who := ""
 		if matched {
 			who = acct // the name matched an account: only then may the log name it (rule 2g)
 		}
-		return l.record(ctx, tx, t, KindSignInPasswordFailed, key, who, from, now)
+		if err := l.record(ctx, tx, t, KindSignInPasswordFailed, key, who, from, now); err != nil {
+			return err
+		}
+		return l.countFailure(ctx, tx, t, from, now)
 	})
 	if err != nil {
 		return PendingHandle{}, err

@@ -244,6 +244,26 @@
       "reason": "CHECK: chunk_hash is 64 lowercase hex characters (operation_plan_chunks_chunk_hash_check); the probe row carries an all-zero placeholder."
     },
     {
+      "column": "public.authn_authority_notices.recipient_id",
+      "null": true,
+      "reason": "CHECK: authn_authority_notices_shape requires recipient_id NULL for break_glass_failures, the probe row's event; the foreign key would otherwise fill it (T-1544)."
+    },
+    {
+      "column": "public.authn_authority_notices.subject_id",
+      "null": true,
+      "reason": "CHECK: authn_authority_notices_shape requires subject_id NULL for break_glass_failures, the probe row's event; the foreign key would otherwise fill it (T-1544)."
+    },
+    {
+      "column": "public.authn_authority_notices.actor_id",
+      "null": true,
+      "reason": "CHECK: authn_authority_notices_shape requires actor_id NULL for break_glass_failures, the probe row's event; the foreign key would otherwise fill it (T-1544)."
+    },
+    {
+      "column": "public.authn_authority_notices.failure_count",
+      "value": "10",
+      "reason": "CHECK: authn_authority_notices_shape requires failure_count for break_glass_failures; the probe row carries the alert threshold."
+    },
+    {
       "column": "public.migration_jobs.state",
       "value": "quarantined",
       "reason": "CHECK: state is one of a closed set and ties limit_hit, source_sha256 and finished_at to it (migration_jobs_check*); the probe row is an ordinary quarantined job."
@@ -937,8 +957,8 @@
     },
     {
       "column": "public.authn_authority_notices.event",
-      "value": "enrolled",
-      "reason": "CHECK: event is enrolled, reset or removed (T-0766)"
+      "value": "break_glass_failures",
+      "reason": "CHECK: event is one of the five notice events, and authn_authority_notices_shape ties the nullable recipient, subject, actor and failure_count columns to it; the probe row is a break_glass_failures notice (T-0766, T-1544)"
     },
     {
       "column": "public.authn_sso_transactions.handle_hash",

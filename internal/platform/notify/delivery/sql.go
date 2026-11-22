@@ -58,3 +58,7 @@ const sqlLatestForSource = `SELECT ` + cols + ` FROM public.notify_deliveries
 // sqlByID reads Delivery $1.
 const sqlByID = `SELECT ` + cols + ` FROM public.notify_deliveries
 	WHERE tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid AND id = $1::uuid`
+
+// sqlSourceCounts counts the Deliveries of source $1/$2 how many are still open (queued or failed, a retry pending) and how many were given up.
+const sqlSourceCounts = `SELECT count(*), count(*) FILTER (WHERE state IN ('queued', 'failed')), count(*) FILTER (WHERE state = 'given_up') FROM public.notify_deliveries
+	WHERE tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid AND source_kind = $1 AND source_id = $2`

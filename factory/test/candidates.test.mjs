@@ -297,6 +297,24 @@ test('hold_ready still runs a ready ticket that was started before (refused or u
   assert.deepEqual(ids(pick(state({ tickets: [old, fresh] }), NOW, held)).filter((x) => x.startsWith('T-')), ['T-0040']);
 });
 
+test('hold_ready lets fix tickets (main-red, gate-first) and their dependents through, nothing else', () => {
+  const fix = ticket({ id: 'T-0050', tags: ['main-red'] });
+  const gf = ticket({ id: 'T-0051', tags: ['gate-first'] });
+  const dep = ticket({ id: 'T-0052', depends_on: ['T-0050'] });
+  const dep2 = ticket({ id: 'T-0053', depends_on: ['T-0052'] });
+  const plain = ticket({ id: 'T-0054' });
+  const doneFix = ticket({ id: 'T-0055', status: 'done', tags: ['main-red'] });
+  const afterDone = ticket({ id: 'T-0056', depends_on: ['T-0055'] });
+  const held = { ...config, dispatcher: { ...config.dispatcher, max_parallel: 9, hold_ready: true } };
+  const t = [fix, gf, dep, dep2, plain, doneFix, afterDone];
+  assert.deepEqual(ids(pick(state({ tickets: t }), NOW, held)).filter((x) => x.startsWith('T-')), ['T-0050', 'T-0051', 'T-0056'], 'dependents of a not-yet-done fix wait for it; dependents of a done fix run');
+  fix.status = 'done';
+  const next = ids(pick(state({ tickets: t }), NOW, held)).filter((x) => x.startsWith('T-'));
+  assert.ok(next.includes('T-0052') && !next.includes('T-0054') && next.includes('T-0056'), 'a done fix still frees its dependents; a plain ticket stays held');
+  const off = { ...held, dispatcher: { ...held.dispatcher, hold_ready_exempt_tags: [] } };
+  assert.deepEqual(ids(pick(state({ tickets: [plain, ticket({ id: 'T-0057', tags: ['main-red'] })] }), NOW, off)).filter((x) => x.startsWith('T-')), []);
+});
+
 test('T-1617: a gate run in flight holds reserved_slots back from max_parallel', () => {
   const c = { ...config, dispatcher: { ...config.dispatcher, max_parallel: 4, pre_merge: { ...config.dispatcher.pre_merge, reserved_slots: 2 } } };
   const t = ['T-7001', 'T-7002', 'T-7003', 'T-7004'].map((id) => ticket({ id }));

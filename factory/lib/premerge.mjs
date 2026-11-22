@@ -71,6 +71,7 @@ export const PRE_MERGE_DEFAULTS = Object.freeze({
   // use; the size actually used follows the pass rate of the last 20 gate verdicts (`trainsize.mjs`):
   // this many at 0.85 or better, 2 at 0.6 or better, 1 below. Rollback: 0.
   train_size_max: 0,
+  train_prescreened_max: 0,
   // Merge plan 4.4: while a gate run is in flight, run `prescreen_argv` (the cheap checks, about 5 minutes) on the tickets
   // at the front of the line, side by side with it. A ticket that fails is reopened to its owner at once, with no strike,
   // so the failure costs no gate run. A pass changes nothing: the ticket still gets the full gate. Off by default.
@@ -112,6 +113,9 @@ export function preMergeSettings(config) {
   }
   if (typeof s.keep_unread_moves !== 'boolean') {
     throw new FactoryError('dispatcher.pre_merge.keep_unread_moves must be true or false');
+  }
+  if (!Number.isInteger(s.train_prescreened_max) || s.train_prescreened_max === 1 || s.train_prescreened_max < 0) {
+    throw new FactoryError('dispatcher.pre_merge.train_prescreened_max must be 0 (off) or a whole number of 2 or more');
   }
   if (!Number.isInteger(s.train_size_max) || s.train_size_max < 0) {
     throw new FactoryError('dispatcher.pre_merge.train_size_max must be a whole number, 0 (off) or more');
