@@ -11,6 +11,21 @@ const META_PRIORITY = { triage: 'P0', grooming: 'P1', digest: 'P1' };
 const STAGE_ORDER = { review: 0, qa: 1 };
 
 /** A ticket that already went through review, qa or done once: old work coming back, not new work. */
+// hold_ready lets fix tickets through (merge plan 5.6): a ticket tagged for fixing main, and every ticket that
+// depends (directly or through others) on one, even after it is done, is not held, or a red main could never be repaired while the hold is on.
+export const HOLD_EXEMPT_TAGS = ['main-red', 'gate-first'];
+export function holdExempt(tickets, tags = HOLD_EXEMPT_TAGS) {
+  const all = [...tickets.values()];
+  const out = new Set(all.filter((t) => (t.tags ?? []).some((x) => tags.includes(x))).map((t) => t.id));
+  for (let grew = true; grew;) {
+    grew = false;
+    for (const t of all) {
+      if (!out.has(t.id) && t.status !== 'done' && (t.depends_on ?? []).some((d) => out.has(d))) { out.add(t.id); grew = true; }
+    }
+  }
+  return out;
+}
+
 const startedBefore = (t) => (t.history ?? []).some((h) => h.to === 'review' || h.to === 'qa' || h.to === 'done');
 
 const byPriority = (a, b) => (RANK[a.priority] ?? 9) - (RANK[b.priority] ?? 9)
@@ -176,8 +191,9 @@ export function selectCandidates(state, now, config) {
   // unblocked one) is old work and still runs; review, qa, rework, continuations, triage and the digest still run.
   const hold = config.dispatcher.hold_ready === true;
   const only = config.dispatcher.only_milestone ?? null;
+  const exempt = hold ? holdExempt(tickets, config.dispatcher.hold_ready_exempt_tags ?? HOLD_EXEMPT_TAGS) : new Set();
   const pool = state.tickets
-    .filter((t) => t.status === 'ready' && idle(t) && (!hold || startedBefore(t)))
+    .filter((t) => t.status === 'ready' && idle(t) && (!hold || startedBefore(t) || exempt.has(t.id)))
     .filter((t) => only === null || t.milestone === only)
     .filter((t) => {
       const b = claimBlockers(t, tickets, decisions, unmerged);

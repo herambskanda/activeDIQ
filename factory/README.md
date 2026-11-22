@@ -534,6 +534,7 @@ Git behaviour (worktrees, merge, conflict) is tested against real repositories i
 | `api_unreachable_threshold` | 3 | consecutive connectivity failures (any tickets) that count as an outage |
 | `blocked_retriage_hours` | 6 | a blocked ticket is offered to triage again after this long |
 | `hold_ready` | false | `true` starts no new work: ready tickets that were never started and grooming are held (a ready ticket that already reached review, qa or done still runs), while review, qa, rework, continuations, triage and the digest still run (needs `factory restart`) |
+| `hold_ready_exempt_tags` | `["main-red","gate-first"]` | with `hold_ready`, tickets carrying one of these tags, and tickets that depend on one (not yet done), are not held, so a red `main` can still be fixed |
 | `auto_reload` | true | `false` switches off the automatic reload when factory code lands on `main` (`factory restart` still works) |
 
 ### Fields and files beyond the reference above
