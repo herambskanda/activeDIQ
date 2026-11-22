@@ -178,6 +178,6 @@ pin on the context, and enable, disable and unlock plan an empty diff and are sk
 `from` / `to`, cursor paging; each event answers `requester`, `via`, `dc`, `credentialId`, `target`. The search is
 `audit.Search` (typed filters compared in Go over the parsed envelope, bounded by a 5,000-row scan per request, so a
 page may be short and still carry `nextCursor`); `internal/platform/audit/read` is the thin handler. Time filters apply
-to the chain's own commit time (`audit_event.at`, indexed by migration 0094), not the event's `At`. Each search records
+to the chain's own commit time (`audit_event.at`, indexed by migration 0096), not the event's `At`. Each search records
 an `audit.queried` event with `filter_*` details (never `dc` / `credential_id`, so a search is not mistaken for a step).
 A caller without `audit.read` is refused with 403 and `authz.permission.denied` is chained (`auditedAuthz`).
