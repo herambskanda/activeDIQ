@@ -67,7 +67,7 @@ func (in *CompleteTakeoverAttestationInput) Validate(errs *apitypes.Errors) {
 	_ = errs
 	{
 		apitypes.CheckLen(errs, apitypes.InQuery, jsontext.Pointer("state"), string(in.State), 1, 128)
-		if !pattern1.MatchString(string(in.State)) {
+		if !pattern3.MatchString(string(in.State)) {
 			errs.Add(apitypes.InQuery, jsontext.Pointer("state"), apitypes.CodePattern, "value does not match the required pattern")
 		}
 	}
@@ -102,6 +102,108 @@ func (o CompleteTakeoverAttestation303) ResponseHeaders() map[string]string {
 	return h
 }
 func (CompleteTakeoverAttestation303) isCompleteTakeoverAttestationOutput() {}
+
+// CreateConnectionInput is the decoded input of createConnection: path, query and header parameters, then the body.
+type CreateConnectionInput struct {
+	IdempotencyKey string // header "Idempotency-Key"
+	Body           ConnectionCreate
+}
+
+func (in *CreateConnectionInput) BindRequest(r *apihost.Request, errs *apitypes.Errors) {
+	_ = r
+	{
+		vs := r.Header.Values("Idempotency-Key")
+		switch {
+		case len(vs) > 1:
+			errs.Add(apitypes.InHeader, jsontext.Pointer("Idempotency-Key"), apitypes.CodeType, "parameter must not repeat")
+		case len(vs) == 1 && vs[0] != "":
+			s := vs[0]
+			in.IdempotencyKey = string(s)
+		default:
+			errs.Add(apitypes.InHeader, jsontext.Pointer("Idempotency-Key"), apitypes.CodeRequired, "required parameter is missing")
+		}
+	}
+}
+
+func (in *CreateConnectionInput) BodyTarget() any { return &in.Body }
+
+func (in *CreateConnectionInput) Validate(errs *apitypes.Errors) {
+	_ = errs
+	{
+		apitypes.CheckLen(errs, apitypes.InHeader, jsontext.Pointer("Idempotency-Key"), string(in.IdempotencyKey), 8, 128)
+		if !pattern4.MatchString(string(in.IdempotencyKey)) {
+			errs.Add(apitypes.InHeader, jsontext.Pointer("Idempotency-Key"), apitypes.CodePattern, "value does not match the required pattern")
+		}
+	}
+	in.Body.Validate(jsontext.Pointer(""), errs)
+}
+
+func (in *CreateConnectionInput) DestroySecrets() {}
+
+// CreateConnectionOutput is one of the responses createConnection declares. Errors are returned as the error value.
+type CreateConnectionOutput interface {
+	apihost.Response
+	isCreateConnectionOutput()
+}
+
+// CreateConnection201 is the 201 response.
+type CreateConnection201 struct {
+	Body Connection
+}
+
+func (CreateConnection201) StatusCode() int                    { return 201 }
+func (o CreateConnection201) ResponseBody() any                { return o.Body }
+func (CreateConnection201) ResponseHeaders() map[string]string { return nil }
+func (CreateConnection201) isCreateConnectionOutput()          {}
+
+// GetConnectionInput is the decoded input of getConnection: path, query and header parameters, then the body.
+type GetConnectionInput struct {
+	ConnectionID apitypes.UUID // path "connectionId"
+}
+
+func (in *GetConnectionInput) BindRequest(r *apihost.Request, errs *apitypes.Errors) {
+	_ = r
+	{
+		vs := []string{r.PathValue("connectionId")}
+		switch {
+		case len(vs) > 1:
+			errs.Add(apitypes.InPath, jsontext.Pointer("connectionId"), apitypes.CodeType, "parameter must not repeat")
+		case len(vs) == 1 && vs[0] != "":
+			s := vs[0]
+			if x, err := apitypes.ParseUUID(s); err != nil {
+				errs.Add(apitypes.InPath, jsontext.Pointer("connectionId"), apitypes.CodeType, "expected a valid value")
+			} else {
+				in.ConnectionID = apitypes.UUID(x)
+			}
+		default:
+			errs.Add(apitypes.InPath, jsontext.Pointer("connectionId"), apitypes.CodeRequired, "required parameter is missing")
+		}
+	}
+}
+
+func (in *GetConnectionInput) BodyTarget() any { return nil }
+
+func (in *GetConnectionInput) Validate(errs *apitypes.Errors) {
+	_ = errs
+}
+
+func (in *GetConnectionInput) DestroySecrets() {}
+
+// GetConnectionOutput is one of the responses getConnection declares. Errors are returned as the error value.
+type GetConnectionOutput interface {
+	apihost.Response
+	isGetConnectionOutput()
+}
+
+// GetConnection200 is the 200 response.
+type GetConnection200 struct {
+	Body Connection
+}
+
+func (GetConnection200) StatusCode() int                    { return 200 }
+func (o GetConnection200) ResponseBody() any                { return o.Body }
+func (GetConnection200) ResponseHeaders() map[string]string { return nil }
+func (GetConnection200) isGetConnectionOutput()             {}
 
 // GetConnectionSummaryInput is the decoded input of getConnectionSummary: path, query and header parameters, then the body.
 type GetConnectionSummaryInput struct {
@@ -266,14 +368,85 @@ func (o StartTakeoverAttestation200) ResponseBody() any                { return 
 func (StartTakeoverAttestation200) ResponseHeaders() map[string]string { return nil }
 func (StartTakeoverAttestation200) isStartTakeoverAttestationOutput()  {}
 
+// VerifyConnectionInput is the decoded input of verifyConnection: path, query and header parameters, then the body.
+type VerifyConnectionInput struct {
+	ConnectionID   apitypes.UUID // path "connectionId"
+	IdempotencyKey string        // header "Idempotency-Key"
+}
+
+func (in *VerifyConnectionInput) BindRequest(r *apihost.Request, errs *apitypes.Errors) {
+	_ = r
+	{
+		vs := []string{r.PathValue("connectionId")}
+		switch {
+		case len(vs) > 1:
+			errs.Add(apitypes.InPath, jsontext.Pointer("connectionId"), apitypes.CodeType, "parameter must not repeat")
+		case len(vs) == 1 && vs[0] != "":
+			s := vs[0]
+			if x, err := apitypes.ParseUUID(s); err != nil {
+				errs.Add(apitypes.InPath, jsontext.Pointer("connectionId"), apitypes.CodeType, "expected a valid value")
+			} else {
+				in.ConnectionID = apitypes.UUID(x)
+			}
+		default:
+			errs.Add(apitypes.InPath, jsontext.Pointer("connectionId"), apitypes.CodeRequired, "required parameter is missing")
+		}
+	}
+	{
+		vs := r.Header.Values("Idempotency-Key")
+		switch {
+		case len(vs) > 1:
+			errs.Add(apitypes.InHeader, jsontext.Pointer("Idempotency-Key"), apitypes.CodeType, "parameter must not repeat")
+		case len(vs) == 1 && vs[0] != "":
+			s := vs[0]
+			in.IdempotencyKey = string(s)
+		default:
+			errs.Add(apitypes.InHeader, jsontext.Pointer("Idempotency-Key"), apitypes.CodeRequired, "required parameter is missing")
+		}
+	}
+}
+
+func (in *VerifyConnectionInput) BodyTarget() any { return nil }
+
+func (in *VerifyConnectionInput) Validate(errs *apitypes.Errors) {
+	_ = errs
+	{
+		apitypes.CheckLen(errs, apitypes.InHeader, jsontext.Pointer("Idempotency-Key"), string(in.IdempotencyKey), 8, 128)
+		if !pattern4.MatchString(string(in.IdempotencyKey)) {
+			errs.Add(apitypes.InHeader, jsontext.Pointer("Idempotency-Key"), apitypes.CodePattern, "value does not match the required pattern")
+		}
+	}
+}
+
+func (in *VerifyConnectionInput) DestroySecrets() {}
+
+// VerifyConnectionOutput is one of the responses verifyConnection declares. Errors are returned as the error value.
+type VerifyConnectionOutput interface {
+	apihost.Response
+	isVerifyConnectionOutput()
+}
+
+// VerifyConnection200 is the 200 response.
+type VerifyConnection200 struct {
+	Body ConnectionVerificationResult
+}
+
+func (VerifyConnection200) StatusCode() int                    { return 200 }
+func (o VerifyConnection200) ResponseBody() any                { return o.Body }
+func (VerifyConnection200) ResponseHeaders() map[string]string { return nil }
+func (VerifyConnection200) isVerifyConnectionOutput()          {}
+
 // Handlers is the tag's handler interface: one method per operation. A handler never sees
 // *http.Request, http.ResponseWriter or the raw body (ADR-0004 rule 5).
 type Handlers interface {
 	CompleteTakeoverAttestation(ctx context.Context, in CompleteTakeoverAttestationInput) (CompleteTakeoverAttestationOutput, error)
+	CreateConnection(ctx context.Context, in CreateConnectionInput) (CreateConnectionOutput, error)
+	GetConnection(ctx context.Context, in GetConnectionInput) (GetConnectionOutput, error)
 	GetConnectionSummary(ctx context.Context, in GetConnectionSummaryInput) (GetConnectionSummaryOutput, error)
 	ListConnectionHealth(ctx context.Context, in ListConnectionHealthInput) (ListConnectionHealthOutput, error)
 	SetTakeoverAttestationMaxAge(ctx context.Context, in SetTakeoverAttestationMaxAgeInput) (SetTakeoverAttestationMaxAgeOutput, error)
 	StartTakeoverAttestation(ctx context.Context, in StartTakeoverAttestationInput) (StartTakeoverAttestationOutput, error)
+	VerifyConnection(ctx context.Context, in VerifyConnectionInput) (VerifyConnectionOutput, error)
 }
 
 // Bind adapts the handlers to the route rows apihost mounts. It is the only caller of apihost's
@@ -293,6 +466,39 @@ func Bind(h Handlers) apihost.TagHandlers {
 				}
 				if out == nil {
 					return nil, fmt.Errorf("CompleteTakeoverAttestation returned no output and no error")
+				}
+				return out, nil
+			}),
+		apihost.NewRoute(apihost.RouteMeta{
+			OperationID: "createConnection", Tag: "connections", Method: "POST", Path: "/connections",
+			Permission: "connections.manage", Anonymous: "", Scope: "tenant", Stability: "preview", Deprecated: false, Sunset: "",
+			Class: "write", MaxBody: 2048, Body: apihost.BodyJSON, MediaType: "application/json", Secret: false,
+			Headers: []string{"Idempotency-Key"},
+		},
+			func() apihost.Input { return new(CreateConnectionInput) },
+			func(ctx context.Context, in apihost.Input) (apihost.Response, error) {
+				out, err := h.CreateConnection(ctx, *in.(*CreateConnectionInput))
+				if err != nil {
+					return nil, err
+				}
+				if out == nil {
+					return nil, fmt.Errorf("CreateConnection returned no output and no error")
+				}
+				return out, nil
+			}),
+		apihost.NewRoute(apihost.RouteMeta{
+			OperationID: "getConnection", Tag: "connections", Method: "GET", Path: "/connections/{connectionId}",
+			Permission: "connections.read", Anonymous: "", Scope: "tenant", Stability: "preview", Deprecated: false, Sunset: "",
+			Class: "read", MaxBody: 0, Body: apihost.BodyNone, MediaType: "", Secret: false,
+		},
+			func() apihost.Input { return new(GetConnectionInput) },
+			func(ctx context.Context, in apihost.Input) (apihost.Response, error) {
+				out, err := h.GetConnection(ctx, *in.(*GetConnectionInput))
+				if err != nil {
+					return nil, err
+				}
+				if out == nil {
+					return nil, fmt.Errorf("GetConnection returned no output and no error")
 				}
 				return out, nil
 			}),
@@ -360,9 +566,27 @@ func Bind(h Handlers) apihost.TagHandlers {
 				}
 				return out, nil
 			}),
+		apihost.NewRoute(apihost.RouteMeta{
+			OperationID: "verifyConnection", Tag: "connections", Method: "POST", Path: "/connections/{connectionId}/verify",
+			Permission: "connections.verify", Anonymous: "", Scope: "tenant", Stability: "preview", Deprecated: false, Sunset: "",
+			Class: "write", MaxBody: 0, Body: apihost.BodyNone, MediaType: "", Secret: false,
+			Headers: []string{"Idempotency-Key"},
+		},
+			func() apihost.Input { return new(VerifyConnectionInput) },
+			func(ctx context.Context, in apihost.Input) (apihost.Response, error) {
+				out, err := h.VerifyConnection(ctx, *in.(*VerifyConnectionInput))
+				if err != nil {
+					return nil, err
+				}
+				if out == nil {
+					return nil, fmt.Errorf("VerifyConnection returned no output and no error")
+				}
+				return out, nil
+			}),
 	)
 }
 
 var (
-	pattern1 = regexp.MustCompile("^[A-Za-z0-9._-]+$")
+	pattern3 = regexp.MustCompile("^[A-Za-z0-9._-]+$")
+	pattern4 = regexp.MustCompile("^[A-Za-z0-9._~-]+$")
 )

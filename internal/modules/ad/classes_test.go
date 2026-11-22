@@ -3,6 +3,7 @@ package ad_test
 import (
 	"context"
 	"errors"
+	"github.com/skenzeriq/activediq/internal/directory/attr/secretattr"
 	"strings"
 	"testing"
 
@@ -287,7 +288,7 @@ func TestMemberAddNestRemoveApplyAndVerify(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r, err := operation.NewRunner(operation.Config{DB: fakeDB{}, Audit: &sink{}, Authz: &scopeAuthz{}, Registry: reg})
+	r, err := operation.NewRunner(operation.Config{SecretAttr: secretattr.IsStatic, DB: fakeDB{}, Audit: &sink{}, Authz: &scopeAuthz{}, Registry: reg})
 	if err != nil {
 		t.Fatal(err)
 	}

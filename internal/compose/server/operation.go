@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/skenzeriq/activediq/internal/directory/attr/secretattr"
 	"github.com/skenzeriq/activediq/internal/directory/client"
 	"github.com/skenzeriq/activediq/internal/directory/connection"
 	"github.com/skenzeriq/activediq/internal/directory/inventory"
@@ -42,7 +43,7 @@ func buildOperation(holdsMinter func() bool, db *store.DB, facts operation.LiveF
 		return nil, ErrNoFacts
 	}
 	ch := audit.NewChainer(db)
-	cfg := operation.Config{DB: db, Audit: ch, Authz: authzr, Registry: reg, Facts: facts, Pinner: pinner, Credentials: creds, Component: "server"}
+	cfg := operation.Config{SecretAttr: secretattr.IsStatic, DB: db, Audit: ch, Authz: authzr, Registry: reg, Facts: facts, Pinner: pinner, Credentials: creds, Component: "server"}
 	if sh, ok := authzr.(operation.SiteHints); ok { // the rbac authorizer reads the assignments' site preferences (ADM-133)
 		cfg.Sites = sh
 	}

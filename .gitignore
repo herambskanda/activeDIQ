@@ -58,6 +58,7 @@ lab/windows/.state/
 lab/windows/.win-lab.env
 lab/windows/.win-lab-ca.pem
 lab/windows/.win-lab-gssapi.keytab
+lab/windows/.win-lab-svc.keytab
 lab/windows/.win-lab-gmsa.json
 
 # stray go build output of tools/fitness/profiles
@@ -83,6 +84,7 @@ lab/windows/.win-lab-gmsa.json
 !/internal/webui/dist/
 /internal/webui/dist/*
 !/internal/webui/dist/.gitkeep
+/keycustody
 
 # Go build output from a bare `go build ./pkg`
 /operation

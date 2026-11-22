@@ -1,0 +1,21 @@
+-test.shuffle 1793547186574972912
+=== RUN   TestPinnedKrb5RegistersNoWeakEtypes
+--- PASS: TestPinnedKrb5RegistersNoWeakEtypes (0.00s)
+=== RUN   TestBindWithKeytabZeroisesParsedKeytab
+--- PASS: TestBindWithKeytabZeroisesParsedKeytab (0.10s)
+=== RUN   TestNegativeControlUnfilteredKeytabLeaksRC4Timestamp
+--- PASS: TestNegativeControlUnfilteredKeytabLeaksRC4Timestamp (0.10s)
+=== RUN   TestOpenRejectsKeytabWithoutAESKeysBeforeNetwork
+--- PASS: TestOpenRejectsKeytabWithoutAESKeysBeforeNetwork (0.06s)
+=== RUN   TestDropNonAESKeys
+--- PASS: TestDropNonAESKeys (0.07s)
+=== RUN   TestBindWithKeytabUnreadable
+--- PASS: TestBindWithKeytabUnreadable (0.05s)
+=== RUN   TestKDCOfferingOnlyRC4PreauthGetsNoTimestamp
+--- PASS: TestKDCOfferingOnlyRC4PreauthGetsNoTimestamp (0.12s)
+=== RUN   TestBindWithKeytabRC4OnlyZeroisesAndFails
+--- PASS: TestBindWithKeytabRC4OnlyZeroisesAndFails (0.04s)
+=== RUN   TestZeroKeytabWipesEveryKey
+--- PASS: TestZeroKeytabWipesEveryKey (0.15s)
+PASS
+ok  	github.com/skenzeriq/activediq/internal/connector/ad	1.778s

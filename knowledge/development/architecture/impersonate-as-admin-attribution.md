@@ -148,3 +148,25 @@ Opened as T-1629, a separate build ticket for `backend-engineer`, `security-sens
    `audit.go:78`); the connector identity is the transport, reached via `Target.Connection` → DM-11.
 3. **AC 3:** one correlation gap (§5) found, so a build ticket is opened (§6). There is no privilege
    or mechanism gap, so no further build is needed beyond that ticket and the documentation.
+
+## 8. Evidence through the full pipeline (T-1636, Samba lab, 2026-11-18)
+
+`TestLabDCLogJoin` (`internal/compose/server/dcjoin_lab_test.go`, `go test -tags lab`) resets a user's
+password as a technician through the real runner, the `ad.user.resetPassword` Action, `client.Write`,
+the connector write handler and LDAPS to the Samba DC, on Postgres 16 and 18. Result:
+
+- The DC log (`auth_audit`/`dsdb_audit`/`dsdb_password_audit` at 5, all processes via
+  `smbcontrol all debug`) shows `DSDB Change [Modify] ... SID [<svc SID>] ... replace: unicodePwd
+  [REDACTED SECRET ATTRIBUTE]` and `Password Change [Reset]`. Exactly one SID appears in the run, the
+  bound service account's. Neither the technician's account ID nor the new password is in the log.
+- The step event (`ad.user.password_reset`) carries `Requester` = the technician, `Connection`, the
+  target GUID, `credential_id` = the connection's DM-11 row and `dc` = the pinned DC host (`localhost`
+  in the lab), and no bind name or SID.
+- Join: an auditor takes the SID and time from the DC line, resolves the DM-11 row, and finds the step
+  event by `credential_id`, `dc` and target.
+
+Limits: the Tier0Context builder and the account reader are test stand-ins (T-2303); `DSDB Change` is
+not a Windows 4724/4738/5136 event, so AC 2 is T-2304. The run found and fixed three product defects:
+Apply and Verify ran without the tenant on the context, the account Actions' write ran without the DSA
+pin on the context, and enable, disable and unlock plan an empty diff and are skipped as no-change
+(T-2301, not fixed here).

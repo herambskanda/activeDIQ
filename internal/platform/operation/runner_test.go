@@ -3,6 +3,7 @@ package operation
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -181,7 +182,7 @@ func newRunner(t *testing.T, b behaviour, az *authzFake, f LiveFacts, s sink) (*
 	if az == nil {
 		az = &authzFake{}
 	}
-	r, err := NewRunner(Config{DB: db, Audit: s, Authz: az, Registry: reg, Facts: f,
+	r, err := NewRunner(Config{SecretAttr: testSecretAttr, DB: db, Audit: s, Authz: az, Registry: reg, Facts: f,
 		Now: func() time.Time { return time.Unix(1_700_000_000, 0) }})
 	if err != nil {
 		t.Fatal(err)
@@ -380,7 +381,7 @@ func TestPlanContractViolations(t *testing.T) {
 		Inverse: func(TypedStep[payload], out) (in, error) { return in{}, nil }})
 	reg, _ := NewRegistry(a)
 	db := &fakeDB{}
-	r, _ := NewRunner(Config{DB: db, Audit: sink{}, Authz: &authzFake{}, Registry: reg})
+	r, _ := NewRunner(Config{SecretAttr: testSecretAttr, DB: db, Audit: sink{}, Authz: &authzFake{}, Registry: reg})
 	if _, err := r.RunStore(context.Background(), req()); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("err = %v", err)
 	}
@@ -430,7 +431,7 @@ func TestStepUpRequired(t *testing.T) {
 	a := b.action(t, db).(defined[in, payload, out])
 	a.t.Descriptor.StepUp = true
 	reg, _ := NewRegistry(a)
-	r, _ := NewRunner(Config{DB: db, Audit: sink{}, Authz: &authzFake{}, Registry: reg})
+	r, _ := NewRunner(Config{SecretAttr: testSecretAttr, DB: db, Audit: sink{}, Authz: &authzFake{}, Registry: reg})
 	rq := req()
 	if _, err := r.RunStore(context.Background(), rq); !errors.Is(err, ErrDenied) || applied != 0 {
 		t.Fatalf("err=%v", err)
@@ -452,7 +453,7 @@ func TestStepUpWhen(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		r, _ := NewRunner(Config{DB: db, Audit: sink{}, Authz: &authzFake{}, Registry: reg})
+		r, _ := NewRunner(Config{SecretAttr: testSecretAttr, DB: db, Audit: sink{}, Authz: &authzFake{}, Registry: reg})
 		rq := req()
 		rq.Input = Input(`{"Name":"` + name + `"}`)
 		rq.FreshStepUp = fresh
@@ -566,7 +567,7 @@ func TestRequestAndTargetValidation(t *testing.T) {
 			return ObservedBefore, nil
 		}})
 	reg, _ := NewRegistry(a)
-	r2, _ := NewRunner(Config{DB: db, Audit: sink{}, Authz: &authzFake{}, Registry: reg})
+	r2, _ := NewRunner(Config{SecretAttr: testSecretAttr, DB: db, Audit: sink{}, Authz: &authzFake{}, Registry: reg})
 	rq := req()
 	rq.Action = "objects.user.create"
 	if _, err := r2.RunStore(context.Background(), rq); !errors.Is(err, ErrTarget) {
@@ -750,7 +751,7 @@ func TestDirectoryActionWithNoFactsPortIsRefusedBeforePlan(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		r, err := NewRunner(Config{DB: &fakeDB{}, Audit: sink{}, Authz: &authzFake{}, Registry: reg})
+		r, err := NewRunner(Config{SecretAttr: testSecretAttr, DB: &fakeDB{}, Audit: sink{}, Authz: &authzFake{}, Registry: reg})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -828,7 +829,7 @@ func TestPlanReaderCarriesTenantAndDSAPins(t *testing.T) {
 // A Descriptor.TargetClass binds every planned step: an Action declaring "group" cannot plan a step
 // aimed at the member (TM-D18).
 func TestCheckPlanEnforcesTargetClass(t *testing.T) {
-	u := &run{d: Descriptor{ID: "x.group.add", Reversibility: Reversible, TargetClass: "group"}}
+	u := &run{r: &Runner{cfg: Config{SecretAttr: testSecretAttr}}, d: Descriptor{ID: "x.group.add", Reversibility: Reversible, TargetClass: "group"}}
 	step := func(class string) []StepPlan {
 		return []StepPlan{{Kind: "k", Reversibility: Reversible, Target: authority.TargetRef{Class: class}}}
 	}
@@ -837,5 +838,123 @@ func TestCheckPlanEnforcesTargetClass(t *testing.T) {
 	}
 	if err := u.checkPlan(step("group")); err != nil {
 		t.Fatalf("group step: %v", err)
+	}
+}
+
+// A known secret attribute planned without Secret is refused, not silently redacted (AG-9, DM-80.I4):
+// the Action author must find out, and no value may reach the plan hash, a diff or an event (T-1287).
+func TestCheckPlanRefusesStaticSecretAttributeWithoutSecretFlag(t *testing.T) {
+	u := &run{r: &Runner{cfg: Config{SecretAttr: testSecretAttr}}, d: Descriptor{ID: "x.user.set", Reversibility: Reversible}}
+	plan := func(attr string, flagged bool) []StepPlan {
+		return []StepPlan{{Kind: "k", Reversibility: Reversible,
+			Diff: []Change{{Attribute: attr, Secret: flagged, Before: []string{"old-value"}, After: []string{"P@ssw0rd!"}}}}}
+	}
+	for _, name := range testSecretNames {
+		for _, spelled := range []string{name, strings.ToLower(name), strings.ToUpper(name)} {
+			err := u.checkPlan(plan(spelled, false))
+			if !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), spelled) {
+				t.Errorf("%s without Secret: err = %v, want ErrInvalid naming the attribute", spelled, err)
+			} else if strings.Contains(err.Error(), "P@ssw0rd!") || strings.Contains(err.Error(), "old-value") {
+				t.Errorf("%s: the error carries a value: %v", spelled, err)
+			}
+			steps := plan(spelled, true)
+			if err := u.checkPlan(steps); err != nil {
+				t.Errorf("%s with Secret: %v", spelled, err)
+			} else if c := steps[0].Diff[0]; c.Before != nil || c.After != nil {
+				t.Errorf("%s with Secret kept its values in the plan: %+v", spelled, c)
+			}
+		}
+	}
+	if err := u.checkPlan(plan("mail", false)); err != nil {
+		t.Errorf("an ordinary attribute was refused: %v", err)
+	}
+}
+
+// End to end: the run fails, nothing is written and no event carries the value.
+func TestRunRefusesUnflaggedSecretAttribute(t *testing.T) {
+	bad := func() []TypedStep[payload] {
+		return []TypedStep[payload]{{
+			Plan: StepPlan{Target: authority.TargetRef{GUID: "row-1", Class: "thing"}, Kind: "set", Reversibility: Reversible,
+				Diff: []Change{{Attribute: "UnicodePwd", Before: []string{"old"}, After: []string{"P@ssw0rd!"}}}},
+			Payload: payload{Row: "row-1"},
+		}}
+	}
+	r, db := newRunner(t, behaviour{verifyOK: true, plan: bad}, nil, factsFake{}, sink{})
+	_, err := r.RunStore(context.Background(), req())
+	if !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), "UnicodePwd") {
+		t.Fatalf("err = %v, want ErrInvalid naming UnicodePwd", err)
+	}
+	if len(db.writes) != 0 {
+		t.Fatalf("writes = %v", db.writes)
+	}
+	for _, ev := range db.committed {
+		for _, c := range ev.Changes {
+			if len(c.Before) != 0 || len(c.After) != 0 {
+				t.Fatalf("event carries values: %+v", c)
+			}
+		}
+		if strings.Contains(fmt.Sprintf("%+v", ev), "P@ssw0rd!") {
+			t.Fatalf("event carries the value: %+v", ev)
+		}
+	}
+}
+
+// An alias of a secret attribute must not slip past the name list: the directory accepts the OID, an
+// ";option" suffix and padded names for the same attribute, so every non-plain name is refused, flagged
+// Secret or not, and the error never carries a value (T-1287, security review).
+func TestCheckPlanRefusesNonPlainAttributeNames(t *testing.T) {
+	u := &run{r: &Runner{cfg: Config{SecretAttr: testSecretAttr}}, d: Descriptor{ID: "x.user.set", Reversibility: Reversible}}
+	for _, name := range []string{
+		"1.2.840.113556.1.4.90", "unicodePwd;binary", " unicodePwd", "unicodePwd ",
+		"OID.1.2.840.113556.1.4.90", "unicodePwd\x00", "", "9mail", "a.b",
+	} {
+		for _, flagged := range []bool{false, true} {
+			steps := []StepPlan{{Kind: "k", Reversibility: Reversible,
+				Diff: []Change{{Attribute: name, Secret: flagged, Before: []string{"old-value"}, After: []string{"P@ssw0rd!"}}}}}
+			err := u.checkPlan(steps)
+			if !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), fmt.Sprintf("%q", name)) {
+				t.Errorf("%q (Secret=%v): err = %v, want ErrInvalid naming the attribute", name, flagged, err)
+			} else if strings.Contains(err.Error(), "P@ssw0rd!") || strings.Contains(err.Error(), "old-value") {
+				t.Errorf("%q: the error carries a value: %v", name, err)
+			}
+		}
+	}
+	for _, name := range []string{"mail", "msDS-ManagedPassword", "outcome_reason", "unicodePwd"} {
+		steps := []StepPlan{{Kind: "k", Reversibility: Reversible, Diff: []Change{{Attribute: name, Secret: true}}}}
+		if err := u.checkPlan(steps); err != nil {
+			t.Errorf("plain name %q refused: %v", name, err)
+		}
+	}
+}
+
+// End to end, the OID spelling of unicodePwd: the run fails before anything is persisted or written.
+func TestRunRefusesSecretAttributeByOID(t *testing.T) {
+	bad := func() []TypedStep[payload] {
+		return []TypedStep[payload]{{
+			Plan: StepPlan{Target: authority.TargetRef{GUID: "row-1", Class: "thing"}, Kind: "set", Reversibility: Reversible,
+				Diff: []Change{{Attribute: "1.2.840.113556.1.4.90", Before: []string{"old"}, After: []string{"P@ssw0rd!"}}}},
+			Payload: payload{Row: "row-1"},
+		}}
+	}
+	r, db := newRunner(t, behaviour{verifyOK: true, plan: bad}, nil, factsFake{}, sink{})
+	_, err := r.RunStore(context.Background(), req())
+	if !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), "1.2.840.113556.1.4.90") {
+		t.Fatalf("err = %v, want ErrInvalid naming the attribute", err)
+	}
+	if len(db.writes) != 0 {
+		t.Fatalf("writes = %v", db.writes)
+	}
+	if s := fmt.Sprintf("%+v %+v", db.committed, db.writes); strings.Contains(s, "P@ssw0rd!") {
+		t.Fatalf("a persisted record or event carries the value: %s", s)
+	}
+}
+
+// A runner without the secret-attribute predicate would let a password into the plan and the audit
+// trail, so it is not built (AG-9).
+func TestNewRunnerRequiresSecretAttr(t *testing.T) {
+	reg, _ := NewRegistry()
+	_, err := NewRunner(Config{DB: &fakeDB{}, Audit: sink{}, Authz: &authzFake{}, Registry: reg})
+	if !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), "SecretAttr") {
+		t.Fatalf("NewRunner without SecretAttr: %v", err)
 	}
 }

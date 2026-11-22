@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/skenzeriq/activediq/internal/directory/attr/secretattr"
 	"github.com/skenzeriq/activediq/internal/modules/reports/run"
 	"github.com/skenzeriq/activediq/internal/modules/reports/schedule"
 	"github.com/skenzeriq/activediq/internal/platform/audit"
@@ -163,7 +164,7 @@ func newRig(t *testing.T, srv *storetest.Server) *rig {
 	if err != nil {
 		t.Fatal(err)
 	}
-	rn, err := operation.NewRunner(operation.Config{DB: db, Audit: ch, Authz: g, Registry: reg, Gate: operation.PermissionOnly{}, Component: "test"})
+	rn, err := operation.NewRunner(operation.Config{SecretAttr: secretattr.IsStatic, DB: db, Audit: ch, Authz: g, Registry: reg, Gate: operation.PermissionOnly{}, Component: "test"})
 	if err != nil {
 		t.Fatal(err)
 	}

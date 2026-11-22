@@ -542,6 +542,8 @@ Run log, dc1 before/after state and the broken-run proof: `windows-lab-runs/T-05
 proof needs a reboot cycle and was not run. The test accounts stay on dc1 for the T-0846 fix; remove with `Remove-ADUser svc-t0566-gssapi`
 and `Remove-ADServiceAccount gmsa-t0566`.
 
+**Lab server bind (T-1267).** The server's Windows lab bootstrap binds as the shipping connector does (GSSAPI + channel binding, keytab), not with a password. `gssapi-lab keytab` (under `with-dc1-lock`) runs `guest/svc-keytab.ps1` (ktpass AES256 for `svc-activediq`, existing password kept) and writes `.win-lab-svc.keytab` beside the env file (gitignored, 0600); the lab server reads it from `WIN_LAB_SVC_KEYTAB` (`live-user-search.sh` defaults it). The Samba lab keeps its simple bind (no keytab/CBT lab on CI Samba; GSSAPI+CBT is proven on Samba by T-0560). Run log: `windows-lab-runs/T-1267-win-lab-gssapi-20261105.md`.
+
 ## 16. dc1 clock and time source (T-0850)
 
 **What was wrong.** dc1 (the PDC emulator) ran on `Local CMOS Clock` (`Type: NT5DS`, no peer) and its clock sat about 12h30m
@@ -756,6 +758,15 @@ The domain Administrator password is dc1's; the snapshot holds no password in pl
 The gMSA's KDS root key is backdated 10 hours (lab shortcut: it is usable immediately; never do this on a customer domain).
 Run logs: `windows-lab-runs/T-1328-fs1-20261112.md`.
 
+## 23. msDS-Repl* location and right, DirSync delete visibility (T-1510, TM-D31 rules 3 and 7)
+
+`lab/windows/bin/repl-rights-lab run [LOG]` (under `with-dc1-lock`, `WIN_LAB_ENV` set; ~50 s). It creates `OU=T1510-Lab` with two unprivileged users and a few throwaway objects, adds one
+`DS-Replication-Monitor-Topology` ACE (rightsGuid read from the forest) for one of them on the domain head, then on the configuration and schema heads, reads the four `msDS-Repl*` attributes at
+rootDSE / the three heads / dc1's NTDS Settings as Administrator, `svc-activediq`, the right-holder and a no-right user, and runs DirSync (OBJECT_SECURITY | INCREMENTAL_VALUES) over a modify and a delete for the same principals.
+Everything is removed in a `finally`; the run fails (exit 3) if a head's DACL hash differs afterwards, the OU remains, a throwaway principal is privileged, or the no-right read is an error. It prints `INCONCLUSIVE`
+when the Administrator control returns none of the four attributes (a DC with no replication partner: empty cannot be told from denied). Judge: `lib/replrights.py`; offline proof `tests/test_repl_rights.py`.
+First record, with the single-DC limitation and the DirSync result: `windows-lab-runs/T-1510-repl-rights-20261107.md`.
+
 ## 21. userParameters fixtures (T-1890)
 
 `lab/windows/bin/capture-tsprops capture` (under `with-dc1-lock`) creates disabled, password-less users `tspw01..` and probe users in `OU=tspfix` on dc1,
@@ -773,7 +784,23 @@ and `WIN_LAB_DC_ADDR`. The fixture users stay on dc1 for ADUC comparison (spec V
 over WinRM; the password goes on stdin, never argv or the environment) and logs the bytes LDAP returns; the mapper side (CodeBadText on those bytes, bounds at the measured rangeUpper) is pinned offline in `internal/directory/sync/bounds_windows_evidence_test.go`. Findings and the verdict for
 T-1713: `knowledge/development/domain/sync-refusal-bounds.md`.
 
-## 23. Tunnel-failure events in the Application log (T-1277)
+## 24. Tunnel-failure events in the Application log (T-1277)
 
 `lab/windows/bin/agent-tunnel-events-verify --log knowledge/development/runbooks/windows-lab-runs/T-1277-tunnel-events-<date>.log [--window-wait]`
 (under `with-dc1-lock`; `WIN_LAB_ENV=<main checkout>/lab/windows/.win-lab.env`; ~20 min with `--window-wait`, ~5 min without). It builds and installs the MSI of this checkout, enrols against `enrol-stub`, kills the stub and checks: AC1 exactly one event 110 after 75 s of retries (and, with `--window-wait`, the next one after 15 min says `(N more since the last report)`); AC2 a restarted stub (new server CA) gives event 112; AC3 every 110-119 event renders (`wevtutil /f:text`, no "cannot be found") and none contains the stub address, port, token, pin, a PEM header or a JWT prefix (the same search finds them when planted); AC4 `Stop-Service` during the retry loop reaches Stopped, exit code 0, no SCM 7031/7034/7024/7023/7009/7000, no Application Error. dc1 is restored (before/after snapshot). First run 2026-11-06, commit 96ab0ae14: 0 failures; log in `windows-lab-runs/`.
+
+## 23. Sync mapper golden capture from dc1 (T-1787)
+
+`internal/connector/read` `TestWindowsLabSyncCapture` (tags `lab windowslab`) seeds users with accountExpires
+`0`, `9223372036854775807` and a far-future value plus a never-logged-on user in a throw-away
+`OU=t1787-<stamp>` by LDAPS adds as the lab Administrator, reads them (and the Administrator's real
+lastLogonTimestamp, which is system-only and cannot be written) back through the real ScopedSearch handler with
+the widened sync attribute list, and removes the OU. It refuses to run outside `with-dc1-lock`. Recapture:
+
+```bash
+export WIN_LAB_ENV=<main checkout>/lab/windows/.win-lab.env WIN_LAB_CA=<main checkout>/lab/windows/.win-lab-ca.pem
+lab/windows/bin/with-dc1-lock -- env SYNC_CAPTURE_DIR=$PWD/internal/directory/sync/testdata/windows \
+  go test -tags 'lab windowslab' ./internal/connector/read -run TestWindowsLabSyncCapture
+go test ./internal/directory/sync -run Test_windows_dc
+```
+Recycled/tombstone and raw ranged-member captures stay with T-1205.

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/skenzeriq/activediq/internal/directory/attr/secretattr"
 	"testing"
 	"time"
 
@@ -88,7 +89,7 @@ func newRCEnv(t *testing.T, s *storetest.Server) *rcEnv {
 		t.Fatal(err)
 	}
 	rec := &recorder{}
-	runner, err := operation.NewRunner(operation.Config{DB: db, Audit: rec, Registry: r, Now: time.Now,
+	runner, err := operation.NewRunner(operation.Config{SecretAttr: secretattr.IsStatic, DB: db, Audit: rec, Registry: r, Now: time.Now,
 		Authz: grantAll{ownerHex: true, helperHex: true}})
 	if err != nil {
 		t.Fatal(err)

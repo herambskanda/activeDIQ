@@ -445,7 +445,7 @@ On 2026-10-30, `make fitness-profiles` on `main` (10ce82fe9, re-run on c773b413b
 | Check | Ticket | Expires | Evidence the check needs | Producer |
 | --- | --- | --- | --- | --- |
 | P2-msi | T-0928 | 2027-01-30 | build, install, upgrade and uninstall of every MSI on `main` on WS2025, then WS2022 (WS2019 nightly), against the Windows lab; fails when the host is unreachable | devops-engineer (windows-engineer for MSI content) |
-| P3 | T-0929 | 2026-11-30 | `internal/connector/conformance` under the embedded and remote transports on Samba (T-0929); library and unseal fences outside `internal/connector` (T-0930) | directory-engineer, devops-engineer |
+| P3 | T-0929 | 2026-11-30 | `internal/connector/conformance` under the embedded and remote transports on Samba (T-0929); library and unseal fences outside `internal/connector` (T-0930, replaced by T-1464, which landed it as the row's `static` half, so only the conformance half is deferred) | directory-engineer, devops-engineer |
 | P4 | T-0931 | 2026-11-30 | `saas` composed with two tenants and two remote connectors: certificate, message-body and Entra-certificate crossings refused | backend-engineer |
 | P6 | T-0932 | 2026-12-15 | `linux-oci` boot, sign-in and directory read with egress denied except to the lab DC and PostgreSQL | devops-engineer |
 | U3 | T-0933 | 2026-11-30 | no `activediq.*` reference in `skenzeriq.agent.v1`; golden-descriptor breaking-change check on both namespaces, with no new dependency | devops-engineer |

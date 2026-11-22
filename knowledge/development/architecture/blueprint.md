@@ -135,7 +135,7 @@ skills and the safe-primitives spec to match.
 | Composition root "`cmd/<role>/` + a compose package" (ADR-0002 rule 1) | `cmd/<role>/` + `internal/compose/`, split by role: `internal/compose/<role>/` (one wiring package per binary; `server` and `agent` also hold `modules.gen.go`), `internal/compose/profile/{windows,linuxoci,saas}.go` (manifest data, no implementation imports) and `internal/compose/config/` (the loader) |
 | Platform root "`internal/platform/`" (ADR-0002) | **Kept**, with the package list in §5.1 |
 | Connector root (ADR-0002 rule 3) | `internal/connector/` |
-| Data-access package `store` (ADR-0002; safe-primitives P5) | `internal/platform/store`. Its entry points are **`WithTenantTx`** (the ADR-0002 name; the safe-primitives spec's `WithTenant` is renamed) and `WithPlatform`. Exemption registry: `internal/platform/store/exempt`. Report compiler: `internal/platform/store/reportsql`. Install preflight (ADR-0011 rule 4, T-1128): `internal/platform/store/preflight` — a read-only check on the migration role's connection that refuses to migrate when `pg_trgm` is unavailable or not creatable, or the database is not UTF8, and warns on a C/POSIX ctype; every migration applier calls it first (`storetest.Apply` does; the product's migration runner must, see T-1316) |
+| Data-access package `store` (ADR-0002; safe-primitives P5) | `internal/platform/store`. Its entry points are **`WithTenantTx`** (the ADR-0002 name; the safe-primitives spec's `WithTenant` is renamed) and `WithPlatform`. Exemption registry: `internal/platform/store/exempt`. Report compiler: `internal/platform/store/reportsql`. Install preflight (ADR-0011 rule 4, T-1128): `internal/platform/store/preflight` — a read-only check on the migration role's connection that refuses to migrate when `pg_trgm` is unavailable or not creatable, or the database is not UTF8, and warns on a C/POSIX ctype; every migration applier calls it first (`storetest.Apply` does; the product's migration runner must, see T-1316) Pool hygiene (T-1313, `reset.go`): `AfterRelease` runs `RESET ALL`, `DISCARD TEMP/SEQUENCES`, `CLOSE ALL`, `UNLISTEN *`, `pg_advisory_unlock_all()` (not `DISCARD ALL`: it would drop pgx's statement cache) and destroys a connection that fails the reset or holds a foreign prepared statement; `PrepareConn` destroys one whose `client_encoding` is not UTF8 or `standard_conforming_strings` is not on |
 | `ldapfilter`, `dn`, `attr` (safe-primitives P1–P3) | `internal/directory/ldapfilter`, `internal/directory/dn` (incl. `ObjectRef`, `GUIDRef`), and `internal/directory/attr/{guid,sid,filetime,gentime,flags,unicodepwd}`, plus the decode-only `userParameters` decoder `internal/directory/attr/tsprops` (**planned**, T-1566; safe-primitives §5.7, connector-contract §5.9; one importer, §7.4); P6 `internal/directory/sd` (read half: decoder, SD_FLAGS control, `Grants`) |
 | `odata` (safe-primitives P8, [safe-primitives-odata.md](safe-primitives-odata.md)) | `internal/directory/odata`, with `graphschema` (Graph property declarations) and `odatatest` (strict parser: round-trip oracle and the fake Graph's request parser) beneath it |
 | `Secret` (P3 §5.6) | `internal/platform/secret`. The platform needs it for key material and MFA seeds; the corpus unit stays `attr.unicodepwd` |
@@ -1212,6 +1212,13 @@ connector (§2 rule 3, §2.1). So the write path is a **credential port**:
 
 A remote connector that needs more than a local credential (an Entra certificate or a password
 fallback on a remote host) is `[OPEN → old T-0007]`.
+
+**Fence (ADR-0002 P3, T-1464).** `safeprim -p3`, a row of `make fitness-profiles`, fails when a package
+outside `internal/connector/` imports a directory-protocol, Kerberos/GSSAPI/NTLM or Graph/Entra client
+library (one list, `tools/analyzers/policy`), names an exported type of `connector/credential` (all but
+`Source`), calls an `Unseal*` function in a file that imports a credential package, or imports
+`credential/sealed` outside `compose/server` or `credential/local` outside `compose/server` and
+`compose/connector`. `compose/server` therefore builds the sealed source and hands it over as a value.
 
 ### 7.4 Where each primitive lives and who uses it
 
