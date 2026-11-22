@@ -1,4 +1,4 @@
--- 0096_operation_plan_chunks: durable record of the plan chunks of a bulk operation (ADR-0005 rule 6,
+-- 0097_operation_plan_chunks: durable record of the plan chunks of a bulk operation (ADR-0005 rule 6,
 -- job kind operation.plan; T-2073). Owner: internal/platform/operation.
 --
 -- A bulk operation plans in chunk jobs of operations.chunk_size items. A chunk's rows (items, steps, this
