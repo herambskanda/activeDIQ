@@ -41,6 +41,8 @@ type Handler struct {
 	// ops reports the Describe rows of the other groups (the service supplies it: the provider's
 	// facets and the write operation table). Nil: Describe lists only what this package knows.
 	ops func() []*connectorv1.OperationSupport
+	// perDC and perDomain are the ReadPerDC caps, shared by every call of the handler.
+	perDC, perDomain *limiter
 }
 
 // Option configures a Handler.
@@ -59,7 +61,8 @@ func New(p provider.Provider, opts ...Option) (*Handler, error) {
 	if p == nil {
 		return nil, errors.New("read: a provider is required")
 	}
-	h := &Handler{prov: p, now: time.Now, log: slog.Default(), feed: feedLimits{maxPages: defaultFeedPages, deadline: defaultFeedDeadline}}
+	h := &Handler{prov: p, now: time.Now, log: slog.Default(), feed: feedLimits{maxPages: defaultFeedPages, deadline: defaultFeedDeadline},
+		perDC: &limiter{size: DefaultPerDCOps}, perDomain: &limiter{size: DefaultPerDomainOps}}
 	for _, o := range opts {
 		o(h)
 	}
@@ -199,7 +202,7 @@ func (h *Handler) Read(ctx context.Context, req *connectorv1.ReadRequest, out Se
 		return pinRefusal()
 	}
 
-	entry, tails, err := h.build(e, id, parent, attrs)
+	entry, tails, err := h.build(e, id, parent, attrs, false)
 	if err != nil {
 		return refuse(connectorv1.ErrorCode_ERROR_CODE_PROVIDER_FAILURE, connectorv1.RetryAdvice_RETRY_ADVICE_NEVER, "attribute could not be decoded")
 	}
@@ -276,7 +279,7 @@ func truncated(e *ad.Entry) []string {
 // build turns the entry into the header entry plus the chunks that follow it. An attribute with
 // more than rangeWindow values carries its first range in the header (complete = false) and the
 // rest as in-order chunks, the last marked terminal.
-func (h *Handler) build(e *ad.Entry, id guid.GUID, parent *connectorv1.Guid, asked []string) (*connectorv1.DirectoryEntry, []*connectorv1.ValueChunk, error) {
+func (h *Handler) build(e *ad.Entry, id guid.GUID, parent *connectorv1.Guid, asked []string, fillAbsent bool) (*connectorv1.DirectoryEntry, []*connectorv1.ValueChunk, error) {
 	out := &connectorv1.DirectoryEntry{ObjectGuid: provider.GUIDToWire(id), ParentGuid: parent,
 		Dn: &connectorv1.DnValue{DisplayDn: e.DN}}
 	var tails []*connectorv1.ValueChunk
@@ -284,11 +287,15 @@ func (h *Handler) build(e *ad.Entry, id guid.GUID, parent *connectorv1.Guid, ask
 	for _, a := range asked {
 		want[strings.ToLower(a)] = true
 	}
-	for _, name := range e.Names() {
+	for _, key := range e.Names() {
+		name, lo, hi, star, ranged := key, 0, 0, false, false
+		if b, l, h, st, ok := ad.SplitRange(key); ok {
+			name, lo, hi, star, ranged = strings.ToLower(b), l, h, st, true
+		}
 		if name == "objectguid" || !want[name] {
 			continue
 		}
-		raw := e.Raw(name)
+		raw := e.Raw(key)
 		vals := make([]*connectorv1.AttributeValue, 0, len(raw))
 		for _, r := range raw {
 			v, err := h.value(name, r)
@@ -298,7 +305,19 @@ func (h *Handler) build(e *ad.Entry, id guid.GUID, parent *connectorv1.Guid, ask
 			vals = append(vals, v)
 		}
 		at := &connectorv1.Attribute{Name: name, Complete: true}
-		if len(vals) > rangeWindow {
+		if ranged {
+			// The DC answered with a slice of the attribute: never complete unless it is the whole
+			// run from value 0 to the end.
+			at.Values = vals
+			if !(star && lo == 0) {
+				end := hi
+				if star {
+					end = lo + len(vals) - 1
+				}
+				at.Complete = false
+				at.Range = &connectorv1.ValueRange{Start: uint32(lo), End: uint32(max(end, lo))}
+			}
+		} else if len(vals) > rangeWindow {
 			at.Values, at.Complete = vals[:rangeWindow], false
 			at.Range = &connectorv1.ValueRange{Start: 0, End: rangeWindow - 1}
 			for start := rangeWindow; start < len(vals); start += rangeWindow {
@@ -310,6 +329,18 @@ func (h *Handler) build(e *ad.Entry, id guid.GUID, parent *connectorv1.Guid, ask
 			at.Values = vals
 		}
 		out.Attributes = append(out.Attributes, at)
+	}
+	if fillAbsent {
+		// Read-and-empty: the DC omits an attribute with no value, but it omits a denied one just as
+		// silently. Only attributes in readEmptyOK (ordinarily readable, never confidential) are
+		// claimed empty; every other omission stays "not read".
+		for _, a := range asked {
+			n := strings.ToLower(a)
+			if n == "objectguid" || e.Has(n) || !readEmptyOK[n] || e.HasRanged(n) {
+				continue
+			}
+			out.Attributes = append(out.Attributes, &connectorv1.Attribute{Name: n, Complete: true})
+		}
 	}
 	return out, tails, nil
 }

@@ -23,6 +23,7 @@ var (
 	_ provider.Feeder          = (*ADProvider)(nil)
 	_ provider.ChangeTimer     = (*ADProvider)(nil)
 	_ provider.SignInResolver  = (*ADProvider)(nil)
+	_ provider.PerDCReader     = (*ADProvider)(nil)
 )
 
 // sessionOK is true only when the provider's directory and bound-DC binder are still both over the
@@ -126,6 +127,61 @@ func (p *ADProvider) ResolveSignInName(ctx context.Context, name string) (adconn
 		return adconn.SignInUser{}, provider.ErrNoBoundDC
 	}
 	return p.sess.ResolveSignInName(ctx, name)
+}
+
+// DomainDCs implements provider.PerDCReader: the DCs of the domain from the configuration NC,
+// listed through the reading session.
+func (p *ADProvider) DomainDCs(ctx context.Context, nc guid.GUID) ([]provider.DC, error) {
+	if p == nil || p.OpenDC == nil {
+		return nil, provider.ErrPerDCUnavailable
+	}
+	if !p.sessionOK() {
+		return nil, provider.ErrNoBoundDC
+	}
+	head, err := p.sess.Read(ctx, dn.GUIDRef(nc), []string{"distinguishedName", "instanceType"}, adconn.ReadOptions{})
+	if err != nil {
+		return nil, err
+	}
+	d, err := dn.Parse(head.DN, dn.Strict)
+	if err != nil {
+		return nil, err
+	}
+	// Only a domain naming-context head names a domain: instanceType has the head bit (IT_NC_HEAD, 0x1).
+	if it, ok, err := head.Int32("instanceType"); err != nil || !ok || it&1 == 0 {
+		return nil, &adconn.Error{Code: adconn.CodeObjectNotFound}
+	}
+	list, err := p.sess.DomainControllers(ctx, d)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]provider.DC, len(list))
+	for i, c := range list {
+		out[i] = provider.DC{Host: c.Host, Site: c.Site, DSAGUID: c.DSAGUID, RODC: c.RODC, RODCKnown: c.RODCKnown}
+	}
+	return out, nil
+}
+
+// ReadOnDC implements provider.PerDCReader: one short-lived session per read, on that host only.
+func (p *ADProvider) ReadOnDC(ctx context.Context, dc provider.DC, id guid.GUID, attrs []string) (*adconn.Entry, *connectorv1.DcIdentity, error) {
+	if p == nil || p.OpenDC == nil {
+		return nil, nil, provider.ErrPerDCUnavailable
+	}
+	s, err := p.OpenDC(ctx, dc.Host)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer s.Close()
+	ident, err := s.DCIdentity(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	who := &connectorv1.DcIdentity{DsaGuid: provider.GUIDToWire(ident.DSAGUID), InvocationId: provider.GUIDToWire(ident.InvocationID),
+		DnsHostname: ident.DNSHostName, Site: ident.Site}
+	if ident.DSAGUID != dc.DSAGUID {
+		return nil, who, &adconn.Error{Code: adconn.CodeUnreachable} // another DC answered at this host
+	}
+	e, err := s.Read(ctx, dn.GUIDRef(id), attrs, adconn.ReadOptions{})
+	return e, who, err
 }
 
 // ManagesNC implements provider.Feeder.

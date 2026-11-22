@@ -117,9 +117,25 @@ func (e *Entry) Int32(name string) (int32, bool, error) {
 	return int32(n), true, nil
 }
 
-// splitRange splits "member;range=0-1499" into ("member", 0, 1499, false) and
+// HasRanged reports whether the DC returned name only as a ranged key.
+func (e *Entry) HasRanged(name string) bool { _, _, _, _, ok := e.RangeOf(name); return ok }
+
+// RangeOf reports whether the DC returned name as a ranged key ("name;range=lo-hi") and, if so,
+// the key and its bounds. star means the terminal "lo-*" form. A ranged reply is not the whole
+// attribute, and it is never an absent one.
+func (e *Entry) RangeOf(name string) (key string, lo, hi int, star, ok bool) {
+	want := strings.ToLower(name)
+	for k := range e.attrs {
+		if b, l, h, st, isR := SplitRange(k); isR && strings.ToLower(b) == want {
+			return k, l, h, st, true
+		}
+	}
+	return "", 0, 0, false, false
+}
+
+// SplitRange splits "member;range=0-1499" into ("member", 0, 1499, false) and
 // "member;range=1500-*" into ("member", 1500, 0, true). ok is false for a name without a range option.
-func splitRange(name string) (base string, lo, hi int, star, ok bool) {
+func SplitRange(name string) (base string, lo, hi int, star, ok bool) {
 	i := indexRangeOption(name)
 	if i < 0 {
 		return name, 0, 0, false, false

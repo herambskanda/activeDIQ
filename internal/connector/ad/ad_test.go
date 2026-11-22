@@ -158,9 +158,9 @@ func TestSplitRange(t *testing.T) {
 		{"\xff\xff;range=1-1", "\xff\xff", 1, 1, false, true},
 	}
 	for _, c := range cases {
-		b, lo, hi, star, ok := splitRange(c.in)
+		b, lo, hi, star, ok := SplitRange(c.in)
 		if b != c.base || lo != c.lo || hi != c.hi || star != c.star || ok != c.isOK {
-			t.Errorf("splitRange(%q) = %q %d %d %v %v", c.in, b, lo, hi, star, ok)
+			t.Errorf("SplitRange(%q) = %q %d %d %v %v", c.in, b, lo, hi, star, ok)
 		}
 	}
 }
@@ -311,7 +311,7 @@ func FuzzSplitRange(f *testing.F) {
 		f.Add(s)
 	}
 	f.Fuzz(func(t *testing.T, name string) {
-		base, lo, hi, star, ok := splitRange(name) // must not panic
+		base, lo, hi, star, ok := SplitRange(name) // must not panic
 		if ok && (lo < 0 || (!star && hi < lo) || !strings.HasPrefix(name, base)) {
 			t.Fatalf("%q -> %q %d %d %v", name, base, lo, hi, star)
 		}

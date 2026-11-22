@@ -82,6 +82,28 @@ type SignInResolver interface {
 	ResolveSignInName(ctx context.Context, name string) (ad.SignInUser, error)
 }
 
+// DC is one domain controller of a domain, as the per-DC read lists it.
+type DC struct {
+	Host    string
+	Site    string
+	DSAGUID adguid.GUID
+	// RODC is meaningful only when RODCKnown. An unknown DC is in scope for both scopes: dropping it
+	// would hide a DC from the coverage.
+	RODC, RODCKnown bool
+}
+
+// PerDCReader is the optional per-DC half of the object-reading facets (connector-contract §5.5). A
+// provider without it, or one that is not configured to open per-DC sessions (ErrPerDCUnavailable),
+// answers ReadPerDC with CAPABILITY_UNSUPPORTED.
+type PerDCReader interface {
+	// DomainDCs lists the DCs that serve the domain whose naming-context head has this objectGUID,
+	// reachable or not.
+	DomainDCs(ctx context.Context, nc adguid.GUID) ([]DC, error)
+	// ReadOnDC reads attrs of the object on that DC and on no other. The returned identity is the
+	// DC that answered; it is nil if the DC could not be reached.
+	ReadOnDC(ctx context.Context, dc DC, id adguid.GUID, attrs []string) (*ad.Entry, *connectorv1.DcIdentity, error)
+}
+
 // Feeder is the change-feed half of the object-reading facets (connector-contract §6). A provider
 // without it answers ChangeFeed with CAPABILITY_UNSUPPORTED.
 type Feeder interface {

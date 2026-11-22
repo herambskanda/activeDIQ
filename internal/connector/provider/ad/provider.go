@@ -123,6 +123,10 @@ type ADProvider struct {
 	// so the DC whose identity rule 5 checks is the DC the write reaches. Nil: those kinds answer
 	// CAPABILITY_UNSUPPORTED.
 	Accounts provider.AccountSession
+	// OpenDC opens a session bound to one named DC with the connection's credential, for the per-DC
+	// read. The credential stays with the caller: the Session never holds it. It must dial that host
+	// only and never fall back to another server. Nil: ReadPerDC answers CAPABILITY_UNSUPPORTED.
+	OpenDC func(ctx context.Context, host string) (*adconn.Session, error)
 	// Self is the connector's own account (the identity of every step-7 read), by GUID or DN. Kind 6
 	// proves List Contents on Deleted Objects for this identity's token; unset, restore is refused
 	// with INSUFFICIENT_RIGHTS (TM-D33 rule 4).

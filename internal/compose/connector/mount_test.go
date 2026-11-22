@@ -143,6 +143,36 @@ func (fakeSrc) DirSyncCycle(context.Context, ad.DirSyncRequest, func(ad.DirSyncP
 	return ad.DirSyncPage{}, nil
 }
 
+// fakeSrc is also a provider.PerDCReader: one DC that answers with a logon count.
+func (fakeSrc) DomainDCs(context.Context, guid.GUID) ([]provider.DC, error) {
+	return []provider.DC{{Host: "dc1.example.test", DSAGUID: dsa}}, nil
+}
+
+func (fakeSrc) ReadOnDC(_ context.Context, dc provider.DC, id guid.GUID, _ []string) (*ad.Entry, *v1.DcIdentity, error) {
+	return ad.NewEntry("CN=u", map[string][][]byte{"objectGUID": {id.Bytes()}, "logonCount": {[]byte("7")}}),
+		&v1.DcIdentity{DsaGuid: provider.GUIDToWire(dc.DSAGUID), DnsHostname: dc.Host}, nil
+}
+
+// ReadPerDC is routed by the tunnel server to the read handler: one result per DC, then a summary
+// (the RPC is served, not Unimplemented).
+func TestReadPerDCOverTunnelIsServed(t *testing.T) {
+	tn, ctx := newTunnel(t)
+	st, err := v1.NewConnectorClient(tn.srv.Conn()).ReadPerDC(ctx, &v1.ReadPerDCRequest{
+		Connection: &v1.ConnectionRef{ConnectionId: "c1", DirectoryIdentity: dirIdent},
+		Guid:       provider.GUIDToWire(objGUID), NcGuid: provider.GUIDToWire(objGUID),
+		Attributes: []v1.PerDcAttribute{v1.PerDcAttribute_PER_DC_ATTRIBUTE_LOGON_COUNT},
+		Scope:      v1.PerDcScope_PER_DC_SCOPE_ALL,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ms, err := recvAll(st)
+	if err != nil || len(ms) != 2 || ms[0].GetResult() == nil || ms[1].GetSummary() == nil ||
+		ms[1].GetSummary().GetCoverage() != v1.Coverage_COVERAGE_COMPLETE {
+		t.Fatalf("ReadPerDC over the tunnel: msgs=%v err=%v", ms, err)
+	}
+}
+
 // svc is the connector service over fakeSrc: the production assembly (service.New), with a directory
 // that stands for the directory only. connID binds the verify handler to a connection ("" = any).
 func svc(t *testing.T, connID string) *service.Service {
@@ -391,7 +421,7 @@ func TestBindingServesNothingForAnIdentityThatIsNotATenantConnector(t *testing.T
 // AC4: the golden list of Connector RPCs the tunnel serves. Adding a group to the mount means
 // adding it here; every other method stays Unimplemented over the tunnel.
 func TestTunnelServedRPCsAreTheGoldenList(t *testing.T) {
-	golden := map[string]bool{"VerifyConnection": true, "Read": true, "ScopedSearch": true, "Describe": true, "ChangeFeed": true, "Plan": true, "Apply": true}
+	golden := map[string]bool{"VerifyConnection": true, "Read": true, "ScopedSearch": true, "ReadPerDC": true, "Describe": true, "ChangeFeed": true, "Plan": true, "Apply": true}
 	tn, ctx := newTunnel(t)
 	svc := v1.File_activediq_connector_v1_connector_proto.Services().ByName("Connector")
 	for i := 0; i < svc.Methods().Len(); i++ {
@@ -419,7 +449,7 @@ func TestTunnelServedRPCsAreTheGoldenList(t *testing.T) {
 			t.Errorf("%s: served=%v (err %v), golden=%v", name, served, err, golden[name])
 		}
 	}
-	if len(golden) != 7 {
+	if len(golden) != 8 {
 		t.Fatal("golden list changed without this test")
 	}
 }

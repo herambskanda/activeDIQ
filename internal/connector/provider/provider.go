@@ -95,6 +95,9 @@ var (
 	ErrNoPins = errors.New("provider: C13 pin store not configured")
 	// ErrNoBoundDC is returned when the provider cannot say which DC it is bound to.
 	ErrNoBoundDC = errors.New("provider: bound DC identity not available")
+	// ErrPerDCUnavailable is returned by a PerDCReader that is not configured to open per-DC
+	// sessions; the read group answers it with CAPABILITY_UNSUPPORTED.
+	ErrPerDCUnavailable = errors.New("provider: per-DC reads not configured")
 	// ErrNoAnchors is returned when the provider cannot read the identifiers F4 needs; the guard then
 	// refuses (fail closed).
 	ErrNoAnchors = errors.New("provider: sync anchors cannot be read")

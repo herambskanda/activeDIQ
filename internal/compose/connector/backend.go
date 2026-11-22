@@ -121,6 +121,11 @@ func openBackend(ctx context.Context, loc Local, log *slog.Logger) (*backend, er
 
 	prov := adprov.NewADProvider(sess, nil, ident, &filePins{path: filepath.Join(loc.DataDir, pinsFile)})
 	prov.Self = self
+	// Per-DC reads open one short-lived session per named DC with the same keytab identity; the opener
+	// dials that host only (Servers is exactly [host]), so it never falls back to another DC.
+	prov.OpenDC = func(ctx context.Context, host string) (*ad.Session, error) {
+		return ad.Open(ctx, perDCConfig(cfg, host))
+	}
 	gate, err := newGate(filepath.Join(loc.DataDir, ratchetFile), log)
 	if err != nil {
 		return nil, errors.New("connector: write gate")
@@ -133,6 +138,14 @@ func openBackend(ctx context.Context, loc Local, log *slog.Logger) (*backend, er
 	}
 	ok = true
 	return &backend{svc: svc, close: func() { _ = sess.Close() }}, nil
+}
+
+// perDCConfig is the session config for one named DC: it dials that host only, and the TLS name and
+// the Kerberos SPN are that host's own name (ServerName cleared), never the configured DC's.
+func perDCConfig(cfg ad.Config, host string) ad.Config {
+	cfg.Servers = []string{host}
+	cfg.ServerName = ""
+	return cfg
 }
 
 // newGate builds the write gate over the ratchet baseline file. The baseline reports an access

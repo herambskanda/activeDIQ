@@ -227,6 +227,9 @@ func TestRule8WebAppAndDsNeverImportModules(t *testing.T) {
 	// app may import the generated list, ds may not.
 	expectClean(t, web("web/src/app/routes.tsx", "import { modules } from './modules.gen';\n"))
 	expect(t, web("web/src/ds/button.tsx", "import { modules } from '../modules/modules.gen';\n"), "2.8", "web/src/ds")
+	// The generated list itself is the one app file that names modules (rule 5, web list).
+	expectClean(t, web("web/src/app/modules.gen.ts", "import { directoryModule } from \"../modules/directory\";\n"))
+	expect(t, web("web/src/app/other.ts", "import { directoryModule } from \"../modules/directory\";\n"), "2.8", "web/src/app")
 	// modules may import app and ds.
 	expectClean(t, web("web/src/modules/objects/screen.tsx", "import { Button } from '../../ds/button';\n"))
 }
