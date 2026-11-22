@@ -758,6 +758,15 @@ The domain Administrator password is dc1's; the snapshot holds no password in pl
 The gMSA's KDS root key is backdated 10 hours (lab shortcut: it is usable immediately; never do this on a customer domain).
 Run logs: `windows-lab-runs/T-1328-fs1-20261112.md`.
 
+## 23. msDS-Repl* location and right, DirSync delete visibility (T-1510, TM-D31 rules 3 and 7)
+
+`lab/windows/bin/repl-rights-lab run [LOG]` (under `with-dc1-lock`, `WIN_LAB_ENV` set; ~50 s). It creates `OU=T1510-Lab` with two unprivileged users and a few throwaway objects, adds one
+`DS-Replication-Monitor-Topology` ACE (rightsGuid read from the forest) for one of them on the domain head, then on the configuration and schema heads, reads the four `msDS-Repl*` attributes at
+rootDSE / the three heads / dc1's NTDS Settings as Administrator, `svc-activediq`, the right-holder and a no-right user, and runs DirSync (OBJECT_SECURITY | INCREMENTAL_VALUES) over a modify and a delete for the same principals.
+Everything is removed in a `finally`; the run fails (exit 3) if a head's DACL hash differs afterwards, the OU remains, a throwaway principal is privileged, or the no-right read is an error. It prints `INCONCLUSIVE`
+when the Administrator control returns none of the four attributes (a DC with no replication partner: empty cannot be told from denied). Judge: `lib/replrights.py`; offline proof `tests/test_repl_rights.py`.
+First record, with the single-DC limitation and the DirSync result: `windows-lab-runs/T-1510-repl-rights-20261107.md`.
+
 ## 21. userParameters fixtures (T-1890)
 
 `lab/windows/bin/capture-tsprops capture` (under `with-dc1-lock`) creates disabled, password-less users `tspw01..` and probe users in `OU=tspfix` on dc1,

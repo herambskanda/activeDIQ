@@ -271,6 +271,65 @@ func (u *unresolvedSrc) ScopedSearch(_ context.Context, _ ad.ScopedRequest, fn f
 	return ad.ScopedResult{}, nil
 }
 
+func TestScopedSearchEmitsEmptyAttributeForAbsentReadableOnly(t *testing.T) {
+	r := sreq()
+	r.Attributes = []string{"cn", "lockoutTime", "member", "servicePrincipalName", "sIDHistory", "msDS-AllowedToDelegateTo", "memberOf", "unicodePwd"}
+	s := &ssrc{src: &src{dsa: dsaA}, entries: []*ad.Entry{mk(1)}}
+	ms, err := searchAll(start(t, s), r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]*connectorv1.Attribute{}
+	for _, a := range ms[0].GetBatch().GetEntries()[0].GetAttributes() {
+		got[a.GetName()] = a
+	}
+	if a := got["lockouttime"]; a == nil || !a.GetComplete() || len(a.GetValues()) != 0 {
+		t.Fatalf("lockouttime: want read-and-empty, got %v", a)
+	}
+	for _, n := range []string{"member", "memberof", "serviceprincipalname", "sidhistory", "msds-allowedtodelegateto"} {
+		if got[n] != nil {
+			t.Fatalf("%s: a deny-able security attribute must stay not-read, got %v", n, got[n])
+		}
+	}
+	if got["unicodepwd"] != nil {
+		t.Fatal("an attribute outside the read-empty allow-list must stay not-read")
+	}
+	if a := got["cn"]; a == nil || len(a.GetValues()) != 1 {
+		t.Fatalf("present attribute altered: %v", a)
+	}
+}
+
+// A Windows DC answers a search for a 1500+ member group with "member;range=0-1499". That is a
+// slice, never an empty or a complete attribute (security-architect F1).
+func TestScopedSearchRangedReplyIsIncompleteNeverEmpty(t *testing.T) {
+	for _, tc := range []struct {
+		key      string
+		complete bool
+	}{{"member;range=0-1499", false}, {"member;range=0-*", true}, {"member;range=1500-*", false}} {
+		vals := make([][]byte, 1500)
+		for i := range vals {
+			vals[i] = []byte("CN=m" + strconv.Itoa(i) + ",DC=lab")
+		}
+		id := g(objGUID)
+		e := ad.NewEntry("CN=grp,DC=lab", map[string][][]byte{"objectGUID": {id[:]}, tc.key: vals})
+		r := sreq()
+		r.Attributes = []string{"member"}
+		ms, err := searchAll(start(t, &ssrc{src: &src{dsa: dsaA}, entries: []*ad.Entry{e}}), r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var m *connectorv1.Attribute
+		for _, a := range ms[0].GetBatch().GetEntries()[0].GetAttributes() {
+			if a.GetName() == "member" {
+				m = a
+			}
+		}
+		if m == nil || len(m.GetValues()) != 1500 || m.GetComplete() != tc.complete || (!tc.complete && m.GetRange() == nil) {
+			t.Fatalf("%s: got %v", tc.key, m)
+		}
+	}
+}
+
 // Entries the connector withheld are never silent: the completed search logs the fixed count (the
 // proto cannot carry it yet), and a clean search logs nothing.
 func TestScopedSearchLogsWithheldCount(t *testing.T) {

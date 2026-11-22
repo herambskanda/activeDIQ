@@ -179,7 +179,6 @@ func Run(ctx context.Context, cfg config.Config, getenv func(string) string) err
 	if err != nil {
 		return err
 	}
-	_ = tunnelDeps // handed to NewFleetService by the fleet listener (T-0717)
 	ownerWriter, err := buildOwnerAssignments(db, ok.Chainer, console.Sessions)
 	if err != nil {
 		return err
@@ -265,10 +264,34 @@ func Run(ctx context.Context, cfg config.Config, getenv func(string) string) err
 	if err != nil {
 		return err
 	}
+	// The fleet Enroller (T-0716): the console's key source, the alert queue and the install's tenant.
+	// A key source that cannot serve the tenant stops startup here.
+	alerter, err := newQueueAlerter(db, ok.Chainer, slog.Default())
+	if err != nil {
+		return err
+	}
+	apiPorts := console.ports(lim, authzr, cat)
+	enroller, err := buildEnroller(ctx, fleetEnrollerDeps{DB: db, Audit: ok.Chainer, Keys: keys.NewStore(kekp).KeySource(),
+		Authz: apiPorts.Authz, StepUp: apiPorts.StepUp, Alerts: alerter}, tid)
+	if err != nil {
+		return err
+	}
+	fleetSvc, err := NewFleetService(enroller, tunnelDeps)
+	if err != nil {
+		return err
+	}
+	_ = fleetSvc // registered by the fleet listener (T-0717), which also sets the enrolment endpoints
+	actx, acancel := context.WithCancel(ctx)
+	defer func() { acancel(); alerter.Wait() }()
+	go alerter.Run(actx)
 	firstOwner.SetTenant(tid) // the claim route can now create the first owner
 	console.SetTenant(tid)    // and the sign-in plane knows whose accounts it checks
 	// Dead AN-8 throttle rows are purged on a cadence so one-off submitted names cannot grow the table (T-0868).
 	if err := startThrottlePurge(ctx, db, jreg, console.Local, tid); err != nil {
+		return err
+	}
+	// The AN-8 owner alert is drained to the tenant-owners on a cadence (T-1544, RULING AN8-A1).
+	if _, _, err := startAN8Alert(ctx, db, jreg, ok.Chainer, tid); err != nil {
 		return err
 	}
 	// Module job seeds (such as the report retention cadence) run for the install tenant, like the throttle purge.

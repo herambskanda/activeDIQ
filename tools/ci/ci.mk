@@ -133,7 +133,7 @@ fitness-profiles: ## T-0038, T-0135, ADR-0002: P1 composition boundary, P4 tenan
 fitness-proto: ## T-0064, T-0144: every proto/ file compiles (pure Go, no protoc) and the connector contract keeps its structural rules P1-P8, fleet F1-F11 and the agent contracts (skenzeriq.agent.v1, activediq.addc.v1, activediq.fileserver.v1) AG1-AG8 (closed RPC list, denied verbs, unary, no free-form fields, policy data only; TM-F-AGENTCMD contract half)
 	go run ./tools/fitness/proto proto
 
-fitness-safeprim: ## T-0033: safe-primitives FF-SP1 import boundaries (LDAP, Kerberos and Graph/Entra client libraries and the credential/sealed and credential/local packages: ADR-0002 P3, T-1464; `go run ./tools/fitness/safeprim -p3` runs just those rules plus FF-SP2 directory-credential-type and directory-credential-unseal), FF-SP2 banned APIs and analyzers (dnstring, sqlconst, secretjson, tmplconst, constdisp), FF-SP3 literal shapes; the web/ half of FF-SP3 runs in lint-web
+fitness-safeprim: ## T-0033: safe-primitives FF-SP1 import boundaries (LDAP, Kerberos and Graph/Entra client libraries and the credential/sealed and credential/local packages: ADR-0002 P3, T-1464; `go run ./tools/fitness/safeprim -p3` runs just those rules plus FF-SP2 directory-credential-type and directory-credential-unseal), FF-SP2 banned APIs and analyzers (dnstring, sqlconst, secretjson, tmplconst, constdisp, showdeleted: TM-F-RIGHTS (b) show-deleted allow-list, T-2074), FF-SP3 literal shapes; the web/ half of FF-SP3 runs in lint-web
 	go run ./tools/fitness/safeprim
 
 SAFEPRIM_REPORTS ?= .safeprim-reports

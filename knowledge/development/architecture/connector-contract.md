@@ -343,6 +343,13 @@ error, with `Observation`), then a `PerDcSummary{dcs_in_scope, dcs_answered, cov
   it served and is not a feed source.
 - Reads run concurrently under the connector's per-DC and per-domain caps (TM-TB3-T8). `lastLogon`
   is not in the GC partial attribute set, so no GC shortcut exists `[UNVERIFIED]`.
+- **Implementation (T-1143, `internal/connector/read/perdc.go`).** The DC list is the nTDSDSA objects under
+  `CN=Sites` whose `msDS-HasDomainNCs` names the domain NC (`nc_guid` must be a domain NC head, else
+  `OBJECT_NOT_FOUND`); `msDS-isRODC` absent = unknown, in scope for both scopes. One short-lived session per DC
+  read, opened by the connection's opener (the Session never holds the credential); the answering DC's DSA GUID must
+  equal the listed one or the result is `UNREACHABLE_DC`. Caps live on the handler and are shared by all calls:
+  1 read per DC, 8 per domain, `max_concurrency` only lowers; more than 100 DCs is `LIMIT_EXCEEDED`. An absent
+  `lastLogon`/count is `ZERO`/0 (never logged on). A cancelled call ends without a summary.
 
 ### 5.6 `ReadReplicationStatus` (v1.3, T-1124; spec reports-2-second-slice §7.3, D14)
 
@@ -1287,9 +1294,21 @@ T-0577):**
   identity and a PROTECTED, inheritable DACL of the service identity and SYSTEM only (the
   ProgramData default would let `BUILTIN\Users` create files in it, so a local user could pre-create
   `baseline.json` or `records.log` and switch the shrink audit off). A directory that is wider, a
-  link, or owned by anyone else is `ErrDirUnsafe` and the connector refuses to start. The parent must
-  exist and be installer- or root-owned. The startup wiring is T-0596; until it lands nothing calls
-  `EnsureDir`, so the refusal is proven at function level only.
+  link, or owned by anyone else is `ErrDirUnsafe` and the connector refuses to start. `EnsureDir`
+  creates only the last path element, and `C:\ProgramData` lets `BUILTIN\Users` create subfolders,
+  so a local user could pre-create or rename the state directory (stale-baseline rollback).
+  **Chosen (T-0596, security review of T-0577): startup runs `EnsureDir` on the parent of `data_dir`
+  and then on `data_dir` itself**, before `dial.Load`, the AD bind or the tunnel dial-out
+  (`compose/connector.ensureStateDir`). The parent is therefore the connector's own state root
+  (for example `C:\ProgramData\skenzeriq\connector` holding `data`), not a shared directory such
+  as `/var/lib` or `C:\ProgramData`; if it is missing the connector creates it protected, and a
+  pre-existing one that is wider, linked or owned by anyone else is refused. The installer may
+  create it first, but only with the service identity and SYSTEM (no Administrators ACE, which
+  the check also refuses). A `data_dir` with no parent of its own (a filesystem root) is refused.
+  Any failure exits non-zero with `ErrStateDirUnsafe`, naming the directory, before any state is
+  read or written. Proven by unit tests on real directories (Unix modes: wider, symlink, foreign
+  owner, missing parent) and by the T-0577 Windows evidence for the DACL cases; a start on a
+  Windows host with the real service identity is a Windows-lab check (T-1208).
 - **The shrink-record file** (`records.log`, `rights.FileRecordSink`) is opened through
   `ownerfile.OpenAppend`, so it is owner-only from creation; a trusted-owner file that was wider is
   corrected and a `records_acl_corrected` line is written before the record.
