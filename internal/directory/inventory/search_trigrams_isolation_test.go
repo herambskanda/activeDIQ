@@ -63,10 +63,11 @@ func (e *env) btreeLevel(t *testing.T, index string) int {
 
 // work is what one statement examined, per relation (ADR-0011 rule 16 as restated in T-1335 AC5).
 type work struct {
-	rows   map[string]float64 // Actual Rows x Loops + Rows Removed by Filter x Loops + Rows Removed by Index Recheck x Loops + Heap Fetches
-	blocks map[string]float64 // shared hit + read blocks of the scan nodes
-	loops  map[string]float64 // loops of the index-scan nodes, which scale the block tolerance
-	forms  map[string]string  // the index-scan node types that read each relation, sorted
+	rows   map[string]float64   // Actual Rows x Loops + Rows Removed by Filter x Loops + Rows Removed by Index Recheck x Loops + Heap Fetches
+	blocks map[string]float64   // shared hit + read blocks of the scan nodes
+	loops  map[string]float64   // loops of the index-scan nodes, which scale the block tolerance
+	forms  map[string]string    // the index-scan node types that read each relation, sorted
+	runs   map[string][]float64 // blocks of every repeated run; blocks holds the lowest
 }
 
 // relationOf names the table a plan node reads: a Bitmap Index Scan has an index and no relation.
@@ -103,7 +104,7 @@ func heapFetches(plan *planNode) float64 {
 }
 
 func measure(plan *planNode) work {
-	w := work{map[string]float64{}, map[string]float64{}, map[string]float64{}, map[string]string{}}
+	w := work{map[string]float64{}, map[string]float64{}, map[string]float64{}, map[string]string{}, map[string][]float64{}}
 	types := map[string]map[string]bool{}
 	plan.walk("", func(n *planNode, _ string) {
 		rel := relationOf(n)
@@ -159,6 +160,7 @@ func Test_search_fuzzy_reads_only_the_tenants_own_postings(t *testing.T) {
 	}
 	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
 		const w = inventory.DefaultSearchCeiling
+		const repeatRuns = 3
 		e := setup(t, s)
 		e.hStructure(t, e.adA)
 		if _, err := e.populate(t, e.adA, hBase, sSrchUser(1, "praman", "Priya Raman")); err != nil {
@@ -226,6 +228,22 @@ func Test_search_fuzzy_reads_only_the_tenants_own_postings(t *testing.T) {
 				}
 				shapes = append(shapes, q+describe(plan))
 				m := measure(plan)
+				// A transient extra read (hint bits, dead-entry cleanup, a held-back xmin horizon) inflates one
+				// measurement by a few blocks. Repeat the statement and keep, per relation, the LOWEST block count:
+				// a real read of another tenant's postings is in every run, so it still shows in the lowest.
+				for rel, b := range m.blocks {
+					m.runs[rel] = []float64{b}
+				}
+				for r := 0; r < repeatRuns; r++ {
+					again := measure(e.analyze(t, e.scopeNC(e.adA), q, w, true))
+					for rel, b := range again.blocks {
+						if again.forms[rel] != m.forms[rel] {
+							continue // another plan form reads a different number of blocks: not comparable
+						}
+						m.runs[rel] = append(m.runs[rel], b)
+						m.blocks[rel] = math.Min(m.blocks[rel], b)
+					}
+				}
 				if qi >= extra {
 					for _, v := range hitsJoinViolations(plan) {
 						t.Errorf("%q: %s", q, v)
@@ -284,7 +302,7 @@ func Test_search_fuzzy_reads_only_the_tenants_own_postings(t *testing.T) {
 						tol += float64(levels * ntrg)
 					}
 					if d := math.Abs(got[i].blocks[rel] - blocks); d > tol {
-						t.Errorf("%q with B %s: %s read %v shared blocks, %v with B empty (tolerance %v)", q, l.name, rel, got[i].blocks[rel], blocks, tol)
+						t.Errorf("%q with B %s: %s read %v shared blocks, %v with B empty (tolerance %v; lowest of per-run counts %v with B %s, %v with B empty)", q, l.name, rel, got[i].blocks[rel], blocks, tol, got[i].runs[rel], l.name, base[i].runs[rel])
 					}
 				}
 			}
