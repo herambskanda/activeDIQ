@@ -146,11 +146,14 @@ func (d *AlertDrain) emit(ctx context.Context, tx store.Tx, kind audit.Kind, not
 	return nil
 }
 
-func scanIDs(ctx context.Context, tx store.Tx, sql string, args ...any) ([]string, error) {
-	rows, err := tx.Query(ctx, sql, args...)
-	if err != nil {
-		return nil, err
-	}
+type idRows interface {
+	Next() bool
+	Scan(dest ...any) error
+	Err() error
+	Close()
+}
+
+func collectIDs(rows idRows) ([]string, error) {
 	defer rows.Close()
 	var out []string
 	for rows.Next() {
@@ -173,14 +176,22 @@ func (d *AlertDrain) Drain(ctx context.Context, t tenant.ID) (DrainSummary, erro
 	var pending, enqueued []string
 	err := d.DB.WithTenant(ctx, t, func(ctx context.Context, tx store.Tx) error {
 		var err error
-		if pending, err = scanIDs(ctx, tx, `SELECT id::text FROM public.authn_authority_notices
+		prows, qerr := tx.Query(ctx, `SELECT id::text FROM public.authn_authority_notices
 WHERE tenant_id = $1::uuid AND delivered_at IS NULL AND given_up_at IS NULL AND event IN ($2, $3) ORDER BY created_at LIMIT $4`,
-			t.String(), EventBreakGlassUsed, EventBreakGlassFailures, DrainBatch); err != nil {
+			t.String(), EventBreakGlassUsed, EventBreakGlassFailures, DrainBatch)
+		if qerr != nil {
+			return qerr
+		}
+		if pending, err = collectIDs(prows); err != nil {
 			return err
 		}
-		enqueued, err = scanIDs(ctx, tx, `SELECT id::text FROM public.authn_authority_notices
+		rows, qerr := tx.Query(ctx, `SELECT id::text FROM public.authn_authority_notices
 WHERE tenant_id = $1::uuid AND delivered_at IS NOT NULL AND settled_at IS NULL AND given_up_at IS NULL AND event IN ($2, $3) ORDER BY created_at LIMIT $4`,
 			t.String(), EventBreakGlassUsed, EventBreakGlassFailures, DrainBatch)
+		if qerr != nil {
+			return qerr
+		}
+		enqueued, err = collectIDs(rows)
 		return err
 	})
 	if err != nil {
@@ -274,10 +285,14 @@ func (d *AlertDrain) Watch(ctx context.Context, t tenant.ID) (int, error) {
 	n := 0
 	err := d.DB.WithTenant(ctx, t, func(ctx context.Context, tx store.Tx) error {
 		now := d.now()
-		ids, err := scanIDs(ctx, tx, `SELECT id::text FROM public.authn_authority_notices
+		rows, qerr := tx.Query(ctx, `SELECT id::text FROM public.authn_authority_notices
 WHERE tenant_id = $1::uuid AND delivered_at IS NULL AND given_up_at IS NULL AND pending_audited_at IS NULL
   AND event IN ($2, $3) AND created_at <= $4 ORDER BY created_at LIMIT $5 FOR UPDATE SKIP LOCKED`,
 			t.String(), EventBreakGlassUsed, EventBreakGlassFailures, now.Add(-PendingAlertThreshold), DrainBatch)
+		if qerr != nil {
+			return qerr
+		}
+		ids, err := collectIDs(rows)
 		if err != nil {
 			return err
 		}
