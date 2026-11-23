@@ -16,7 +16,7 @@ Builds the MSI of this checkout (WiX 5.0.2, `-wx -sw1149`), installs it on dc1, 
        7031/7034/7024/7023/7009/7000 event and no WER/Application Error for the process
 
 Holds the dc1 lock for the whole run (T-0839) and restores dc1 (agent uninstalled, ProgramData\\skenzeriq gone) with a before and
-after snapshot. Lab DC only (A-0025). Needs: pip install pywinrm requests-ntlm. Runbook: windows-lab.md section 23.
+after snapshot. Lab DC only (A-0025). Needs: pip install pywinrm requests-ntlm. Runbook: windows-lab.md section 24.
 """
 import argparse, datetime, hashlib, os, re, socket, subprocess, sys, tempfile, threading, time
 
