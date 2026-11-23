@@ -239,6 +239,11 @@
   "platformJobs": [],
   "probeValues": [
     {
+      "column": "public.operation_plan_chunks.chunk_hash",
+      "value": "0000000000000000000000000000000000000000000000000000000000000000",
+      "reason": "CHECK: chunk_hash is 64 lowercase hex characters (operation_plan_chunks_chunk_hash_check); the probe row carries an all-zero placeholder."
+    },
+    {
       "column": "public.authn_authority_notices.recipient_id",
       "null": true,
       "reason": "CHECK: authn_authority_notices_shape requires recipient_id NULL for break_glass_failures, the probe row's event; the foreign key would otherwise fill it (T-1544)."

@@ -283,6 +283,18 @@ type LiveFacts interface {
 	Facts(ctx context.Context, pins authority.Pins, q authority.FactsQuery) (authority.Facts, error)
 }
 
+// ChunkPlanner is implemented by an Action whose input names many items and which can plan any slice of
+// them without planning the rest: a bulk operation then plans as operation.plan chunk jobs of
+// chunk_size items instead of one pass (ADR-0005 rule 6). Plan stays the whole-input path and must
+// agree with it: PlanChunk over every slice, concatenated, is Plan's result.
+type ChunkPlanner interface {
+	// PlanItems is the number of items the input names. It reads only the input.
+	PlanItems(in Input) (int, error)
+	// PlanChunk plans items [first, first+n) of the input, one StepPlan per item, at most n of them and
+	// in item order. Like Plan it cannot write and reads only through pc.
+	PlanChunk(ctx context.Context, pc PlanContext, in Input, first, n int) ([]StepPlan, error)
+}
+
 // Action is the one shape for every write (rule 1). No directory write is reachable except from an
 // Action's Apply with a Step.
 type Action interface {

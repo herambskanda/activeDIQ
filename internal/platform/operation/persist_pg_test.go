@@ -345,19 +345,20 @@ type prig struct {
 }
 
 type rigOpt struct {
-	gate     Gate
-	irrev    bool
-	attempts int
-	slots    int
-	stepUp   bool
-	// stepUpWhen is a predicate descriptor: step-up is required when the input wants "ext".
+	gate       Gate
+	irrev      bool
+	attempts   int
+	slots      int
+	stepUp     bool
 	stepUpWhen func(Input) (bool, error)
 	secretIn   bool
 	class      Reversibility
-	pinner     Pinner // overrides pinFake
+	pinner     Pinner
 	sites      SiteHints
-	ref        string           // Request reference the hold gate returns
-	cred       CredentialSource // overrides credFake
+	ref        string
+	cred       CredentialSource
+	chunked    bool                         // the Action plans in chunks (ChunkPlanner)
+	mix        func(item int) Reversibility // chunked only: per-item reversibility override
 }
 
 func newPRig(t *testing.T, s *storetest.Server, o rigOpt) *prig {
@@ -381,7 +382,11 @@ func newPRig(t *testing.T, s *storetest.Server, o rigOpt) *prig {
 		o.class = Reversible
 	}
 	p.dir.stepUpWhen = o.stepUpWhen
-	reg, err := NewRegistry(p.dir.action(t, "ad.user.set", o.stepUp, o.secretIn, o.class))
+	act := p.dir.action(t, "ad.user.set", o.stepUp, o.secretIn, o.class)
+	if o.chunked {
+		act = chunkedDir{Action: act, mix: o.mix}
+	}
+	reg, err := NewRegistry(act)
 	if err != nil {
 		t.Fatal(err)
 	}

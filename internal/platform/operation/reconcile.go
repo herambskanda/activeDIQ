@@ -270,6 +270,10 @@ AND NOT EXISTS (SELECT 1 FROM public.operation_steps s WHERE s.tenant_id = o.ten
 				return err
 			}
 		}
+		// Re-drive chunked plans whose plan jobs were lost: enqueue the chunks not yet recorded.
+		if err := r.redrivePlanning(ctx, q, t); err != nil {
+			return err
+		}
 		// Deferred read-backs.
 		ids, err = scanIDs(q.Query(ctx, `SELECT DISTINCT operation_id::text FROM public.operation_steps WHERE tenant_id = $1::uuid AND state = 'applied'`, t.String()))
 		if err != nil {

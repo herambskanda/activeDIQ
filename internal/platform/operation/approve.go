@@ -120,13 +120,13 @@ func (r *Runner) ApproveRequest(ctx context.Context, t tenant.ID, opID, planHash
 
 func (r *Runner) approve(ctx context.Context, t tenant.ID, opID, planHash, viaRequest string, ap Approval) (Submission, error) {
 	var op opRecord
-	var rows []stepRow
+	var sum stepSummary
 	var targets []authority.TargetRef
 	err := r.cfg.DB.WithTenant(ctx, t, func(ctx context.Context, tx store.Tx) (err error) {
 		if op, err = loadOp(ctx, tx, t, opID, false); err != nil {
 			return err
 		}
-		if rows, err = loadSteps(ctx, tx, t, opID); err != nil {
+		if sum, err = summariseSteps(ctx, tx, t, opID); err != nil {
 			return err
 		}
 		targets, err = loadItemTargets(ctx, tx, t, opID)
@@ -146,11 +146,7 @@ func (r *Runner) approve(ctx context.Context, t tenant.ID, opID, planHash, viaRe
 	}
 	act, _ := r.cfg.Registry.Lookup(op.Action)
 	d := act.Describe()
-	steps := make([]StepPlan, len(rows))
-	for i, sr := range rows {
-		steps[i] = sr.Plan
-	}
-	if err := r.checkApprover(ctx, op, ap, d.NeedsStepUp(Input(op.Input)) || worst(steps) == Irreversible); err != nil {
+	if err := r.checkApprover(ctx, op, ap, d.NeedsStepUp(Input(op.Input)) || sum.Worst == Irreversible); err != nil {
 		return Submission{}, err
 	}
 	if err := r.requireApproverScope(ctx, op, targets, ap.Principal); err != nil {

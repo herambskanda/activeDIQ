@@ -20,7 +20,7 @@ Code: `internal/platform/operation/`; migration `migrations/0013_operation_opera
 - **Reconcile / verify / sweep** (`reconcile.go`): lapsed claims resolve by observing the target
   (after -> applied+recovered, before -> re-apply or not_run, other -> `stale_state`; credential steps are
   never re-applied). Sweeper redrives lost jobs, settles finished operations, drops expired secrets.
-- **Job kinds** (`jobs.go`, ManagedTx): `operation.apply|verify|reconcile|sweep`; chunks of 100, unique
+- **Job kinds** (`jobs.go`, ManagedTx): `operation.plan|apply|verify|reconcile|sweep`; chunks of 100, unique
   key `(operation, revision, phase, chunk)`. Next phase is enqueued by `settle`.
 - **Holds and approvals** (`holds.go`, `approve.go`): kernel holds first (undo-needed-approval, step-up,
   blast radius, irreversible); approval binds `plan_hash`; separation of duties incl. sock-puppet check
@@ -34,8 +34,25 @@ Pinner (T-0320): `compose/server.dcPinner` implements `operation.Pinner` over `c
 `attr/guid` codec; a kept `previous` host is re-read (rebuilt DC => new GUID); failures never yield a
 partial pin. Built in `server.go` and passed to `buildOperation`.
 
-Deferred: undo, bulk chunked planning, `tier0_after_write` handling, a real Observer (per-Action; the
+Deferred: undo, `tier0_after_write` handling, a real Observer (per-Action; the
 first Directory Action supplies it, see backlog ticket).
+
+## Chunked planning (T-2073, `planchunk.go`)
+
+An Action that implements `ChunkPlanner` (`PlanItems`, `PlanChunk(first, n)`) and names more items than
+`chunk_size` plans as `operation.plan` jobs, one per chunk, instead of one pass. `startChunkedPlan` records
+`operations.plan_items`, clears the plan and enqueues the jobs in one transaction. `PlanChunk` plans and
+authorises its slice outside any transaction, then commits the slice's items and steps plus a row in
+`operation_plan_chunks` (PK `(operation, plan_revision, chunk_no)`) in one short transaction, so a replayed
+chunk is a no-op and a chunk of a superseded revision lands nothing. The job that records the last chunk
+finalises in that transaction: the plan hash is the chunk hashes chained in chunk order (so it is independent
+of the order chunks ran in), counts come from `operation_items`, and the state moves to `planned`,
+`no_change` or `plan_failed`; routing follows as for an inline plan. The sweeper (`redrivePlanning`) re-enqueues
+unrecorded chunks of a stalled plan. Plans of one chunk or fewer, and secret-input Actions, stay inline.
+
+Limits, by design: a chunked re-plan never keeps an earlier approval; a chunk whose DC pin differs from one a
+sibling already stored fails transiently and plans again against the stored pin (one DC per naming context,
+rule 5); the input itself is held per job. `route` and `approve` read a chunked plan through `summariseSteps` (stepsummary.go): count and worst reversibility by aggregate query, and at most 100 sample steps for the gate (`PlanSummary.Items`, `StepsTruncated`), so routing memory does not grow with row count. `approve` still reads every item target for the scope check (follow-up). `TestChunkedPlanMemoryBounded` asserts the 5k vs 20k live-heap peak.
 
 ## Approval scope (security review fixes)
 

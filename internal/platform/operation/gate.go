@@ -29,10 +29,13 @@ type Route struct {
 
 // PlanSummary is what a gate sees: the Action and the plan, never a secret.
 type PlanSummary struct {
-	Action       Descriptor
-	Steps        []StepPlan
-	PlanHash     string
-	Irreversible bool
+	Action Descriptor
+	// Steps is the whole plan, or for a plan made in chunks a bounded sample of it (StepsTruncated).
+	Steps          []StepPlan
+	Items          int  // the number of planned steps, whole plan
+	StepsTruncated bool // Steps is a sample, not the whole plan
+	PlanHash       string
+	Irreversible   bool
 	// HoldReason is set when the kernel already holds the operation (rule 8). The gate then chooses
 	// between a workflow Request and the kernel's single approval; it cannot allow it.
 	HoldReason HoldReason
