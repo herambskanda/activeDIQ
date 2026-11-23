@@ -9,7 +9,7 @@ import { Dispatcher } from '../lib/dispatcher.mjs';
 import { preMergeSettings } from '../lib/premerge.mjs';
 import { advanceTicket, claimTicket, createTicket, setTicketLinks } from '../lib/tickets.mjs';
 import { ensureWorktree } from '../lib/worktree.mjs';
-import { readRecentEvents } from '../lib/store.mjs';
+import { listEntities, readRecentEvents } from '../lib/store.mjs';
 import { commitAll, git, initRepo, makeFactory, ticketInput } from './helpers.mjs';
 
 const GATE = `import fs from 'node:fs';
@@ -118,5 +118,25 @@ test('a pre-screen that passes is remembered, one that fails is not; the setting
     await d.prescreenAhead(preMergeSettings(f.ctx.config)); await d.prescreenIdle();
     assert.equal(d.prescreenPass.get(a.id), sha(f, a));
     for (const bad of [1, -2, 2.5]) assert.throws(() => preMergeSettings({ dispatcher: { pre_merge: { enabled: true, argv: ['x'], train_prescreened_max: bad } } }), /train_prescreened_max/);
+  } finally { f.cleanup(); }
+});
+
+test('the pre-screen sends a ticket that conflicts with main back at once, with no strike, and screens the clean ones', async () => {
+  const f = setup({ train_prescreened_max: 4, prescreen_ahead: true, prescreen_argv: ['node', 'pre.mjs'], prescreen_parallel: 2 });
+  try {
+    const clash = await finished(f, 'clash', { 'shared.txt': 'branch\n' });
+    const clean = await finished(f, 'clean');
+    fs.writeFileSync(path.join(f.root, 'shared.txt'), 'main\n'); commitAll(f.root, 'main moves on the same file');
+    const d = dispatcher(f);
+    d.gateLanes.push({ ids: ['T-9999'], abort: new AbortController(), run: Promise.resolve() });
+    const screenedIds = [];
+    d.runGate = async (ctx, tickets) => { screenedIds.push(tickets[0].id); return { status: 'pass', findings: [], summary: 'ok', members: [tickets[0].id], conflicts: [] }; };
+    await d.prescreenAhead(preMergeSettings(f.ctx.config)); await d.prescreenIdle();
+    const byId = Object.fromEntries(listEntities(f.ctx, 'tickets').map((t) => [t.id, t]));
+    assert.notEqual(byId[clash.id].status, 'done', 'the clashing ticket is back with its worker');
+    assert.equal(byId[clash.id].gate_failures ?? 0, 0, 'no strike');
+    assert.equal(byId[clean.id].status, 'done');
+    assert.deepEqual(screenedIds, [clean.id], 'only the clean ticket was screened');
+    assert.equal(d.prescreenPass.get(clean.id), sha(f, clean));
   } finally { f.cleanup(); }
 });

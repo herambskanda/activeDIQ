@@ -115,7 +115,7 @@ func (s *Session) readOneReplAttr(ctx context.Context, a ReplAttr) (ReplValues, 
 			attrs = res.Entries[0].Attributes
 		}
 		for _, at := range attrs {
-			base, _, hi, star, isRange := splitRange(at.Name)
+			base, _, hi, star, isRange := SplitRange(at.Name)
 			if strings.ToLower(base) != lower {
 				continue
 			}
