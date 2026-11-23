@@ -670,7 +670,7 @@ as Basis *Default*. That breaks rule 10. So:
   (`internal/directory/sd/grants.go`). Authenticated Users read `userParameters` through its
   property set by default (spec §5, `attributeSecurityGuid` 4c164200-20c0-11d0-a768-00aa006e0529
   `[UNVERIFIED]` `[LAB: Windows]`). Without the fix every absent blob would be `NOT_CONFIRMED`.
-  T-1731 extends the primitive to evaluate the **object-type tree the DC's access check builds**
+  T-1731 (built: `sd.Right.Tree`, `sd.ObjectTree`) extends the primitive to evaluate the **object-type tree the DC's access check builds**
   ([MS-ADTS 5.1.3.3.3 Checking Object-Specific Access](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-adts/3da5080d-de25-4ac8-9f2b-982709253dfb)).
   The **object's class `schemaIDGUID`** is at the root, the property set (`attributeSecurityGuid`) is
   below it, and the attribute's `schemaIDGUID` is a leaf. All three come from the schema snapshot,
