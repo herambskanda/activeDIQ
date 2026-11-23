@@ -1,0 +1,105 @@
+=== RUN   TestModuleDepsExposeNoFileOrConn
+--- PASS: TestModuleDepsExposeNoFileOrConn (2.17s)
+=== RUN   TestEventQueryExact
+--- PASS: TestEventQueryExact (0.00s)
+=== RUN   TestChannelPath
+--- PASS: TestChannelPath (0.00s)
+=== RUN   TestHostPolicyBeforeAnchorRefused
+--- PASS: TestHostPolicyBeforeAnchorRefused (0.31s)
+=== RUN   TestHostAnchorApplyReplayRestart
+2026/11/02 15:53:05 INFO applied what=keyset seq=1 key_id=k-92a06976f0749f9f body_digest=d957aeab8e03a4104e74043f40453c3e4deff8f1f87514f673c1b039197480e6
+2026/11/02 15:53:06 INFO applied what=policy seq=5 key_id=k-92a06976f0749f9f body_digest=51f22c7df04d14dbcb0cbcd897b86e2384c92f1880c208de0c05afd9826d5b4b
+--- PASS: TestHostAnchorApplyReplayRestart (1.59s)
+=== RUN   TestHostWrongTenantAndForeignKeyRefused
+2026/11/02 15:53:07 INFO applied what=keyset seq=1 key_id=k-f85e1cfb22c72869 body_digest=7a8069c53a86969b537a20c9c07bb320d94d432a52d82b419d5796d6897b57b1
+--- PASS: TestHostWrongTenantAndForeignKeyRefused (0.91s)
+=== RUN   TestHostCeilingAndModuleRefusalChangeNothing
+2026/11/02 15:53:08 INFO applied what=keyset seq=1 key_id=k-63592a2189688b2f body_digest=0aa4572f68aef2358a87be2d599ae340e1912d9fe07ec087602e8bef967088a5
+2026/11/02 15:53:09 INFO applied what=policy seq=1 key_id=k-63592a2189688b2f body_digest=51f22c7df04d14dbcb0cbcd897b86e2384c92f1880c208de0c05afd9826d5b4b
+--- PASS: TestHostCeilingAndModuleRefusalChangeNothing (2.00s)
+=== RUN   TestHostGarbageDocumentsRefused
+--- PASS: TestHostGarbageDocumentsRefused (0.13s)
+=== RUN   TestHostStageUpdateFailsClosed
+--- PASS: TestHostStageUpdateFailsClosed (0.02s)
+=== RUN   TestSenderDeliversAndAcks
+--- PASS: TestSenderDeliversAndAcks (0.04s)
+=== RUN   TestSenderServerDownKeepsRecords
+--- PASS: TestSenderServerDownKeepsRecords (0.02s)
+=== RUN   TestSenderPoisonRecordDroppedRestDelivered
+2026/11/02 15:53:10 ERROR server refused a record as invalid; dropping it agent_seq=3
+--- PASS: TestSenderPoisonRecordDroppedRestDelivered (0.40s)
+=== RUN   TestSenderNeverAcksBeyondBatch
+--- PASS: TestSenderNeverAcksBeyondBatch (0.04s)
+=== RUN   TestAppendNextAckGapless
+--- PASS: TestAppendNextAckGapless (0.25s)
+=== RUN   TestNextBounds
+--- PASS: TestNextBounds (0.54s)
+=== RUN   TestRestartKeepsRecordsAndSequence
+--- PASS: TestRestartKeepsRecordsAndSequence (0.15s)
+=== RUN   TestBoundDropsOldestAndSaysSo
+--- PASS: TestBoundDropsOldestAndSaysSo (30.42s)
+=== RUN   TestCorruptTailIsTruncatedNotFatal
+--- PASS: TestCorruptTailIsTruncatedNotFatal (0.17s)
+=== RUN   TestCorruptMiddleKeepsWorking
+--- PASS: TestCorruptMiddleKeepsWorking (0.02s)
+=== RUN   TestWriteFailureIsCountedAndReportedLater
+--- PASS: TestWriteFailureIsCountedAndReportedLater (0.18s)
+=== RUN   TestRejectsTooSmallBound
+--- PASS: TestRejectsTooSmallBound (0.00s)
+=== RUN   TestStateRoundTripAndReenrol
+--- PASS: TestStateRoundTripAndReenrol (0.40s)
+=== RUN   TestCorruptStateIsSetAsideNotFatal
+--- PASS: TestCorruptStateIsSetAsideNotFatal (0.00s)
+=== RUN   TestBlobNamesCannotBePaths
+--- PASS: TestBlobNamesCannotBePaths (0.02s)
+=== RUN   TestCheckPrivileges
+--- PASS: TestCheckPrivileges (0.00s)
+=== RUN   TestTunnelFailureClassIsReportedOncePerInterval
+--- PASS: TestTunnelFailureClassIsReportedOncePerInterval (0.00s)
+=== RUN   TestEveryTunnelClassHasADocumentedID
+--- PASS: TestEveryTunnelClassHasADocumentedID (0.00s)
+=== RUN   TestEventsCarryNoAttributeData
+--- PASS: TestEventsCarryNoAttributeData (0.00s)
+=== RUN   TestOnlyFailuresAreReported
+--- PASS: TestOnlyFailuresAreReported (0.00s)
+=== RUN   TestGenericClassesAndMessagesAreBounded
+--- PASS: TestGenericClassesAndMessagesAreBounded (0.12s)
+=== RUN   TestNilReporterIsPassThrough
+--- PASS: TestNilReporterIsPassThrough (0.00s)
+=== RUN   TestClockStepBackReportsAgain
+--- PASS: TestClockStepBackReportsAgain (0.00s)
+=== RUN   TestConcurrentUse
+--- PASS: TestConcurrentUse (0.07s)
+PASS
+ok  	github.com/skenzeriq/activediq/internal/platform/agent	41.085s
+=== RUN   TestUnreachableServerWritesOneClassedEvent
+{"time":"2026-11-02T15:53:03.29736119Z","level":"WARN","msg":"tunnel ended","err_kind":"unreachable"}
+{"time":"2026-11-02T15:53:05.10793409Z","level":"WARN","msg":"tunnel ended","err_kind":"unreachable"}
+--- PASS: TestUnreachableServerWritesOneClassedEvent (4.01s)
+=== RUN   TestContractOverTunnel
+--- PASS: TestContractOverTunnel (1.46s)
+=== RUN   TestRunWithoutConfigRefuses
+--- PASS: TestRunWithoutConfigRefuses (0.00s)
+=== RUN   TestRunNotEnrolledIsDistinct
+--- PASS: TestRunNotEnrolledIsDistinct (0.00s)
+=== RUN   TestPrivilegeCheckRunsBeforeAnythingElse
+--- PASS: TestPrivilegeCheckRunsBeforeAnythingElse (0.00s)
+=== RUN   TestParseLocalStrict
+--- PASS: TestParseLocalStrict (0.00s)
+PASS
+ok  	github.com/skenzeriq/activediq/internal/compose/agent	6.628s
+=== RUN   TestEndpointAddr
+--- PASS: TestEndpointAddr (0.00s)
+=== RUN   TestServeConnRequiresOpener
+--- PASS: TestServeConnRequiresOpener (0.00s)
+=== RUN   TestErrKindFromStatus
+--- PASS: TestErrKindFromStatus (0.00s)
+=== RUN   TestErrKindRealDialFailures
+=== RUN   TestErrKindRealDialFailures/refused
+=== RUN   TestErrKindRealDialFailures/untrusted_server_certificate
+2026/11/02 15:53:03 http: TLS handshake error from 127.0.0.1:48564: read tcp 127.0.0.1:42779->127.0.0.1:48564: use of closed network connection
+--- PASS: TestErrKindRealDialFailures (0.03s)
+    --- PASS: TestErrKindRealDialFailures/refused (0.00s)
+    --- PASS: TestErrKindRealDialFailures/untrusted_server_certificate (0.02s)
+PASS
+ok  	github.com/skenzeriq/activediq/internal/platform/fleet/tunnelclient	1.092s

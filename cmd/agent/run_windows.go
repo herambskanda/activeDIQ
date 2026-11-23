@@ -18,7 +18,12 @@ import (
 const serviceName = "activeDIQAgent"
 
 func hooks(log *kernel.EventLog) agent.Hooks {
+	var rep kernel.EventReporter
+	if log != nil { // a nil *EventLog in the interface would not be nil
+		rep = log
+	}
 	return agent.Hooks{
+		Reporter:       rep,
 		Version:        version,
 		HeldPrivileges: kernel.HeldPrivileges,
 		Confine:        kernel.Confine,

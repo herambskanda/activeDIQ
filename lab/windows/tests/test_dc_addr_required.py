@@ -10,7 +10,7 @@ from pathlib import Path
 LAB = Path(__file__).resolve().parent.parent
 REPO = LAB.parent.parent
 OLD = "192.168.1." + "9"  # assembled so this file does not match its own scan
-DRIVERS = ["agent-verify", "agent-unenrolled-verify", "identity-verify", "gssapi-lab", "dc1-clock", "dc1-policy", "dc1-evidence", "skeleton-proof-evidence", "capture-tsprops", "fs1-lab", "t1880-surrogate-write", "repl-rights-lab"]
+DRIVERS = ["agent-verify", "agent-unenrolled-verify", "agent-tunnel-events-verify", "identity-verify", "gssapi-lab", "dc1-clock", "dc1-policy", "dc1-evidence", "skeleton-proof-evidence", "capture-tsprops", "fs1-lab", "t1880-surrogate-write", "repl-rights-lab"]
 HOOK = """import socket
 def _no(*a, **k):
     open(%r, "a").write("connect\\n"); raise OSError("network blocked by test")
@@ -36,7 +36,7 @@ class DcAddrRequired(unittest.TestCase):
             args = ["check"]  # positional only; load_env (the address gate) runs first
         elif name == "capture-tsprops":
             args = ["capture", "--out", str(d / "out")]  # no --log; the address gate runs in cmd_capture
-        elif name in ("agent-unenrolled-verify", "identity-verify"):
+        elif name in ("agent-unenrolled-verify", "agent-tunnel-events-verify", "identity-verify"):
             args = ["--log", str(d / "x.log")]  # no subcommand; the address gate runs right after parse_args
         else:
             args = ["--log", str(d / "x.log"), "prepare"]

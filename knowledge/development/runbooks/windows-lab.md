@@ -784,6 +784,11 @@ and `WIN_LAB_DC_ADDR`. The fixture users stay on dc1 for ADUC comparison (spec V
 over WinRM; the password goes on stdin, never argv or the environment) and logs the bytes LDAP returns; the mapper side (CodeBadText on those bytes, bounds at the measured rangeUpper) is pinned offline in `internal/directory/sync/bounds_windows_evidence_test.go`. Findings and the verdict for
 T-1713: `knowledge/development/domain/sync-refusal-bounds.md`.
 
+## 24. Tunnel-failure events in the Application log (T-1277)
+
+`lab/windows/bin/agent-tunnel-events-verify --log knowledge/development/runbooks/windows-lab-runs/T-1277-tunnel-events-<date>.log [--window-wait]`
+(under `with-dc1-lock`; `WIN_LAB_ENV=<main checkout>/lab/windows/.win-lab.env`; ~20 min with `--window-wait`, ~5 min without). It builds and installs the MSI of this checkout, enrols against `enrol-stub`, kills the stub and checks: AC1 exactly one event 110 after 75 s of retries (and, with `--window-wait`, the next one after 15 min says `(N more since the last report)`); AC2 a restarted stub (new server CA) gives event 112; AC3 every 110-119 event renders (`wevtutil /f:text`, no "cannot be found") and none contains the stub address, port, token, pin, a PEM header or a JWT prefix (the same search finds them when planted); AC4 `Stop-Service` during the retry loop reaches Stopped, exit code 0, no SCM 7031/7034/7024/7023/7009/7000, no Application Error. dc1 is restored (before/after snapshot). First run 2026-11-06, commit 96ab0ae14: 0 failures; log in `windows-lab-runs/`.
+
 ## 23. Sync mapper golden capture from dc1 (T-1787)
 
 `internal/connector/read` `TestWindowsLabSyncCapture` (tags `lab windowslab`) seeds users with accountExpires
