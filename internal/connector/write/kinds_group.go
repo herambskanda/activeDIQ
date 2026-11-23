@@ -27,8 +27,8 @@ import (
 // the member's side (memberOf and primaryGroupID), so a 50,000-member group costs the same as an empty one.
 
 func init() {
-	operations[connectorv1.WriteKind_WRITE_KIND_GROUP_MEMBER_ADD] = groupOp(true)
-	operations[connectorv1.WriteKind_WRITE_KIND_GROUP_MEMBER_REMOVE] = groupOp(false)
+	operations[opKey{connectorv1.ProviderKind_PROVIDER_KIND_AD, connectorv1.WriteKind_WRITE_KIND_GROUP_MEMBER_ADD}] = groupOp(true)
+	operations[opKey{connectorv1.ProviderKind_PROVIDER_KIND_AD, connectorv1.WriteKind_WRITE_KIND_GROUP_MEMBER_REMOVE}] = groupOp(false)
 }
 
 func groupOp(add bool) WriteOp {

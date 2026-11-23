@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/skenzeriq/activediq/internal/connector/ad"
+	"github.com/skenzeriq/activediq/internal/connector/provider"
 	"github.com/skenzeriq/activediq/internal/connector/tier0"
 	"github.com/skenzeriq/activediq/internal/directory/attr/guid"
 	"github.com/skenzeriq/activediq/internal/directory/attr/sid"
@@ -42,10 +43,10 @@ var ErrDeletedNotFound = errors.New("write: deleted object not found")
 // newParent is the live parent the object is restored under; its domain is the domain whose
 // Deleted Objects container is checked.
 type DeletedClassifier interface {
-	ClassifyDeleted(ctx context.Context, id, newParent guid.GUID, designated []guid.GUID) (Verdict, error)
+	ClassifyDeleted(ctx context.Context, id, newParent guid.GUID, designated []guid.GUID) (provider.Verdict, error)
 }
 
-var _ DeletedClassifier = (*ADProvider)(nil)
+var _ DeletedClassifier = (*adSide)(nil)
 
 // ClassifyDeleted is step 7 for a deleted restore target. See the file comment for the order.
 //
@@ -55,17 +56,17 @@ var _ DeletedClassifier = (*ADProvider)(nil)
 //   - C2: any retained memberOf group that is tier0, designated or unreadable, and any tier0 group
 //     (C1, C13, designated) whose member values hold the target;
 //   - C3/C6: the last known parent, when it still exists, classifies as tier0.
-func (p *ADProvider) ClassifyDeleted(ctx context.Context, id, newParent guid.GUID, designated []guid.GUID) (Verdict, error) {
+func (p *adSide) ClassifyDeleted(ctx context.Context, id, newParent guid.GUID, designated []guid.GUID) (provider.Verdict, error) {
 	objs := p.Objects()
 	if objs == nil {
-		return Verdict{Tier0: true}, ErrNoBoundDC
+		return provider.Verdict{Tier0: true}, provider.ErrNoBoundDC
 	}
 	return p.classifyDeleted(ctx, objs, id, newParent, designated)
 }
 
 // classifyDeleted is ClassifyDeleted over a given object directory.
-func (p *ADProvider) classifyDeleted(ctx context.Context, objs StructureDirectory, id, newParent guid.GUID, designated []guid.GUID) (Verdict, error) {
-	unknown := Verdict{Tier0: true}
+func (p *adSide) classifyDeleted(ctx context.Context, objs StructureDirectory, id, newParent guid.GUID, designated []guid.GUID) (provider.Verdict, error) {
+	unknown := provider.Verdict{Tier0: true}
 	on, err := objs.RecycleBin(ctx)
 	if err != nil {
 		return unknown, err
@@ -125,7 +126,7 @@ func (p *ADProvider) classifyDeleted(ctx context.Context, objs StructureDirector
 		return unknown, err
 	}
 	if hit {
-		return Verdict{Tier0: true, Bases: []Basis{tier0.C2}}, nil
+		return provider.Verdict{Tier0: true, Bases: []Basis{tier0.C2}}, nil
 	}
 	return v, nil // v carries the groups the restore re-grants, for Plan
 }
@@ -153,7 +154,7 @@ func domainOf(d dn.DN) dn.DN {
 }
 
 // principal is the connection identity's token (its objectSid and tokenGroups), read from the DC.
-func (p *ADProvider) principal(ctx context.Context) (sd.Principal, error) {
+func (p *adSide) principal(ctx context.Context) (sd.Principal, error) {
 	if _, err := p.Self.ForRequest(); err != nil {
 		return sd.Principal{}, errors.New("write: connection identity is unknown")
 	}
@@ -176,7 +177,7 @@ func (p *ADProvider) principal(ctx context.Context) (sd.Principal, error) {
 // owner and DACL of CN=Deleted Objects (TM-D33 rule 4). Never decided by trying the target read.
 // Not proven, or an unreadable descriptor, is a DeletedRightsError; a lost DC, a cancelled context,
 // or a domain head ForRequest refuses (FF-SP2 §4.6: an opaque RDN, or over MaxDNLen) is a plain error.
-func (p *ADProvider) proveListContents(ctx context.Context, objs StructureDirectory, domain dn.DN) (sd.Principal, dn.DN, error) {
+func (p *adSide) proveListContents(ctx context.Context, objs StructureDirectory, domain dn.DN) (sd.Principal, dn.DN, error) {
 	domainText, err := dn.DNRef(domain).ForRequest()
 	if err != nil {
 		return sd.Principal{}, dn.DN{}, err
@@ -213,12 +214,12 @@ func isTransportErr(ctx context.Context, err error) bool {
 
 // classifyDeletedEntry decides over the retained attributes of one deleted object read; split out
 // so the fail-closed branches are testable without a Recycle Bin.
-func (p *ADProvider) classifyDeletedEntry(ctx context.Context, objs StructureDirectory, id guid.GUID, e *ad.Entry, designated []guid.GUID, pr sd.Principal) (Verdict, error) {
-	unknown := Verdict{Tier0: true}
-	var regrants []Regrant
+func (p *adSide) classifyDeletedEntry(ctx context.Context, objs StructureDirectory, id guid.GUID, e *ad.Entry, designated []guid.GUID, pr sd.Principal) (provider.Verdict, error) {
+	unknown := provider.Verdict{Tier0: true}
+	var regrants []provider.Regrant
 	for _, g := range designated {
 		if g == id { // a customer-designated object stays Tier-0 once deleted
-			return Verdict{Tier0: true, Bases: []Basis{designatedBasis}}, nil
+			return provider.Verdict{Tier0: true, Bases: []Basis{designatedBasis}}, nil
 		}
 	}
 	classes := map[string]bool{}
@@ -260,15 +261,15 @@ func (p *ADProvider) classifyDeletedEntry(ctx context.Context, objs StructureDir
 	}
 	for _, s := range sids {
 		if rid, ok := s.RID(); !ok || rid < 1000 {
-			return Verdict{Tier0: true, Bases: []Basis{tier0.C1}}, nil
+			return provider.Verdict{Tier0: true, Bases: []Basis{tier0.C1}}, nil
 		}
 	}
 	if has(e, "sIDHistory") {
-		return Verdict{Tier0: true, Bases: []Basis{tier0.C18}}, nil
+		return provider.Verdict{Tier0: true, Bases: []Basis{tier0.C18}}, nil
 	}
 	// §8.10.9 R2 bases, at least as strict as the live rules. A value that is present is tier0.
 	if b, hit := r2Basis(e); hit {
-		return Verdict{Tier0: true, Bases: []Basis{b}}, nil
+		return provider.Verdict{Tier0: true, Bases: []Basis{b}}, nil
 	}
 	if bad, err := retainedDescriptorRefuses(e); err != nil || bad {
 		return unknown, nil
@@ -277,7 +278,7 @@ func (p *ADProvider) classifyDeletedEntry(ctx context.Context, objs StructureDir
 	if n, present, err := e.Int32("adminCount"); err != nil {
 		return unknown, err
 	} else if present && n != 0 {
-		return Verdict{Tier0: true, Bases: []Basis{tier0.C3}}, nil
+		return provider.Verdict{Tier0: true, Bases: []Basis{tier0.C3}}, nil
 	}
 	if account {
 		uac, _, err := e.Int32("userAccountControl")
@@ -285,10 +286,10 @@ func (p *ADProvider) classifyDeletedEntry(ctx context.Context, objs StructureDir
 			return unknown, err
 		}
 		if uac&(0x2000|0x4000000) != 0 { // DC or RODC computer
-			return Verdict{Tier0: true, Bases: []Basis{tier0.C5}}, nil
+			return provider.Verdict{Tier0: true, Bases: []Basis{tier0.C5}}, nil
 		}
 		if uac&0x80000 != 0 { // unconstrained delegation
-			return Verdict{Tier0: true, Bases: []Basis{tier0.C12}}, nil
+			return provider.Verdict{Tier0: true, Bases: []Basis{tier0.C12}}, nil
 		}
 		v := e.Strings("primaryGroupID")
 		if len(v) != 1 {
@@ -301,28 +302,28 @@ func (p *ADProvider) classifyDeletedEntry(ctx context.Context, objs StructureDir
 			rid, _ := strconv.ParseUint(v[0], 10, 32)
 			pg, ok := p.primaryGroup(ctx, e, uint32(rid))
 			if !ok {
-				return Verdict{Tier0: true, Bases: []Basis{tier0.C2}}, nil
+				return provider.Verdict{Tier0: true, Bases: []Basis{tier0.C2}}, nil
 			}
 			if p.groupTier0(ctx, pg.Group, designated) {
-				return Verdict{Tier0: true, Bases: []Basis{tier0.C2}}, nil
+				return provider.Verdict{Tier0: true, Bases: []Basis{tier0.C2}}, nil
 			}
 			regrants = append(regrants, pg)
 		case "516", "521":
-			return Verdict{Tier0: true, Bases: []Basis{tier0.C5}}, nil
+			return provider.Verdict{Tier0: true, Bases: []Basis{tier0.C5}}, nil
 		default:
-			return Verdict{Tier0: true, Bases: []Basis{tier0.C2}}, nil
+			return provider.Verdict{Tier0: true, Bases: []Basis{tier0.C2}}, nil
 		}
 	}
 	// Step 4, retained side: every memberOf group, judged against the set and by its own live token.
 	for _, m := range e.Strings("memberOf") {
 		gid, gdn, err := p.linkTarget(ctx, m)
 		if err != nil {
-			return Verdict{Tier0: true, Bases: []Basis{tier0.C2}}, nil // unreadable group: tier0
+			return provider.Verdict{Tier0: true, Bases: []Basis{tier0.C2}}, nil // unreadable group: tier0
 		}
 		if p.groupTier0(ctx, gid, designated) {
-			return Verdict{Tier0: true, Bases: []Basis{tier0.C2}}, nil
+			return provider.Verdict{Tier0: true, Bases: []Basis{tier0.C2}}, nil
 		}
-		regrants = append(regrants, Regrant{Group: gid, DN: gdn})
+		regrants = append(regrants, provider.Regrant{Group: gid, DN: gdn})
 	}
 	if v := e.Strings("lastKnownParent"); len(v) == 1 {
 		pid, _, found, err := p.linkTargetOpt(ctx, v[0])
@@ -332,16 +333,16 @@ func (p *ADProvider) classifyDeletedEntry(ctx context.Context, objs StructureDir
 		if found {
 			pv, err := p.Classify(ctx, pid, designated)
 			if err != nil || pv.Tier0 {
-				return Verdict{Tier0: true, Bases: []Basis{tier0.C3}}, nil
+				return provider.Verdict{Tier0: true, Bases: []Basis{tier0.C3}}, nil
 			}
 		}
 	}
-	return Verdict{Regrants: regrants}, nil
+	return provider.Verdict{Regrants: regrants}, nil
 }
 
 // groupTier0 judges one retained group: designated, or tier0 by the live classifier (which also
 // applies the designated groups to the group's own token). An error is tier0.
-func (p *ADProvider) groupTier0(ctx context.Context, gid guid.GUID, designated []guid.GUID) bool {
+func (p *adSide) groupTier0(ctx context.Context, gid guid.GUID, designated []guid.GUID) bool {
 	for _, g := range designated {
 		if g == gid {
 			return true
@@ -353,28 +354,28 @@ func (p *ADProvider) groupTier0(ctx context.Context, gid guid.GUID, designated [
 
 // primaryGroup resolves the group named by a primaryGroupID RID in the target's domain: the
 // target's domain SID plus the RID, looked up by SID. ok is false when it cannot be resolved.
-func (p *ADProvider) primaryGroup(ctx context.Context, e *ad.Entry, rid uint32) (Regrant, bool) {
+func (p *adSide) primaryGroup(ctx context.Context, e *ad.Entry, rid uint32) (provider.Regrant, bool) {
 	sids, err := e.SIDs("objectSid")
 	if err != nil || len(sids) != 1 {
-		return Regrant{}, false
+		return provider.Regrant{}, false
 	}
 	dom, ok := sids[0].DomainSID()
 	if !ok {
-		return Regrant{}, false
+		return provider.Regrant{}, false
 	}
 	gs, err := sid.Parse(fmt.Sprintf("%s-%d", dom, rid))
 	if err != nil {
-		return Regrant{}, false
+		return provider.Regrant{}, false
 	}
 	ge, err := p.Dir.Get(ctx, dn.SIDRef(gs), []string{"objectGUID"})
 	if err != nil {
-		return Regrant{}, false
+		return provider.Regrant{}, false
 	}
 	g, err := ge.GUID()
 	if err != nil {
-		return Regrant{}, false
+		return provider.Regrant{}, false
 	}
-	return Regrant{Group: g, DN: ge.DN}, true
+	return provider.Regrant{Group: g, DN: ge.DN}, true
 }
 
 // r2Basis applies the §8.10.9 R2 bases to the attributes read: C4 (a secondary krbtgt number, or a
@@ -429,7 +430,7 @@ func retainedDescriptorRefuses(e *ad.Entry) (bool, error) {
 
 // linkTarget is the objectGUID and display DN a DN-syntax value names: the extended-DN GUID when the
 // DC sent one, else a read by the plain DN. A value that names no readable object is an error.
-func (p *ADProvider) linkTarget(ctx context.Context, v string) (guid.GUID, string, error) {
+func (p *adSide) linkTarget(ctx context.Context, v string) (guid.GUID, string, error) {
 	g, d, found, err := p.linkTargetOpt(ctx, v)
 	if err != nil {
 		return guid.GUID{}, "", err
@@ -441,7 +442,7 @@ func (p *ADProvider) linkTarget(ctx context.Context, v string) (guid.GUID, strin
 }
 
 // linkTargetOpt is linkTarget where a value naming an object that no longer exists is found false.
-func (p *ADProvider) linkTargetOpt(ctx context.Context, v string) (guid.GUID, string, bool, error) {
+func (p *adSide) linkTargetOpt(ctx context.Context, v string) (guid.GUID, string, bool, error) {
 	lv, err := dn.ParseLinkValue(v)
 	if err != nil {
 		return guid.GUID{}, "", false, err
@@ -484,7 +485,7 @@ func absentOptional(e *ad.Entry) []string {
 // primitive cannot decide, and for a confidential attribute (searchFlags 0x80) Control Access too.
 // An ACE on a property set that might cover the attribute makes the primitive answer Unknown, which
 // is not proof. Any error is "not proven".
-func (p *ADProvider) proveUnset(ctx context.Context, e *ad.Entry, absent []string, pr sd.Principal) error {
+func (p *adSide) proveUnset(ctx context.Context, e *ad.Entry, absent []string, pr sd.Principal) error {
 	raw := e.Raw("nTSecurityDescriptor")
 	if len(raw) != 1 {
 		return errors.New("write: no retained descriptor")
@@ -539,12 +540,12 @@ func (p *ADProvider) proveUnset(ctx context.Context, e *ad.Entry, absent []strin
 }
 
 // tier0Set is the connector's computed tier0 set; tests substitute p.snapshot.
-func (p *ADProvider) tier0Set(ctx context.Context, designated []guid.GUID) (*tier0.ADSet, error) {
+func (p *adSide) tier0Set(ctx context.Context, designated []guid.GUID) (*tier0.ADSet, error) {
 	if p.snapshot != nil {
 		return p.snapshot(ctx, designated)
 	}
 	if p.Pins == nil {
-		return nil, ErrNoPins
+		return nil, provider.ErrNoPins
 	}
 	pins, err := p.Pins.PinnedC13(ctx)
 	if err != nil {
@@ -558,7 +559,7 @@ func (p *ADProvider) tier0Set(ctx context.Context, designated []guid.GUID) (*tie
 // ranged retrieval; a value whose extended-DN GUID is the target makes it tier0 (basis C2), whatever
 // memberOf said. A failed or partial read is an error (tier0). Deleted member values are the point
 // here, so the "drop values under CN=Deleted Objects" rule of ordinary member reads does not apply.
-func (p *ADProvider) memberCrossCheck(ctx context.Context, objs StructureDirectory, id guid.GUID, designated []guid.GUID) (bool, error) {
+func (p *adSide) memberCrossCheck(ctx context.Context, objs StructureDirectory, id guid.GUID, designated []guid.GUID) (bool, error) {
 	set, err := p.tier0Set(ctx, designated)
 	if err != nil {
 		return false, err

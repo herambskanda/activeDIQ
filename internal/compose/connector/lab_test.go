@@ -7,6 +7,7 @@ import (
 	"crypto/x509"
 	"encoding/json/v2"
 	"errors"
+	"github.com/skenzeriq/activediq/internal/connector/provider"
 	"io"
 	"log/slog"
 	"os"
@@ -22,7 +23,6 @@ import (
 	"github.com/skenzeriq/activediq/internal/compose/connector"
 	"github.com/skenzeriq/activediq/internal/connector/ad"
 	"github.com/skenzeriq/activediq/internal/connector/ad/adtest"
-	"github.com/skenzeriq/activediq/internal/connector/write"
 	"github.com/skenzeriq/activediq/internal/directory/attr/guid"
 	"github.com/skenzeriq/activediq/internal/directory/dn"
 	"github.com/skenzeriq/activediq/internal/platform/fleet"
@@ -124,7 +124,7 @@ func TestLabRunServesVerifyAndReadOverTunnel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ident := &v1.DirectoryIdentity{Identity: &v1.DirectoryIdentity_AdForest{AdForest: &v1.AdForestIdentity{ForestRootNcGuid: write.GUIDToWire(rg)}}}
+	ident := &v1.DirectoryIdentity{Identity: &v1.DirectoryIdentity_AdForest{AdForest: &v1.AdForestIdentity{ForestRootNcGuid: provider.GUIDToWire(rg)}}}
 	conn := &v1.ConnectionRef{ConnectionId: "lab-conn-1", DirectoryIdentity: ident}
 
 	// Boot through the real run path: only the enrolment load and the dial-out are substituted; the AD
@@ -170,7 +170,7 @@ func labExercise(t *testing.T, got tunnelclient.Config, conn *v1.ConnectionRef, 
 	}
 
 	// Read over the tunnel returns the forest root with the tier-0 verdict of the connector's classifier.
-	rs, err := c.Read(tctx, &v1.ReadRequest{Connection: conn, Guid: write.GUIDToWire(rg), Attributes: []string{"distinguishedName"}, IncludeTier0: true})
+	rs, err := c.Read(tctx, &v1.ReadRequest{Connection: conn, Guid: provider.GUIDToWire(rg), Attributes: []string{"distinguishedName"}, IncludeTier0: true})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -3,6 +3,7 @@ package write
 import (
 	"context"
 	"errors"
+	"github.com/skenzeriq/activediq/internal/connector/provider"
 	"strings"
 	"testing"
 	"time"
@@ -21,7 +22,7 @@ func TestRestoreClassifyDeletedGate(t *testing.T) {
 	ch := &connectorv1.WriteChange{Change: &connectorv1.WriteChange_ObjectRestore{ObjectRestore: &connectorv1.ObjectRestore{
 		NewParent: &connectorv1.WriteTarget{Object: toWire(oP2), NcGuid: toWire(oNC)}, RdnValue: "Back"}}}
 	attrs := []step.Attr{{Name: client.AttrNewParent, Values: []string{oP2.String()}}, {Name: client.AttrNewParentNC, Values: []string{oNC.String()}}, {Name: client.AttrRDN, Values: []string{"Back"}}}
-	build := func(t *testing.T, mkp func(*fakeProv, StructureDirectory) Provider) (*fakeObjects, *Handler) {
+	build := func(t *testing.T, mkp func(*fakeProv, StructureDirectory) provider.Provider) (*fakeObjects, *Handler) {
 		run := passRun(nil)
 		r := newRig(t, &run)
 		r.prov.guard = &stubGuard{}
@@ -38,13 +39,13 @@ func TestRestoreClassifyDeletedGate(t *testing.T) {
 		_, err := h.Plan(context.Background(), q)
 		return err
 	}
-	cases := map[string]func(*fakeProv, StructureDirectory) Provider{
-		"no DeletedClassifier": func(p *fakeProv, d StructureDirectory) Provider { return objProvPlain{p, d} },
-		"classifier error": func(p *fakeProv, d StructureDirectory) Provider {
-			return objProv{fakeProv: p, dir: d, cd: func() (Verdict, error) { return Verdict{}, errors.New("x") }}
+	cases := map[string]func(*fakeProv, StructureDirectory) provider.Provider{
+		"no DeletedClassifier": func(p *fakeProv, d StructureDirectory) provider.Provider { return objProvPlain{p, d} },
+		"classifier error": func(p *fakeProv, d StructureDirectory) provider.Provider {
+			return objProv{fakeProv: p, dir: d, cd: func() (provider.Verdict, error) { return provider.Verdict{}, errors.New("x") }}
 		},
-		"tier0 verdict": func(p *fakeProv, d StructureDirectory) Provider {
-			return objProv{fakeProv: p, dir: d, cd: func() (Verdict, error) { return Verdict{Tier0: true, Bases: []Basis{tier0.C1}}, nil }}
+		"tier0 verdict": func(p *fakeProv, d StructureDirectory) provider.Provider {
+			return objProv{fakeProv: p, dir: d, cd: func() (provider.Verdict, error) { return provider.Verdict{Tier0: true, Bases: []Basis{tier0.C1}}, nil }}
 		},
 	}
 	for name, mkp := range cases {
@@ -73,8 +74,8 @@ func TestRestoreClassifyDeletedGate(t *testing.T) {
 		"no bin":    {ErrNoRecycleBin, connectorv1.ErrorCode_ERROR_CODE_CAPABILITY_UNSUPPORTED},
 		"not found": {ErrDeletedNotFound, connectorv1.ErrorCode_ERROR_CODE_OBJECT_NOT_FOUND},
 	} {
-		_, h := build(t, func(p *fakeProv, d StructureDirectory) Provider {
-			return objProv{fakeProv: p, dir: d, cd: func() (Verdict, error) { return Verdict{Tier0: true}, c.err }}
+		_, h := build(t, func(p *fakeProv, d StructureDirectory) provider.Provider {
+			return objProv{fakeProv: p, dir: d, cd: func() (provider.Verdict, error) { return provider.Verdict{Tier0: true}, c.err }}
 		})
 		ce := connErr(t, plan(h))
 		if ce.GetCode() != c.want {
@@ -85,7 +86,7 @@ func TestRestoreClassifyDeletedGate(t *testing.T) {
 		}
 	}
 	// Control: a clean verdict plans.
-	_, h := build(t, func(p *fakeProv, d StructureDirectory) Provider { return objProv{fakeProv: p, dir: d} })
+	_, h := build(t, func(p *fakeProv, d StructureDirectory) provider.Provider { return objProv{fakeProv: p, dir: d} })
 	if err := plan(h); err != nil {
 		t.Fatalf("clean verdict refused: %v", err)
 	}

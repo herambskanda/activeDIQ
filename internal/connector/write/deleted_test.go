@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/skenzeriq/activediq/internal/connector/ad"
+	"github.com/skenzeriq/activediq/internal/connector/provider"
 	"github.com/skenzeriq/activediq/internal/connector/tier0"
 	"github.com/skenzeriq/activediq/internal/directory/attr/guid"
 	"github.com/skenzeriq/activediq/internal/directory/dn"
@@ -105,7 +106,8 @@ const (
 )
 
 type delRig struct {
-	p      *ADProvider
+	p      *adSide
+	cls    *delClassifier
 	d      *refDir
 	objs   *fakeObjects
 	grp    guid.GUID
@@ -136,22 +138,30 @@ func newDelRig(t *testing.T) *delRig {
 	_ = np
 	r.objs = &fakeObjects{parent: map[guidT]guidT{}, rdn: map[guidT]string{newParent: "New"}, deleted: map[guidT]bool{}, bin: true,
 		members: map[guidT][]string{}, container: buildSD(t, testACE{mask: sd.MaskListContents, sid: authenticatedUsers})}
-	r.p = &ADProvider{Dir: d, Pins: &memPins{}, Self: dn.GUIDRef(self)}
+	r.cls = &delClassifier{}
+	r.p = &adSide{Provider: r.cls, Dir: d, Pins: &memPins{}, Self: dn.GUIDRef(self)}
 	r.p.snapshot = func(context.Context, []guid.GUID) (*tier0.ADSet, error) { return r.set, nil }
 	r.setTier0()
 	return r
 }
 
 func (r *delRig) setTier0(ids ...guid.GUID) {
-	r.p.classify = func(_ context.Context, id guid.GUID, _ tier0.ADInput) (tier0.ADResult, error) {
-		res := tier0.ADResult{GUID: id}
-		for _, x := range ids {
-			if x == id {
-				res.Tier0 = true
-			}
+	r.cls.tier0 = ids
+}
+
+// delClassifier is the core provider of the deleted-object rig: Classify answers tier0 for the set ids.
+type delClassifier struct {
+	provider.Provider
+	tier0 []guid.GUID
+}
+
+func (c *delClassifier) Classify(_ context.Context, id guid.GUID, _ []guid.GUID) (provider.Verdict, error) {
+	for _, x := range c.tier0 {
+		if x == id {
+			return provider.Verdict{Tier0: true}, nil
 		}
-		return res, nil
 	}
+	return provider.Verdict{}, nil
 }
 
 func (r *delRig) principal(t *testing.T) sd.Principal {
@@ -184,7 +194,7 @@ func (r *delRig) entry(t *testing.T, mod func(map[string][][]byte)) *ad.Entry {
 	return ad.NewEntry("CN=Jo\\0ADEL:x,CN=Deleted Objects,DC=lab", a)
 }
 
-func (r *delRig) classify(t *testing.T, e *ad.Entry, des []guid.GUID) (Verdict, error) {
+func (r *delRig) classify(t *testing.T, e *ad.Entry, des []guid.GUID) (provider.Verdict, error) {
 	t.Helper()
 	return r.p.classifyDeletedEntry(context.Background(), r.objs, delID, e, des, r.principal(t))
 }
@@ -326,7 +336,7 @@ func TestClassifyDeletedOptionalProof(t *testing.T) {
 
 var newParentID = mk(82)
 
-func (r *delRig) restore(t *testing.T, mod func(map[string][][]byte)) (Verdict, error) {
+func (r *delRig) restore(t *testing.T, mod func(map[string][][]byte)) (provider.Verdict, error) {
 	t.Helper()
 	r.objs.target = r.entry(t, mod)
 	r.objs.calls = nil

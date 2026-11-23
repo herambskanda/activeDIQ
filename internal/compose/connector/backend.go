@@ -10,8 +10,10 @@ import (
 	"path/filepath"
 
 	"github.com/skenzeriq/activediq/internal/connector/ad"
-	"github.com/skenzeriq/activediq/internal/connector/read"
+	"github.com/skenzeriq/activediq/internal/connector/provider"
+	adprov "github.com/skenzeriq/activediq/internal/connector/provider/ad"
 	"github.com/skenzeriq/activediq/internal/connector/rights"
+	"github.com/skenzeriq/activediq/internal/connector/service"
 	"github.com/skenzeriq/activediq/internal/connector/write"
 	"github.com/skenzeriq/activediq/internal/directory/attr/guid"
 	"github.com/skenzeriq/activediq/internal/directory/dn"
@@ -20,12 +22,10 @@ import (
 	connectorv1 "github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1"
 )
 
-// backend is the connector's three handlers over one AD session, and what releases it.
+// backend is the connector's service over one AD session, and what releases it.
 type backend struct {
-	verify *rights.VerifyHandler
-	read   *read.Handler
-	write  *write.Handler
-	close  func()
+	svc   *service.Service
+	close func()
 }
 
 const maxKeytabBytes = 64 << 10
@@ -70,7 +70,7 @@ func readLimited(path string, max int64) ([]byte, error) {
 	return os.ReadFile(path)
 }
 
-// openBackend binds the AD session and builds the handlers over it. Every handler works on the one
+// openBackend binds the AD session and builds the service over it. Every handler works on the one
 // session, hence one DC (the pin / precondition checks depend on it). The durable files in DataDir are
 // opened as they are: an existing baseline is the epoch the connector continues.
 func openBackend(ctx context.Context, loc Local, log *slog.Logger) (*backend, error) {
@@ -109,7 +109,7 @@ func openBackend(ctx context.Context, loc Local, log *slog.Logger) (*backend, er
 		return nil, errors.New("connector: forest root has no objectGUID")
 	}
 	ident := &connectorv1.DirectoryIdentity{Identity: &connectorv1.DirectoryIdentity_AdForest{
-		AdForest: &connectorv1.AdForestIdentity{ForestRootNcGuid: write.GUIDToWire(g)}}}
+		AdForest: &connectorv1.AdForestIdentity{ForestRootNcGuid: provider.GUIDToWire(g)}}}
 	domRef, err := dn.ParseObjectRef(rd.DefaultNamingContext)
 	if err != nil {
 		return nil, errors.New("connector: default naming context is not a DN")
@@ -119,23 +119,12 @@ func openBackend(ctx context.Context, loc Local, log *slog.Logger) (*backend, er
 		return nil, err
 	}
 
-	prov := write.NewADProvider(sess, nil, ident, &filePins{path: filepath.Join(loc.DataDir, pinsFile)})
+	prov := adprov.NewADProvider(sess, nil, ident, &filePins{path: filepath.Join(loc.DataDir, pinsFile)})
 	prov.Self = self
-	src, err := read.NewADSource(sess, prov)
-	if err != nil {
-		return nil, errors.New("connector: read source")
-	}
 	// Per-DC reads open one short-lived session per named DC with the same keytab identity; the opener
 	// dials that host only (Servers is exactly [host]), so it never falls back to another DC.
-	psrc, err := read.NewADPerDCSource(src, func(ctx context.Context, host string) (*ad.Session, error) {
+	prov.OpenDC = func(ctx context.Context, host string) (*ad.Session, error) {
 		return ad.Open(ctx, perDCConfig(cfg, host))
-	})
-	if err != nil {
-		return nil, errors.New("connector: per-dc read source")
-	}
-	rh, err := read.New(psrc)
-	if err != nil {
-		return nil, errors.New("connector: read handler")
 	}
 	gate, err := newGate(filepath.Join(loc.DataDir, ratchetFile), log)
 	if err != nil {
@@ -143,17 +132,12 @@ func openBackend(ctx context.Context, loc Local, log *slog.Logger) (*backend, er
 	}
 	epoch := rights.NewEpochState(rights.FileBaselineStore{Path: filepath.Join(loc.DataDir, baselineFile)},
 		rights.FileRecordSink{Path: filepath.Join(loc.DataDir, recordsFile)}, nil)
-	vh, err := rights.NewVerifyHandler(rights.VerifyConfig{Dir: rights.NewSessionDirectory(sess), Epoch: epoch, Identity: self,
-		Directory: ident, Gate: gate, OnLocalRecordFailed: gate.CloseLocalRecordFailed, ConnectionID: loc.ConnectionID, Log: log})
+	svc, err := service.New(prov, service.Deps{Gate: gate, Epoch: epoch, Self: self, ConnectionID: loc.ConnectionID, Log: log})
 	if err != nil {
-		return nil, errors.New("connector: verify handler")
-	}
-	wh, err := write.New(prov, gate)
-	if err != nil {
-		return nil, errors.New("connector: write handler")
+		return nil, errors.New("connector: service")
 	}
 	ok = true
-	return &backend{verify: vh, read: rh, write: wh, close: func() { _ = sess.Close() }}, nil
+	return &backend{svc: svc, close: func() { _ = sess.Close() }}, nil
 }
 
 // perDCConfig is the session config for one named DC: it dials that host only, and the TLS name and

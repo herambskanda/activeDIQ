@@ -1,68 +1,15 @@
 package write
 
 import (
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
-
+	"github.com/skenzeriq/activediq/internal/connector/refusal"
 	connectorv1 "github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1"
 )
 
-// Refusal is how Plan and Apply end when they do not proceed. It implements GRPCStatus, so the
-// gRPC server sends it as a status with the ConnectorError as a detail, and an in-process caller
-// that passes it to directory/client.FromStatus gets the same *ConnectorError. The message is a
-// fixed text per code: no identifier, DN, value or peer ever goes into it.
-type Refusal struct {
-	Err *connectorv1.ConnectorError
-	// stage is the step of §8.1 that ended the call, for the local record only.
-	stage string
-	// reason, propKind, propOp and propKeys are the audit-ready record of a property-guard refusal,
-	// copied into the Event by finish (contract §8.9). Names only, never values.
-	reason, propKind, propOp string
-	propKeys                 []string
-}
-
-func (r *Refusal) Error() string { return "write: " + r.Err.GetCode().String() }
-
-// Code is the connector error code.
-func (r *Refusal) Code() connectorv1.ErrorCode { return r.Err.GetCode() }
-
-// GRPCStatus implements the interface google.golang.org/grpc/status looks for.
-func (r *Refusal) GRPCStatus() *status.Status {
-	st := status.New(grpcCode(r.Err.GetCode()), r.Err.GetMessage())
-	if d, err := st.WithDetails(r.Err); err == nil {
-		return d
-	}
-	return st
-}
-
-func grpcCode(c connectorv1.ErrorCode) codes.Code {
-	switch c {
-	case connectorv1.ErrorCode_ERROR_CODE_INVALID_ARGUMENT, connectorv1.ErrorCode_ERROR_CODE_DIRECTORY_IDENTITY_MISMATCH:
-		return codes.InvalidArgument
-	case connectorv1.ErrorCode_ERROR_CODE_CAPABILITY_UNSUPPORTED:
-		return codes.Unimplemented
-	case connectorv1.ErrorCode_ERROR_CODE_TIER0_REFUSED:
-		return codes.PermissionDenied
-	case connectorv1.ErrorCode_ERROR_CODE_ACTIVATION_REFUSED_OVERPRIVILEGED, connectorv1.ErrorCode_ERROR_CODE_STALE_COOKIE:
-		return codes.FailedPrecondition
-	case connectorv1.ErrorCode_ERROR_CODE_LIMIT_EXCEEDED:
-		return codes.ResourceExhausted
-	case connectorv1.ErrorCode_ERROR_CODE_UNREACHABLE_DC:
-		return codes.Unavailable
-	case connectorv1.ErrorCode_ERROR_CODE_TARGET_CHANGED:
-		return codes.Aborted
-	case connectorv1.ErrorCode_ERROR_CODE_OBJECT_NOT_FOUND:
-		return codes.NotFound
-	case connectorv1.ErrorCode_ERROR_CODE_INSUFFICIENT_RIGHTS:
-		return codes.PermissionDenied
-	case connectorv1.ErrorCode_ERROR_CODE_ATTRIBUTE_NOT_ALLOWED, connectorv1.ErrorCode_ERROR_CODE_SECRET_ATTRIBUTE:
-		return codes.InvalidArgument
-	}
-	return codes.Internal
-}
+// Refusal is the connector refusal type (package refusal); the write guard builds it with a stage.
+type Refusal = refusal.Refusal
 
 func newRefusal(code connectorv1.ErrorCode, retry connectorv1.RetryAdvice, stage, msg string) *Refusal {
-	return &Refusal{stage: stage, Err: &connectorv1.ConnectorError{Code: code, Retry: retry, Message: msg}}
+	return refusal.New(code, retry, stage, msg)
 }
 
 func invalid(stage, rule, field string) *Refusal {
@@ -107,12 +54,6 @@ func gateRefusal(state connectorv1.WriteGateState, vid *connectorv1.Guid, unack 
 	r.Err.Details = &connectorv1.ConnectorError_ActivationRefused{ActivationRefused: &connectorv1.ActivationRefusedDetails{
 		State: state, VerificationId: vid, UnacknowledgedFindings: unack}}
 	return r
-}
-
-// NewRefusal builds a refusal for another handler of the connector service (the read group), so
-// both transports and both groups end a call the same way. The message must be a fixed text.
-func NewRefusal(code connectorv1.ErrorCode, retry connectorv1.RetryAdvice, msg string) *Refusal {
-	return newRefusal(code, retry, "", msg)
 }
 
 // coded builds a refusal with a fixed text for a code that carries no details.

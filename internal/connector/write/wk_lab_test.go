@@ -7,6 +7,8 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
+	"github.com/skenzeriq/activediq/internal/connector/provider"
+	adprov "github.com/skenzeriq/activediq/internal/connector/provider/ad"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -45,7 +47,7 @@ type wkRig struct {
 	now    time.Time
 	svcSID string
 	schema *ldapfilter.Schema
-	guard  PropertyGuard
+	guard  provider.PropertyGuard
 }
 
 func newWKRig(t *testing.T) *wkRig { return newWKRigRuleText(t, "") }
@@ -130,7 +132,7 @@ func newWKRigRuleText(t *testing.T, rule string) *wkRig {
 	run.CompletedAt = now
 	book, _ := NewGateBook(&memBaseline{}, time.Now)
 	book.Complete(connID, run)
-	prov := NewADProvider(sess, nil, adIdentity(), &memPins{})
+	prov := adprov.NewADProvider(sess, nil, adIdentity(), &memPins{})
 	prov.Dynamic = set
 	dc, err := prov.BoundDC(ctx)
 	if err != nil {
@@ -170,7 +172,7 @@ func (r *wkRig) rebind(user, pw string) {
 	run.CompletedAt = time.Now()
 	book, _ := NewGateBook(&memBaseline{}, time.Now)
 	book.Complete(connID, run)
-	prov := NewADProvider(sess, nil, adIdentity(), &memPins{})
+	prov := adprov.NewADProvider(sess, nil, adIdentity(), &memPins{})
 	prov.Dynamic = r.guard
 	r.sess = sess
 	if r.h, err = New(prov, book, WithRecorder(&memRecorder{})); err != nil {
@@ -286,7 +288,7 @@ func (r *wkRig) applyFrom(p *connectorv1.PlanRequest, pr *connectorv1.PlanRespon
 		a.Precondition = &connectorv1.TargetPrecondition{}
 	}
 	a.Precondition.Dc = r.dc
-	d, err := operations[p.Kind].Digest(a)
+	d, err := operations[opKey{connectorv1.ProviderKind_PROVIDER_KIND_AD, p.Kind}].Digest(a)
 	if err != nil {
 		r.t.Fatal(err)
 	}

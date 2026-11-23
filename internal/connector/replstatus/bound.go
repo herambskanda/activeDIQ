@@ -4,7 +4,7 @@ import (
 	"context"
 
 	"github.com/skenzeriq/activediq/internal/connector/ad"
-	"github.com/skenzeriq/activediq/internal/connector/write"
+	"github.com/skenzeriq/activediq/internal/connector/provider"
 	connectorv1 "github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1"
 )
 
@@ -28,8 +28,8 @@ func (b *Bound) DCs(ctx context.Context) ([]DC, error) {
 		return nil, err
 	}
 	return []DC{{Identity: &connectorv1.DcIdentity{
-		DsaGuid:      write.GUIDToWire(id.DSAGUID),
-		InvocationId: write.GUIDToWire(id.InvocationID),
+		DsaGuid:      provider.GUIDToWire(id.DSAGUID),
+		InvocationId: provider.GUIDToWire(id.InvocationID),
 		DnsHostname:  id.DNSHostName,
 		Site:         id.Site,
 	}}}, nil

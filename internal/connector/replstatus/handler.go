@@ -10,7 +10,7 @@ import (
 
 	"github.com/skenzeriq/activediq/internal/connector/ad"
 	"github.com/skenzeriq/activediq/internal/connector/ad/replxml"
-	"github.com/skenzeriq/activediq/internal/connector/write"
+	"github.com/skenzeriq/activediq/internal/connector/refusal"
 	connectorv1 "github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1"
 )
 
@@ -69,17 +69,17 @@ type Handler struct {
 // New returns a handler over one source.
 func New(src Source) (*Handler, error) {
 	if src == nil {
-		return nil, write.NewRefusal(connectorv1.ErrorCode_ERROR_CODE_INVALID_ARGUMENT, connectorv1.RetryAdvice_RETRY_ADVICE_NEVER, "no source")
+		return nil, refusal.New(connectorv1.ErrorCode_ERROR_CODE_INVALID_ARGUMENT, connectorv1.RetryAdvice_RETRY_ADVICE_NEVER, "", "no source")
 	}
 	return &Handler{src: src, now: time.Now}, nil
 }
 
 func refuse(code connectorv1.ErrorCode, retry connectorv1.RetryAdvice, msg string) error {
-	return write.NewRefusal(code, retry, msg)
+	return refusal.New(code, retry, "", msg)
 }
 
 func invalid(field string) error {
-	r := write.NewRefusal(connectorv1.ErrorCode_ERROR_CODE_INVALID_ARGUMENT, connectorv1.RetryAdvice_RETRY_ADVICE_NEVER, "invalid request")
+	r := refusal.New(connectorv1.ErrorCode_ERROR_CODE_INVALID_ARGUMENT, connectorv1.RetryAdvice_RETRY_ADVICE_NEVER, "", "invalid request")
 	r.Err.Details = &connectorv1.ConnectorError_RejectedInput{RejectedInput: &connectorv1.RejectedInputDetails{RuleId: "InvalidReplicationRequest", Field: field}}
 	return r
 }
@@ -223,7 +223,7 @@ func (h *Handler) ReadReplicationStatus(ctx context.Context, req *connectorv1.Re
 func (h *Handler) readDC(ctx context.Context, d DC, r request) *connectorv1.ReplicationDcResult {
 	res := &connectorv1.ReplicationDcResult{Dc: d.Identity}
 	fail := func(code connectorv1.ErrorCode, msg string) *connectorv1.ReplicationDcResult {
-		e := write.NewRefusal(code, connectorv1.RetryAdvice_RETRY_ADVICE_AFTER_REPLAN, msg)
+		e := refusal.New(code, connectorv1.RetryAdvice_RETRY_ADVICE_AFTER_REPLAN, "", msg)
 		e.Err.Dc = proto.Clone(d.Identity).(*connectorv1.DcIdentity)
 		res.Outcome = &connectorv1.ReplicationDcResult_Error{Error: e.Err}
 		return res

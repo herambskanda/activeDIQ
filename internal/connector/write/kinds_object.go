@@ -12,6 +12,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/skenzeriq/activediq/internal/connector/ad"
+	"github.com/skenzeriq/activediq/internal/connector/provider"
 	"github.com/skenzeriq/activediq/internal/connector/tier0"
 	"github.com/skenzeriq/activediq/internal/connector/wirevalue"
 	"github.com/skenzeriq/activediq/internal/connector/write/ops"
@@ -24,14 +25,8 @@ import (
 	connectorv1 "github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1"
 )
 
-// ObjectDirectory is what kinds 1 to 3 need from the directory session; *ad.Session is the AD
-// implementation. Every call of Do runs on the one DC the session is bound to.
-type ObjectDirectory interface {
-	Do(ctx context.Context, fn func(*ad.Tx) error) error
-	EditableAttr(name string) (string, ldapfilter.Syntax, error)
-	// AttrOID is the schema attributeID of a resolved ldapDisplayName ("" if unknown).
-	AttrOID(name string) string
-}
+// ObjectDirectory is what kinds 1 to 3 need from the directory session (see package provider).
+type ObjectDirectory = provider.ObjectDirectory
 
 // writeDirectory is implemented by a Provider that can run object writes.
 type writeDirectory interface{ WriteDirectory() ObjectDirectory }

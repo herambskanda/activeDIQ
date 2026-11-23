@@ -2,12 +2,12 @@ package read_test
 
 import (
 	"errors"
-	"github.com/skenzeriq/activediq/internal/connector/read"
 	"strings"
 	"testing"
 
 	"context"
 	"github.com/skenzeriq/activediq/internal/connector/ad"
+	"github.com/skenzeriq/activediq/internal/connector/provider"
 	"github.com/skenzeriq/activediq/internal/directory/attr/guid"
 	"github.com/skenzeriq/activediq/internal/directory/sd"
 	connectorv1 "github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1"
@@ -37,7 +37,7 @@ func newPC() *pcSrc {
 	return &pcSrc{src: &src{dsa: dsaA, entry: entry(map[string][][]byte{"cn": {[]byte("x")}})}, got: g(objGUID)}
 }
 
-func verdictOf(t *testing.T, s read.Source) *connectorv1.PasswordChangeVerdict {
+func verdictOf(t *testing.T, s provider.Provider) *connectorv1.PasswordChangeVerdict {
 	t.Helper()
 	ms, err := collect(t, start(t, s), pcReq())
 	if err != nil || len(ms) < 2 {

@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/skenzeriq/activediq/internal/connector/provider"
 	"github.com/skenzeriq/activediq/internal/connector/tier0"
 	"github.com/skenzeriq/activediq/internal/directory/attr/guid"
 	connectorv1 "github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1"
@@ -30,11 +31,11 @@ type pass struct {
 	// It returns nil to allow, else the refusal (with its audit reason) for the target.
 	recheck func(ctx context.Context, w tier0.PropertyWrite, target guid.GUID, step string) *Refusal
 	// prov is the provider the guard classified against; a body that needs the directory session asks it.
-	prov Provider
+	prov provider.Provider
 	// objs is the directory the object move, rename and restore kinds act on; nil when the provider has none.
 	objs StructureDirectory
 	// regrants are the group memberships a restore re-grants (step 7 of kind 6), for Plan to list.
-	regrants []Regrant
+	regrants []provider.Regrant
 }
 
 func (a Authorised) dir() ObjectDirectory {
@@ -140,33 +141,43 @@ type WriteOp struct {
 	Apply       func(ctx context.Context, a Authorised, req *connectorv1.ApplyRequest) (*connectorv1.ApplyResponse, error)
 }
 
-// operations is the operation table. A kind ticket registers its row (account.go: T-1583, the four
-// account kinds); a WriteKind with no row ends in CAPABILITY_UNSUPPORTED. Kinds 1 to 3 are T-1623 and
-// kinds 4 to 6 (object move, rename, restore) are T-1624. The only place a directory or Graph write may
-// be called from is a WriteOp body reachable from this table; the fitness test in fitness_test.go
-// enforces that.
-var operations = func() map[connectorv1.WriteKind]WriteOp {
-	m := map[connectorv1.WriteKind]WriteOp{
-		connectorv1.WriteKind_WRITE_KIND_OBJECT_CREATE: objectCreateOp,
-		connectorv1.WriteKind_WRITE_KIND_OBJECT_UPDATE: objectUpdateOp,
-		connectorv1.WriteKind_WRITE_KIND_OBJECT_DELETE: objectDeleteOp,
+// operations is the operation table, keyed by (provider kind, write kind). A kind ticket registers its
+// row (account.go: T-1583, the four account kinds); a WriteKind with no row for the provider's kind ends
+// in CAPABILITY_UNSUPPORTED. Kinds 1 to 3 are T-1623 and kinds 4 to 6 (object move, rename, restore)
+// are T-1624. The only place a directory or Graph write may be called from is a WriteOp body reachable
+// from this table; the fitness test in fitness_test.go enforces that.
+var operations = func() map[opKey]WriteOp {
+	ad := connectorv1.ProviderKind_PROVIDER_KIND_AD
+	m := map[opKey]WriteOp{
+		{ad, connectorv1.WriteKind_WRITE_KIND_OBJECT_CREATE}: objectCreateOp,
+		{ad, connectorv1.WriteKind_WRITE_KIND_OBJECT_UPDATE}: objectUpdateOp,
+		{ad, connectorv1.WriteKind_WRITE_KIND_OBJECT_DELETE}: objectDeleteOp,
 	}
 	for k, op := range objectOps() {
-		m[k] = op
+		m[opKey{ad, k}] = op
 	}
 	return m
 }()
 
+// opKey keys the operation table: a write kind is dispatchable only on the provider kind it was
+// registered for, so an Entra kind is unreachable from an AD provider and vice versa.
+type opKey struct {
+	Provider connectorv1.ProviderKind
+	Kind     connectorv1.WriteKind
+}
+
 // validateOps is the build-time check of contract §8.9 / CC-WRITE-22: every registered write kind
 // declares its PropertyWrite and its other mandatory functions. It runs in New, so a handler cannot
 // be built over a table with a gap, and in the unit tests over the real table on every merge.
-func validateOps(ops map[connectorv1.WriteKind]WriteOp) error {
+func validateOps(ops map[opKey]WriteOp) error {
 	for k, op := range ops {
 		switch {
+		case k.Provider != connectorv1.ProviderKind_PROVIDER_KIND_AD && k.Provider != connectorv1.ProviderKind_PROVIDER_KIND_ENTRA:
+			return fmt.Errorf("write: kind %s is registered for no provider kind", k.Kind)
 		case op.PropertyWrite == nil:
-			return fmt.Errorf("write: kind %s is registered without a PropertyWrite (contract §8.9)", k)
+			return fmt.Errorf("write: kind %s is registered without a PropertyWrite (contract §8.9)", k.Kind)
 		case op.Touched == nil || op.Digest == nil || op.Plan == nil || op.Apply == nil:
-			return fmt.Errorf("write: kind %s is registered with a missing function", k)
+			return fmt.Errorf("write: kind %s is registered with a missing function", k.Kind)
 		}
 	}
 	return nil
@@ -181,7 +192,7 @@ func Capabilities() []*connectorv1.OperationSupport {
 	if len(operations) > 0 {
 		names := make([]string, 0, len(operations))
 		for k := range operations {
-			names = append(names, k.String())
+			names = append(names, k.Kind.String())
 		}
 		sort.Strings(names)
 		state, reason = connectorv1.SupportState_SUPPORT_STATE_SUPPORTED, "kinds: "+strings.Join(names, ",")

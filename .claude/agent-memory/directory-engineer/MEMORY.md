@@ -36,7 +36,6 @@
 - [TokenSet lessons](tokenset-lessons.md) — T-1741: epoch-scoped export, putRaw whitelist trap, compose/server slow+red
 - [write kinds lessons](write-kinds-lessons.md) — T-1623/T-1632: class-dependent guard = recheck in body, writechange codec, h.ops test substitution needs testChange(), schema allow-list, sync tests hang
 - [object write lessons](object-write-lessons.md) — T-1624: Samba ModifyDN deleteoldrdn, no Recycle Bin, stubGuard in lab tests
-- [write kinds lessons](write-kinds-lessons.md) — T-1623: writechange codec, h.ops test substitution needs testChange(), schema allow-list, sync tests hang
 - [account kinds lessons](account-kinds-lessons.md) — T-1583: leaf digest pkg, accountkind single definition, test-kind collision, T-1638 Windows lab
 - [reconcile lessons](reconcile-lessons.md) — T-1196: no CREATE TEMP for runtime role, fake listing flag, mutation checks, unmerged deps
 - [patch-apply lessons](patch-apply-lessons.md) — T-1197: link edge direction, permutation test cost/shape, mutation recipe
@@ -52,4 +51,5 @@
 - [read marker lessons](read-marker-lessons.md) — T-2216: observed/not_observed only, enumLabels trap, inventory test timeout
 - [per-DC count lessons](perdc-count-lessons.md) — T-1499: Describe-based DCsInScope, Services.PerDC wiring, reports tests hang without Postgres
 - [printers lessons](printers-lessons.md) — T-1719: new kind = two CHECKs + resync, OU path is dn (RP11), lab seed without rng draws
+- [EP-11 provider lessons](ep11-provider-lessons.md) — T-1005: facets, loaded-host lab run traps, refusal pkg
 - [DC-log join lessons](dcjoin-lessons.md) — T-1636: smbcontrol all, runner ctx gaps, enable/disable skipped, lab rig recipe

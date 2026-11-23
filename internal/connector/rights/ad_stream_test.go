@@ -3,6 +3,7 @@ package rights
 import (
 	"context"
 	"errors"
+	"github.com/skenzeriq/activediq/internal/connector/provider"
 	"os"
 	"path/filepath"
 	"strings"
@@ -394,7 +395,7 @@ func TestStreamPinnedC13KeepsRenamedGroupInTier0Set(t *testing.T) {
 		ref, _ := dn.ParseObjectRef(w.id.DN)
 		prev := snapshotWith
 		// A stand-in for the classifier's rule: a pinned GUID is C13 whatever its name now is.
-		snapshotWith = func(_ context.Context, _ ADDirectory, pinned, _ []adguid.GUID) (*tier0.ADSet, error) {
+		snapshotWith = func(_ context.Context, _ provider.RightsDirectory, pinned, _ []adguid.GUID) (*tier0.ADSet, error) {
 			s := tier0.NewADSet()
 			for _, p := range pinned {
 				s.AddC13(p)

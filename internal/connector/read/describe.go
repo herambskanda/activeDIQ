@@ -7,8 +7,9 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/skenzeriq/activediq/internal/connector/ad"
+	"github.com/skenzeriq/activediq/internal/connector/provider"
+	"github.com/skenzeriq/activediq/internal/connector/refusal"
 	"github.com/skenzeriq/activediq/internal/connector/replstatus"
-	"github.com/skenzeriq/activediq/internal/connector/write"
 	connectorv1 "github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1"
 )
 
@@ -16,7 +17,7 @@ import (
 const contractName = "activediq.connector.v1"
 
 func invalidDescribe(field string) error {
-	r := write.NewRefusal(connectorv1.ErrorCode_ERROR_CODE_INVALID_ARGUMENT, connectorv1.RetryAdvice_RETRY_ADVICE_NEVER, "invalid request")
+	r := refusal.New(connectorv1.ErrorCode_ERROR_CODE_INVALID_ARGUMENT, connectorv1.RetryAdvice_RETRY_ADVICE_NEVER, "", "invalid request")
 	r.Err.Details = &connectorv1.ConnectorError_RejectedInput{RejectedInput: &connectorv1.RejectedInputDetails{RuleId: "InvalidDescribeRequest", Field: field}}
 	return r
 }
@@ -26,14 +27,14 @@ func invalidDescribe(field string) error {
 // cache, so Refresh changes nothing). The capability, feature, DC and health sections are the other
 // groups' and are not set here. Every GUID is in wire order, as in Read.
 func (h *Handler) Describe(ctx context.Context, req *connectorv1.DescribeRequest) (*connectorv1.DescribeResponse, error) {
-	d, ok := h.src.(Describer)
-	if !ok {
+	d, ok := h.prov.(provider.Describer)
+	if !ok || !h.supported() {
 		return nil, refuse(connectorv1.ErrorCode_ERROR_CODE_CAPABILITY_UNSUPPORTED, connectorv1.RetryAdvice_RETRY_ADVICE_NEVER, "describe not supported")
 	}
 	if req.GetConnection().GetConnectionId() == "" || req.GetConnection().GetDirectoryIdentity() == nil {
 		return nil, invalidDescribe("connection")
 	}
-	if !proto.Equal(req.GetConnection().GetDirectoryIdentity(), h.src.Identity()) {
+	if !proto.Equal(req.GetConnection().GetDirectoryIdentity(), h.prov.Identity()) {
 		return nil, refuse(connectorv1.ErrorCode_ERROR_CODE_DIRECTORY_IDENTITY_MISMATCH, connectorv1.RetryAdvice_RETRY_ADVICE_NEVER, "directory identity mismatch")
 	}
 	before, err := h.bound(ctx, nil)
@@ -51,28 +52,27 @@ func (h *Handler) Describe(ctx context.Context, req *connectorv1.DescribeRequest
 	out := &connectorv1.DescribeResponse{
 		Contract:          contractName,
 		ProviderKind:      connectorv1.ProviderKind_PROVIDER_KIND_AD,
-		DirectoryIdentity: h.src.Identity(),
+		DirectoryIdentity: h.prov.Identity(),
 		DescribedAt:       timestamppb.New(h.now()),
 		Limits:            &connectorv1.Limits{MaxPageSize: top.Limits.MaxPageSize, MaxValueRange: top.Limits.MaxValueRange},
 	}
 	// The bound DC answered live above, so one DC is reachable. A source that cannot tell Samba from
 	// Windows (or fails to) is reported as UNVERIFIED, never SUPPORTED (rule 7).
 	samba := true
-	if p, ok := h.src.(interface {
-		IsSamba(context.Context) (bool, error)
-	}); ok {
-		if v, err := p.IsSamba(ctx); err == nil {
-			samba = v
-		}
+	if v, err := d.IsSamba(ctx); err == nil {
+		samba = v
 	}
-	out.Operations = append(write.Capabilities(), replstatus.Capability(1, samba))
+	if h.ops != nil {
+		out.Operations = h.ops()
+	}
+	out.Operations = append(out.Operations, replstatus.Capability(1, samba))
 	for _, nc := range top.NamingContexts {
 		info := &connectorv1.NamingContextInfo{
-			NcGuid:      write.GUIDToWire(nc.GUID),
+			NcGuid:      provider.GUIDToWire(nc.GUID),
 			Kind:        kindOf(nc.Kind),
 			DnsName:     nc.DNSName,
 			NetbiosName: nc.NetBIOSName,
-			Head:        &connectorv1.DnValue{DisplayDn: nc.Head, Guid: write.GUIDToWire(nc.GUID)},
+			Head:        &connectorv1.DnValue{DisplayDn: nc.Head, Guid: provider.GUIDToWire(nc.GUID)},
 		}
 		if nc.HasSID {
 			info.DomainSid = &connectorv1.Sid{Value: nc.DomainSID.Bytes()}

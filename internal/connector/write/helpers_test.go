@@ -3,6 +3,8 @@ package write
 import (
 	"context"
 	"errors"
+	"github.com/skenzeriq/activediq/internal/connector/provider"
+	"github.com/skenzeriq/activediq/internal/directory/attr/sid"
 	"net"
 	"os"
 	"sync"
@@ -45,7 +47,7 @@ type fakeProv struct {
 	calls    []string
 	tier0    map[guid.GUID][]Basis
 	classErr map[guid.GUID]error
-	anchors  map[guid.GUID]Anchors
+	anchors  map[guid.GUID]provider.Anchors
 	anchErr  error
 	// afterErr makes Classify fail once the first Apply write has happened (step 9).
 	failAfter *bool
@@ -53,8 +55,8 @@ type fakeProv struct {
 	// member of any designated group it is passed, and records what it was passed.
 	members map[guid.GUID][]guid.GUID
 	seenDes [][]guid.GUID
-	// guard is what PropertyGuard returns; nil means the refuse-everything guard.
-	guard    PropertyGuard
+	// guard is what provider.PropertyGuard returns; nil means the refuse-everything guard.
+	guard    provider.PropertyGuard
 	guardErr error
 	// bound is the DC identity BoundDC answers; boundErr makes it unreadable. dcReads counts the
 	// reads (kept out of calls: it is not a read of an object).
@@ -65,7 +67,7 @@ type fakeProv struct {
 
 func newFake() *fakeProv {
 	return &fakeProv{kind: connectorv1.ProviderKind_PROVIDER_KIND_AD, tier0: map[guid.GUID][]Basis{},
-		classErr: map[guid.GUID]error{}, anchors: map[guid.GUID]Anchors{}, bound: testDC()}
+		classErr: map[guid.GUID]error{}, anchors: map[guid.GUID]provider.Anchors{}, bound: testDC()}
 }
 
 // testDC is the DC every AD fixture is bound to and pins.
@@ -84,7 +86,7 @@ func (f *fakeProv) Kind() connectorv1.ProviderKind { return f.kind }
 func (f *fakeProv) Identity() *connectorv1.DirectoryIdentity {
 	return adIdentity()
 }
-func (f *fakeProv) Classify(_ context.Context, id guid.GUID, designated []guid.GUID) (Verdict, error) {
+func (f *fakeProv) Classify(_ context.Context, id guid.GUID, designated []guid.GUID) (provider.Verdict, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls = append(f.calls, "classify")
@@ -92,28 +94,28 @@ func (f *fakeProv) Classify(_ context.Context, id guid.GUID, designated []guid.G
 	for _, d := range designated {
 		for _, m := range f.members[d] {
 			if m == id {
-				return Verdict{Tier0: true, Bases: []Basis{tier0.Designated}}, nil
+				return provider.Verdict{Tier0: true, Bases: []Basis{tier0.Designated}}, nil
 			}
 		}
 	}
 	if f.failAfter != nil && *f.failAfter {
-		return Verdict{Tier0: true}, errors.New("dc unreachable")
+		return provider.Verdict{Tier0: true}, errors.New("dc unreachable")
 	}
 	if err := f.classErr[id]; err != nil {
-		return Verdict{Tier0: true}, err
+		return provider.Verdict{Tier0: true}, err
 	}
 	if b, ok := f.tier0[id]; ok {
-		return Verdict{Tier0: true, Bases: b}, nil
+		return provider.Verdict{Tier0: true, Bases: b}, nil
 	}
-	return Verdict{}, nil
+	return provider.Verdict{}, nil
 }
-func (f *fakeProv) Anchors(_ context.Context, id guid.GUID) (Anchors, error) {
+func (f *fakeProv) Anchors(_ context.Context, id guid.GUID) (provider.Anchors, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls = append(f.calls, "anchors")
 	return f.anchors[id], f.anchErr
 }
-func (f *fakeProv) PropertyGuard(context.Context) (PropertyGuard, error) {
+func (f *fakeProv) PropertyGuard(context.Context) (provider.PropertyGuard, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls = append(f.calls, "propguard")
@@ -299,9 +301,42 @@ func ptr[T any](v T) *T { return &v }
 
 func osStat(p string) (os.FileInfo, error) { return os.Stat(p) }
 
+// memPins is an in-memory provider.PinStore for the lab tests.
+type memPins struct {
+	mu   sync.Mutex
+	pins []guid.GUID
+}
+
+func (m *memPins) PinnedC13(context.Context) ([]guid.GUID, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return append([]guid.GUID(nil), m.pins...), nil
+}
+
+func (m *memPins) PinC13(_ context.Context, g []guid.GUID) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.pins = append(m.pins, g...)
+	return nil
+}
+
+// adKey is the op-table key of write kind k on the AD provider.
+func adKey(k connectorv1.WriteKind) opKey {
+	return opKey{connectorv1.ProviderKind_PROVIDER_KIND_AD, k}
+}
+
 // testChange is the change arm that agrees with the substituted test row at kind 1 (object create, a
 // group, so no secret input is expected): step 1's arm check passes and the row under test runs.
 func testChange() *connectorv1.WriteChange {
 	return &connectorv1.WriteChange{Change: &connectorv1.WriteChange_ObjectCreate{ObjectCreate: &connectorv1.ObjectCreate{
 		ObjectClass: connectorv1.DirectoryObjectClass_DIRECTORY_OBJECT_CLASS_GROUP}}}
+}
+
+func sidBytes(t *testing.T, s string) []byte {
+	t.Helper()
+	v, err := sid.Parse(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return v.Bytes()
 }

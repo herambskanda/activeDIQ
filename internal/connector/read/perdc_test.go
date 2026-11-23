@@ -14,8 +14,9 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/skenzeriq/activediq/internal/connector/ad"
+	"github.com/skenzeriq/activediq/internal/connector/provider"
 	"github.com/skenzeriq/activediq/internal/connector/read"
-	"github.com/skenzeriq/activediq/internal/connector/write"
+	"github.com/skenzeriq/activediq/internal/connector/refusal"
 	"github.com/skenzeriq/activediq/internal/directory/attr/guid"
 	connectorv1 "github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1"
 )
@@ -28,7 +29,7 @@ const ft2026 = int64(134_116_992_000_000_000)
 // pdSrc is a Source with the per-DC half; reads are scripted per DSA GUID.
 type pdSrc struct {
 	*src
-	dcs     []read.DC
+	dcs     []provider.DC
 	listErr error
 	// per DSA: the lastLogon text ("" = attribute absent) or an error.
 	logon map[guid.GUID]string
@@ -42,9 +43,9 @@ type pdSrc struct {
 	total    atomic.Int32
 }
 
-func (p *pdSrc) DomainDCs(context.Context, guid.GUID) ([]read.DC, error) { return p.dcs, p.listErr }
+func (p *pdSrc) DomainDCs(context.Context, guid.GUID) ([]provider.DC, error) { return p.dcs, p.listErr }
 
-func (p *pdSrc) ReadOnDC(ctx context.Context, dc read.DC, id guid.GUID, attrs []string) (*ad.Entry, *connectorv1.DcIdentity, error) {
+func (p *pdSrc) ReadOnDC(ctx context.Context, dc provider.DC, id guid.GUID, attrs []string) (*ad.Entry, *connectorv1.DcIdentity, error) {
 	p.mu.Lock()
 	if p.inflight == nil {
 		p.inflight, p.peak = map[guid.GUID]int{}, map[guid.GUID]int{}
@@ -64,9 +65,9 @@ func (p *pdSrc) ReadOnDC(ctx context.Context, dc read.DC, id guid.GUID, attrs []
 	if o, ok := p.other[dc.DSAGUID]; ok {
 		answers = o
 		// mirrors ADPerDCSource: an impostor's identity comes back together with UNREACHABLE
-		return nil, &connectorv1.DcIdentity{DsaGuid: write.GUIDToWire(o), DnsHostname: dc.Host}, &ad.Error{Code: ad.CodeUnreachable}
+		return nil, &connectorv1.DcIdentity{DsaGuid: provider.GUIDToWire(o), DnsHostname: dc.Host}, &ad.Error{Code: ad.CodeUnreachable}
 	}
-	who := &connectorv1.DcIdentity{DsaGuid: write.GUIDToWire(answers), DnsHostname: dc.Host}
+	who := &connectorv1.DcIdentity{DsaGuid: provider.GUIDToWire(answers), DnsHostname: dc.Host}
 	if err := p.errs[dc.DSAGUID]; err != nil {
 		return nil, who, err
 	}
@@ -80,7 +81,7 @@ func (p *pdSrc) ReadOnDC(ctx context.Context, dc read.DC, id guid.GUID, attrs []
 func newPD(n int) *pdSrc {
 	p := &pdSrc{src: &src{dsa: dsaA}, logon: map[guid.GUID]string{}, errs: map[guid.GUID]error{}, other: map[guid.GUID]guid.GUID{}}
 	for i := 1; i <= n; i++ {
-		p.dcs = append(p.dcs, read.DC{Host: "dc" + strconv.Itoa(i) + ".lab.test", Site: "S", DSAGUID: dsa(i), RODCKnown: true})
+		p.dcs = append(p.dcs, provider.DC{Host: "dc" + strconv.Itoa(i) + ".lab.test", Site: "S", DSAGUID: dsa(i), RODCKnown: true})
 	}
 	return p
 }
@@ -91,7 +92,7 @@ func pdReq(scope connectorv1.PerDcScope, attrs ...connectorv1.PerDcAttribute) *c
 			connectorv1.PerDcAttribute_PER_DC_ATTRIBUTE_LOGON_COUNT}
 	}
 	return &connectorv1.ReadPerDCRequest{Connection: &connectorv1.ConnectionRef{ConnectionId: "c1", DirectoryIdentity: ident},
-		Guid: write.GUIDToWire(g(objGUID)), NcGuid: write.GUIDToWire(g(ncGUID)), Attributes: attrs, Scope: scope}
+		Guid: provider.GUIDToWire(g(objGUID)), NcGuid: provider.GUIDToWire(g(ncGUID)), Attributes: attrs, Scope: scope}
 }
 
 func runPD(t *testing.T, p *pdSrc, r *connectorv1.ReadPerDCRequest) (map[guid.GUID]*connectorv1.PerDcResult, *connectorv1.PerDcSummary, error) {
@@ -129,7 +130,7 @@ func runPDH(t *testing.T, h *read.Handler, r *connectorv1.ReadPerDCRequest) (map
 			sum = m.GetSummary()
 			continue
 		}
-		d, _ := write.GUIDFromWire(m.GetResult().GetDc().GetDsaGuid())
+		d, _ := provider.GUIDFromWire(m.GetResult().GetDc().GetDsaGuid())
 		if _, dup := res[d]; dup {
 			t.Fatal("two results for one DC")
 		}
@@ -235,7 +236,7 @@ func TestPerDCWrongOrNamelessDC(t *testing.T) {
 			t.Fatalf("dc%d: %v", i, res[dsa(i)])
 		}
 	}
-	if string(res[dsa(1)].GetDc().GetDsaGuid().GetValue()) != string(write.GUIDToWire(dsa(1)).GetValue()) {
+	if string(res[dsa(1)].GetDc().GetDsaGuid().GetValue()) != string(provider.GUIDToWire(dsa(1)).GetValue()) {
 		t.Fatal("error result must name the listed DC, not the impostor")
 	}
 }
@@ -310,7 +311,7 @@ type countSrc struct {
 	in, peak *atomic.Int32
 }
 
-func (c *countSrc) ReadOnDC(ctx context.Context, dc read.DC, id guid.GUID, attrs []string) (*ad.Entry, *connectorv1.DcIdentity, error) {
+func (c *countSrc) ReadOnDC(ctx context.Context, dc provider.DC, id guid.GUID, attrs []string) (*ad.Entry, *connectorv1.DcIdentity, error) {
 	n := c.in.Add(1)
 	for {
 		p := c.peak.Load()
@@ -324,7 +325,7 @@ func (c *countSrc) ReadOnDC(ctx context.Context, dc read.DC, id guid.GUID, attrs
 
 func TestPerDCRefusals(t *testing.T) {
 	code := func(err error) connectorv1.ErrorCode {
-		var r *write.Refusal
+		var r *refusal.Refusal
 		if err == nil {
 			return connectorv1.ErrorCode_ERROR_CODE_UNSPECIFIED
 		}

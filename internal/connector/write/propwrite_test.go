@@ -4,6 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/skenzeriq/activediq/internal/connector/provider"
+	adprov "github.com/skenzeriq/activediq/internal/connector/provider/ad"
+	"github.com/skenzeriq/activediq/internal/connector/provider/entra"
 	"strings"
 	"testing"
 
@@ -49,29 +52,29 @@ func TestAC1RegistrationWithoutPropertyWriteFailsTheBuildCheck(t *testing.T) {
 			return nil, nil
 		}}
 	k := connectorv1.WriteKind(1)
-	if err := validateOps(map[connectorv1.WriteKind]WriteOp{k: ok}); err != nil {
+	if err := validateOps(map[opKey]WriteOp{adKey(k): ok}); err != nil {
 		t.Fatal(err)
 	}
 	bad := ok
 	bad.PropertyWrite = nil
-	err := validateOps(map[connectorv1.WriteKind]WriteOp{k: bad})
+	err := validateOps(map[opKey]WriteOp{adKey(k): bad})
 	if err == nil || !strings.Contains(err.Error(), "PropertyWrite") {
 		t.Fatalf("a kind without PropertyWrite passed: %v", err)
 	}
 	// New refuses to build over such a table, so it cannot be reached at runtime either.
 	r := newRig(t, nil)
-	if _, err := New(r.prov, r.gate, func(h *Handler) { h.ops = map[connectorv1.WriteKind]WriteOp{k: bad} }); err == nil {
+	if _, err := New(r.prov, r.gate, func(h *Handler) { h.ops = map[opKey]WriteOp{adKey(k): bad} }); err == nil {
 		t.Fatal("New accepted a table with a kind lacking PropertyWrite")
 	}
 }
 
-func armed(t *testing.T, guard PropertyGuard, pw func(*connectorv1.WriteChange) (tier0.PropertyWrite, error), run Run) (*rig, *recordedOp) {
+func armed(t *testing.T, guard provider.PropertyGuard, pw func(*connectorv1.WriteChange) (tier0.PropertyWrite, error), run Run) (*rig, *recordedOp) {
 	t.Helper()
 	r := newRig(t, &run)
 	rec := withTestOp(r)
-	op := r.h.ops[1]
+	op := r.h.ops[adKey(1)]
 	op.PropertyWrite = pw
-	r.h.ops[1] = op
+	r.h.ops[adKey(1)] = op
 	r.prov.guard = guard
 	return r, rec
 }
@@ -176,7 +179,7 @@ func TestPropertyGuardFailsClosedOnBadDeclarationOrNoSnapshot(t *testing.T) {
 }
 
 func TestProvidersNeverReturnANilGuard(t *testing.T) {
-	for _, p := range []Provider{&ADProvider{}, &EntraProvider{}} {
+	for _, p := range []provider.Provider{&adprov.ADProvider{}, &entra.EntraProvider{}} {
 		g, err := p.PropertyGuard(context.Background())
 		if err != nil || g == nil {
 			t.Fatalf("%T: %v %v", p, g, err)
@@ -310,9 +313,9 @@ func TestGuardPropertyAlsoDeviceRecordsTheDeviceVariant(t *testing.T) {
 	if ref == nil {
 		t.Fatal("a device-refused declaration was accepted with AlsoDevice")
 	}
-	if ref.propKind != "DEVICE" || ref.propOp != "UPDATE" || len(ref.propKeys) != 1 || ref.propKeys[0] != "title" ||
-		ref.reason != tier0.ReasonDesignatedDynamicRule || ref.stage != "4" {
-		t.Errorf("audit record kind %q op %q keys %v reason %q stage %q", ref.propKind, ref.propOp, ref.propKeys, ref.reason, ref.stage)
+	if ref.PropKind != "DEVICE" || ref.PropOp != "UPDATE" || len(ref.PropKeys) != 1 || ref.PropKeys[0] != "title" ||
+		ref.Reason != tier0.ReasonDesignatedDynamicRule || ref.Stage != "4" {
+		t.Errorf("audit record kind %q op %q keys %v reason %q stage %q", ref.PropKind, ref.PropOp, ref.PropKeys, ref.Reason, ref.Stage)
 	}
 	if len(g.calls) != 2 || g.calls[0] != tier0.WriteUser || g.calls[1] != tier0.WriteDevice {
 		t.Errorf("guard asked %v, want user then device", g.calls)
@@ -340,7 +343,7 @@ func TestGuardPropertyAlsoDeviceRecordsTheDeviceVariant(t *testing.T) {
 	g = &kindRefuser{kind: tier0.WriteUser}
 	r.prov.guard = g
 	ref = r.h.guardProperty(context.Background(), decl, true, target, "4")
-	if ref == nil || ref.propKind != "USER" || len(g.calls) != 1 {
+	if ref == nil || ref.PropKind != "USER" || len(g.calls) != 1 {
 		t.Errorf("user refusal: %+v calls %v", ref, g.calls)
 	}
 }

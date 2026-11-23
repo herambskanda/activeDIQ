@@ -14,8 +14,8 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/skenzeriq/activediq/internal/connector/ad"
+	"github.com/skenzeriq/activediq/internal/connector/provider"
 	"github.com/skenzeriq/activediq/internal/connector/read"
-	"github.com/skenzeriq/activediq/internal/connector/write"
 	"github.com/skenzeriq/activediq/internal/directory/attr/guid"
 	"github.com/skenzeriq/activediq/internal/directory/client"
 	connectorv1 "github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1"
@@ -60,7 +60,7 @@ func (f *fsrc) BoundDC(ctx context.Context) (*connectorv1.DcIdentity, error) {
 	if f.boundN > 1 && f.invAfter != "" {
 		inv = f.invAfter
 	}
-	return &connectorv1.DcIdentity{DsaGuid: write.GUIDToWire(g(f.dsa)), InvocationId: write.GUIDToWire(g(inv)), DnsHostname: "dc1", Site: "Default"}, nil
+	return &connectorv1.DcIdentity{DsaGuid: provider.GUIDToWire(g(f.dsa)), InvocationId: provider.GUIDToWire(g(inv)), DnsHostname: "dc1", Site: "Default"}, nil
 }
 
 func (f *fsrc) ManagesNC(_ context.Context, nc guid.GUID) (bool, error) {
@@ -114,7 +114,7 @@ func newFsrc() *fsrc {
 		pages: []ad.DirSyncPage{{Cookie: []byte("ck1")}}}
 }
 
-func startFeed(t *testing.T, s read.Source, opts ...read.Option) connectorv1.ConnectorClient {
+func startFeed(t *testing.T, s provider.Provider, opts ...read.Option) connectorv1.ConnectorClient {
 	t.Helper()
 	h, err := read.New(s, opts...)
 	if err != nil {
@@ -137,7 +137,7 @@ func startFeed(t *testing.T, s read.Source, opts ...read.Option) connectorv1.Con
 func feedReq() *connectorv1.ChangeFeedRequest {
 	return &connectorv1.ChangeFeedRequest{
 		Connection: &connectorv1.ConnectionRef{ConnectionId: "c1", DirectoryIdentity: ident},
-		Partition:  &connectorv1.FeedPartition{Partition: &connectorv1.FeedPartition_AdNcGuid{AdNcGuid: write.GUIDToWire(g(ncGUID))}},
+		Partition:  &connectorv1.FeedPartition{Partition: &connectorv1.FeedPartition_AdNcGuid{AdNcGuid: provider.GUIDToWire(g(ncGUID))}},
 		Start:      &connectorv1.ChangeFeedRequest_Prime{Prime: &connectorv1.FeedPrime{}},
 		Attributes: []string{"cn"},
 	}
@@ -146,7 +146,7 @@ func feedReq() *connectorv1.ChangeFeedRequest {
 func validCookie() *connectorv1.FeedCookie {
 	usn := uint64(4000)
 	return &connectorv1.FeedCookie{ProviderState: []byte("ck0"), ProviderKind: connectorv1.ProviderKind_PROVIDER_KIND_AD, FormatVersion: 1,
-		Issuer:                    &connectorv1.DcIdentity{DsaGuid: write.GUIDToWire(g(dsaA)), InvocationId: write.GUIDToWire(g(invA))},
+		Issuer:                    &connectorv1.DcIdentity{DsaGuid: provider.GUIDToWire(g(dsaA)), InvocationId: provider.GUIDToWire(g(invA))},
 		HighestCommittedUsnBefore: &usn, IssuedAt: timestamppb.New(time.Now().Add(-time.Hour))}
 }
 
@@ -201,8 +201,8 @@ func TestFeedPrimeIsOneEmptyBatchWithTheCookie(t *testing.T) {
 	c := b.GetCookieAfter()
 	if string(c.GetProviderState()) != "c" || c.GetFormatVersion() != 1 || c.GetProviderKind() != connectorv1.ProviderKind_PROVIDER_KIND_AD ||
 		c.GetHighestCommittedUsnBefore() != 5000 || c.GetIssuedAt() == nil ||
-		string(c.GetIssuer().GetDsaGuid().GetValue()) != string(write.GUIDToWire(g(dsaA)).GetValue()) ||
-		string(c.GetIssuer().GetInvocationId().GetValue()) != string(write.GUIDToWire(g(invA)).GetValue()) {
+		string(c.GetIssuer().GetDsaGuid().GetValue()) != string(provider.GUIDToWire(g(dsaA)).GetValue()) ||
+		string(c.GetIssuer().GetInvocationId().GetValue()) != string(provider.GUIDToWire(g(invA)).GetValue()) {
 		t.Fatalf("cookie %v", c)
 	}
 	// The USN is read before the search; the mandatory set is the connector's, the names are the caller's.
@@ -309,7 +309,7 @@ func TestFeedPartitionMustBeAManagedNC(t *testing.T) {
 	// An NC GUID the connection does not manage (Configuration, Schema, a stranger) is the same refusal.
 	f = newFsrc()
 	r := feedReq()
-	r.Partition = &connectorv1.FeedPartition{Partition: &connectorv1.FeedPartition_AdNcGuid{AdNcGuid: write.GUIDToWire(g(parGUID))}}
+	r.Partition = &connectorv1.FeedPartition{Partition: &connectorv1.FeedPartition_AdNcGuid{AdNcGuid: provider.GUIDToWire(g(parGUID))}}
 	if _, err = feedAll(startFeed(t, f), r); code(err) != connectorv1.ErrorCode_ERROR_CODE_INVALID_ARGUMENT || idx(f.log, "cycle") >= 0 {
 		t.Fatalf("%v %v", err, f.log)
 	}
@@ -323,10 +323,10 @@ func TestFeedResumePreChecksAreStaleCookieBeforeAnyBatch(t *testing.T) {
 		want   connectorv1.ResyncReason
 		search bool // the DirSync search may have been sent
 	}{
-		{"edited invocation", func(c *connectorv1.FeedCookie) { c.Issuer.InvocationId = write.GUIDToWire(g(invB)) }, nil,
+		{"edited invocation", func(c *connectorv1.FeedCookie) { c.Issuer.InvocationId = provider.GUIDToWire(g(invB)) }, nil,
 			connectorv1.ResyncReason_RESYNC_REASON_INVOCATION_ID_CHANGED, false},
 		{"restored DC", nil, func(f *fsrc) { f.inv = invB }, connectorv1.ResyncReason_RESYNC_REASON_INVOCATION_ID_CHANGED, false},
-		{"edited dsa", func(c *connectorv1.FeedCookie) { c.Issuer.DsaGuid = write.GUIDToWire(g(dsaB)) }, nil,
+		{"edited dsa", func(c *connectorv1.FeedCookie) { c.Issuer.DsaGuid = provider.GUIDToWire(g(dsaB)) }, nil,
 			connectorv1.ResyncReason_RESYNC_REASON_ISSUER_MISMATCH, false},
 		{"usn rollback", func(c *connectorv1.FeedCookie) { u := uint64(5001); c.HighestCommittedUsnBefore = &u }, nil,
 			connectorv1.ResyncReason_RESYNC_REASON_USN_ROLLBACK, false},
@@ -462,7 +462,7 @@ func TestFeedDCChangeDuringTheCycleWithholdsTheCompleteBatch(t *testing.T) {
 func TestFeedPrimePinnedToAnotherDCIsRefused(t *testing.T) {
 	f := newFsrc()
 	r := feedReq()
-	r.GetPrime().Dc = &connectorv1.DcSelection{PinnedDsaGuid: write.GUIDToWire(g(dsaB))}
+	r.GetPrime().Dc = &connectorv1.DcSelection{PinnedDsaGuid: provider.GUIDToWire(g(dsaB))}
 	if _, err := feedAll(startFeed(t, f), r); code(err) != connectorv1.ErrorCode_ERROR_CODE_UNREACHABLE_DC || idx(f.log, "cycle") >= 0 {
 		t.Fatalf("%v %v", err, f.log)
 	}

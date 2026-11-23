@@ -4,18 +4,18 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/skenzeriq/activediq/internal/connector/ad"
-	"github.com/skenzeriq/activediq/internal/connector/write"
+	"github.com/skenzeriq/activediq/internal/connector/refusal"
 	connectorv1 "github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1"
 )
 
 // Every error text is fixed: no GUID, DN, attribute value or connector message goes into it.
 
 func refuse(code connectorv1.ErrorCode, retry connectorv1.RetryAdvice, msg string) error {
-	return write.NewRefusal(code, retry, msg)
+	return refusal.New(code, retry, "", msg)
 }
 
 func invalid(field string) error {
-	r := write.NewRefusal(connectorv1.ErrorCode_ERROR_CODE_INVALID_ARGUMENT, connectorv1.RetryAdvice_RETRY_ADVICE_NEVER, "invalid request")
+	r := refusal.New(connectorv1.ErrorCode_ERROR_CODE_INVALID_ARGUMENT, connectorv1.RetryAdvice_RETRY_ADVICE_NEVER, "", "invalid request")
 	r.Err.Details = &connectorv1.ConnectorError_RejectedInput{RejectedInput: &connectorv1.RejectedInputDetails{RuleId: "InvalidReadRequest", Field: field}}
 	return r
 }
@@ -29,7 +29,7 @@ func pinRefusal() error {
 // mapAD maps a session error to the contract code; dc names the DC that produced it.
 func mapAD(err error, dc *connectorv1.DcIdentity) error {
 	code, retry, msg := classifyAD(err)
-	r := write.NewRefusal(code, retry, msg)
+	r := refusal.New(code, retry, "", msg)
 	r.Err.Dc = proto.Clone(dc).(*connectorv1.DcIdentity)
 	return r
 }
@@ -60,7 +60,7 @@ func classifyAD(err error) (connectorv1.ErrorCode, connectorv1.RetryAdvice, stri
 
 // classNotAllowed: include_child_count on an object that is not an organizationalUnit or container.
 func classNotAllowed() error {
-	r := write.NewRefusal(connectorv1.ErrorCode_ERROR_CODE_INVALID_ARGUMENT, connectorv1.RetryAdvice_RETRY_ADVICE_NEVER, "invalid request")
+	r := refusal.New(connectorv1.ErrorCode_ERROR_CODE_INVALID_ARGUMENT, connectorv1.RetryAdvice_RETRY_ADVICE_NEVER, "", "invalid request")
 	r.Err.Details = &connectorv1.ConnectorError_RejectedInput{RejectedInput: &connectorv1.RejectedInputDetails{RuleId: "ClassNotAllowed", Field: "include_child_count"}}
 	return r
 }

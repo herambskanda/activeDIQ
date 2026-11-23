@@ -1,11 +1,9 @@
 package write
 
 import (
-	"errors"
+	adprov "github.com/skenzeriq/activediq/internal/connector/provider/ad"
 
 	"context"
-	"github.com/skenzeriq/activediq/internal/connector/ad"
-	"github.com/skenzeriq/activediq/internal/connector/tier0"
 	"testing"
 
 	"google.golang.org/protobuf/proto"
@@ -54,7 +52,7 @@ func TestPlanRefusedWhenBoundDCUnreadableOrProviderCannotSay(t *testing.T) {
 		t.Fatalf("unreadable: %v", c)
 	}
 	// An AD provider with no Bound configured fails closed too.
-	h, err := New(&ADProvider{ID: adIdentity()}, r.gate)
+	h, err := New(&adprov.ADProvider{ID: adIdentity()}, r.gate)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -143,11 +141,11 @@ func TestPlanPreconditionDCEqualsThePin(t *testing.T) {
 		t.Fatalf("plans %d precondition.dc = %v, pin %v", rec.plan, resp.GetPrecondition().GetDc(), q.GetDc())
 	}
 	// A kind that answers with another DC is refused, not corrected silently.
-	op := r.h.ops[1]
+	op := r.h.ops[adKey(1)]
 	op.Plan = func(context.Context, Authorised, *connectorv1.PlanRequest) (*connectorv1.PlanResponse, error) {
 		return &connectorv1.PlanResponse{Precondition: &connectorv1.TargetPrecondition{Dc: &connectorv1.DcIdentity{DsaGuid: toWire(mk(98))}}}, nil
 	}
-	r.h.ops[1] = op
+	r.h.ops[adKey(1)] = op
 	_, err = r.h.Plan(context.Background(), q)
 	if c := connErr(t, err).GetCode(); c != connectorv1.ErrorCode_ERROR_CODE_UNREACHABLE_DC {
 		t.Fatalf("op answered another DC: %v", c)
@@ -172,26 +170,6 @@ func TestApplyRefusedWhenPreconditionDCIsNotTheBoundOne(t *testing.T) {
 	}
 	if n := r.prov.n(); n != 0 {
 		t.Fatalf("directory calls after an apply-side pin mismatch: %d", n)
-	}
-}
-
-// T-0401 AC2: the production constructor builds Dir and Bound over the one session, and a provider
-// whose binder sits on another session refuses to name a DC.
-func TestADProviderShareOneSession(t *testing.T) {
-	s1, s2 := &ad.Session{}, &ad.Session{}
-	p := NewADProvider(s1, nil, adIdentity(), &memPins{})
-	if p.Dir.(tier0.SessionDirectory).S != s1 || p.Bound.(SessionDC).S != s1 {
-		t.Fatal("constructor did not share the session")
-	}
-	if !p.sameSession() {
-		t.Fatal("constructed provider reports a session mismatch")
-	}
-	p.Bound = SessionDC{S: s2}
-	if p.sameSession() {
-		t.Fatal("mismatch undetected")
-	}
-	if _, err := p.BoundDC(context.Background()); !errors.Is(err, ErrNoBoundDC) {
-		t.Fatalf("mismatched binder answered: %v", err)
 	}
 }
 

@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/skenzeriq/activediq/internal/connector/ad"
-	"github.com/skenzeriq/activediq/internal/connector/write"
+	"github.com/skenzeriq/activediq/internal/connector/provider"
 	"github.com/skenzeriq/activediq/internal/directory/attr/sid"
 	connectorv1 "github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1"
 )
@@ -44,11 +44,11 @@ func TestDnValuesCarryIdentityWhenSupplied(t *testing.T) {
 	}
 	d := func(i int) *connectorv1.DnValue { return got[i].GetDn() }
 	if d(0).GetDisplayDn() != "CN=Smith\\, Ann,OU=Ü,DC=lab,DC=test" ||
-		!bytes.Equal(d(0).GetGuid().GetValue(), write.GUIDToWire(memberGUID).GetValue()) ||
+		!bytes.Equal(d(0).GetGuid().GetValue(), provider.GUIDToWire(memberGUID).GetValue()) ||
 		!bytes.Equal(d(0).GetSid().GetValue(), s1.Bytes()) {
 		t.Errorf("principal: %v", d(0))
 	}
-	if !bytes.Equal(d(1).GetGuid().GetValue(), write.GUIDToWire(foreign).GetValue()) || d(1).GetSid() != nil || d(1).GetDisplayDn() != "CN=Group,DC=lab,DC=test" {
+	if !bytes.Equal(d(1).GetGuid().GetValue(), provider.GUIDToWire(foreign).GetValue()) || d(1).GetSid() != nil || d(1).GetDisplayDn() != "CN=Group,DC=lab,DC=test" {
 		t.Errorf("no-SID: %v", d(1))
 	}
 	if d(2).GetGuid() != nil || d(2).GetSid() == nil || d(2).GetDisplayDn() == "" {

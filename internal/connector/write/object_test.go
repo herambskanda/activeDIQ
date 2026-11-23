@@ -2,6 +2,7 @@ package write
 
 import (
 	"context"
+	"github.com/skenzeriq/activediq/internal/connector/provider"
 	"testing"
 	"time"
 
@@ -113,7 +114,7 @@ func (f *fakeObjects) Restore(_ context.Context, r ad.RestoreRequest) error {
 type objProv struct {
 	*fakeProv
 	dir StructureDirectory
-	cd  func() (Verdict, error) // ClassifyDeleted's answer; nil is a clean verdict
+	cd  func() (provider.Verdict, error) // ClassifyDeleted's answer; nil is a clean verdict
 }
 
 // objProvPlain has an object directory but no DeletedClassifier.
@@ -125,11 +126,11 @@ type objProvPlain struct {
 func (p objProvPlain) Objects() StructureDirectory { return p.dir }
 
 func (p objProv) Objects() StructureDirectory { return p.dir }
-func (p objProv) ClassifyDeleted(context.Context, guidT, guidT, []guidT) (Verdict, error) {
+func (p objProv) ClassifyDeleted(context.Context, guidT, guidT, []guidT) (provider.Verdict, error) {
 	if p.cd != nil {
 		return p.cd()
 	}
-	return Verdict{}, nil
+	return provider.Verdict{}, nil
 }
 
 type objRig struct {
@@ -412,8 +413,8 @@ func TestRestorePlanListsRegrantedGroups(t *testing.T) {
 	r.dir.deleted[oT] = true
 	r.dir.bin = true
 	g1, g2 := mk(120), mk(121)
-	r.h.prov = objProv{fakeProv: r.prov, dir: r.dir, cd: func() (Verdict, error) {
-		return Verdict{Regrants: []Regrant{{Group: g1, DN: "CN=Staff,OU=G,DC=lab"}, {Group: g2, DN: "CN=Domain Users,CN=Users,DC=lab"}}}, nil
+	r.h.ext = objProv{fakeProv: r.prov, dir: r.dir, cd: func() (provider.Verdict, error) {
+		return provider.Verdict{Regrants: []provider.Regrant{{Group: g1, DN: "CN=Staff,OU=G,DC=lab"}, {Group: g2, DN: "CN=Domain Users,CN=Users,DC=lab"}}}, nil
 	}}
 	p, err := r.plan(connectorv1.WriteKind_WRITE_KIND_OBJECT_RESTORE, restoreChangeTo(oP2, "Back"), oT, oP2)
 	if err != nil {

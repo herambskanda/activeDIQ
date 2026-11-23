@@ -18,8 +18,8 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/skenzeriq/activediq/internal/connector/ad"
-	"github.com/skenzeriq/activediq/internal/connector/read"
-	"github.com/skenzeriq/activediq/internal/connector/write"
+	"github.com/skenzeriq/activediq/internal/connector/provider"
+	adprov "github.com/skenzeriq/activediq/internal/connector/provider/ad"
 	"github.com/skenzeriq/activediq/internal/directory/attr/guid"
 	"github.com/skenzeriq/activediq/internal/platform/secret"
 	connectorv1 "github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1"
@@ -125,13 +125,9 @@ func (l *winFeedLab) open(t *testing.T) *feed {
 	t.Cleanup(func() { _ = sess.Close() })
 	nc := l.guidOf(t, winDom)
 	ident := &connectorv1.DirectoryIdentity{Identity: &connectorv1.DirectoryIdentity_AdForest{AdForest: &connectorv1.AdForestIdentity{
-		ForestRootNcGuid: write.GUIDToWire(nc)}}}
-	prov := write.NewADProvider(sess, nil, ident, &memPins{})
-	src, err := read.NewADSource(sess, prov)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return &feed{c: startFeed(t, src), src: src, prov: prov, nc: write.GUIDToWire(nc)}
+		ForestRootNcGuid: provider.GUIDToWire(nc)}}}
+	prov := adprov.NewADProvider(sess, nil, ident, &memPins{})
+	return &feed{c: startFeed(t, prov), prov: prov, nc: provider.GUIDToWire(nc)}
 }
 
 func (l *winFeedLab) ou(t *testing.T, name string) string {
@@ -197,7 +193,7 @@ func TestWindowsLabFeedMidCycleCookiesAndHeldFinalBatch(t *testing.T) {
 		if err := l.adm.Add(r); err != nil {
 			t.Fatal(err)
 		}
-		want[string(write.GUIDToWire(l.guidOf(t, d)).GetValue())] = true
+		want[string(provider.GUIDToWire(l.guidOf(t, d)).GetValue())] = true
 	}
 
 	before := time.Now()

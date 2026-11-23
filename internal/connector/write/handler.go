@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/hex"
 	"errors"
+	"fmt"
+	"github.com/skenzeriq/activediq/internal/connector/provider"
 	"strconv"
 	"time"
 
@@ -32,11 +34,17 @@ const (
 // Handler is the connector's Plan and Apply (contract §8.1). It implements the write half of
 // connectorv1.ConnectorServer and directory/client.Transport.
 type Handler struct {
-	prov  Provider
+	prov provider.Provider
+	// ext is prov with the write-side extensions an AD session-backed provider gains (see side.go).
+	ext provider.Provider
+	// dc is the DCBound facet, nil when the provider has no DCs: a provider with DCs pins, one without
+	// does not (ADR-0005 rule 5). It also selects the AD plane of the Tier-0 rules.
+	dc    provider.DCBound
+	plane tier0.Plane // from provider.Plane, validated at New; never inferred from dc alone
 	gates *GateBook
 	rec   Recorder
 	now   func() time.Time
-	ops   map[connectorv1.WriteKind]WriteOp
+	ops   map[opKey]WriteOp
 }
 
 // Option configures New.
@@ -50,11 +58,20 @@ func WithClock(now func() time.Time) Option { return func(h *Handler) { h.now = 
 
 // New builds the handler for one provider. The gate book must be the one the connector's
 // VerifyConnection feeds.
-func New(p Provider, g *GateBook, opts ...Option) (*Handler, error) {
+func New(p provider.Provider, g *GateBook, opts ...Option) (*Handler, error) {
 	if p == nil || g == nil {
 		return nil, errors.New("write: provider and gate book are required")
 	}
-	h := &Handler{prov: p, gates: g, rec: SlogRecorder{}, now: time.Now, ops: operations}
+	plane, err := provider.Plane(p)
+	if err != nil {
+		return nil, fmt.Errorf("write: %w", err)
+	}
+	h := &Handler{prov: p, gates: g, rec: SlogRecorder{}, now: time.Now, ops: operations, plane: plane}
+	h.dc, _ = p.(provider.DCBound)
+	h.ext = p // the write-side extensions (object directory, account session, deleted classifier)
+	if side := newADSide(p); side != nil {
+		h.ext = side
+	}
 	for _, o := range opts {
 		o(h)
 	}
@@ -201,10 +218,10 @@ func (h *Handler) finish(ev *Event, err error) error {
 		if errors.As(err, &r) {
 			ev.Outcome, ev.Code = "refused", r.Code().String()
 			if ev.Stage == "" {
-				ev.Stage = r.stage
+				ev.Stage = r.Stage
 			}
-			if r.reason != "" {
-				ev.Reason, ev.PropertyKind, ev.PropertyOp, ev.PropertyKeys = r.reason, r.propKind, r.propOp, r.propKeys
+			if r.Reason != "" {
+				ev.Reason, ev.PropertyKind, ev.PropertyOp, ev.PropertyKeys = r.Reason, r.PropKind, r.PropOp, r.PropKeys
 			}
 			if d := r.Err.GetTier0Refused(); d != nil {
 				ev.Object = guidText(d.GetObject())
@@ -240,7 +257,7 @@ func (h *Handler) guard(ctx context.Context, c *call, ev *Event) (*passed, error
 		return nil, invalid("1", "PreconditionRequired", "precondition")
 	}
 
-	isAD := h.prov.Kind() == connectorv1.ProviderKind_PROVIDER_KIND_AD
+	isAD := h.plane == tier0.PlaneAD
 	// ADR-0005 rule 5: an AD Plan names the DC it must run on; nil or unset is refused before any
 	// directory call. An AD Apply is held to the DC the precondition names.
 	var want *connectorv1.Guid
@@ -271,11 +288,7 @@ func (h *Handler) guard(ctx context.Context, c *call, ev *Event) (*passed, error
 	// never a silent switch (read-your-writes, DM-15.I3).
 	var bound *connectorv1.DcIdentity
 	if isAD {
-		b, ok := h.prov.(DCBinder)
-		if !ok {
-			return nil, pinRefusal("2")
-		}
-		id, err := b.BoundDC(ctx)
+		id, err := h.dc.BoundDC(ctx)
 		if err != nil || id == nil || !proto.Equal(id.GetDsaGuid(), want) {
 			return nil, pinRefusal("2")
 		}
@@ -304,14 +317,14 @@ func (h *Handler) guard(ctx context.Context, c *call, ev *Event) (*passed, error
 	// PropertyWrite and writes nothing.
 	var op *WriteOp
 	var declared []string
-	if w, ok := h.ops[c.kind]; ok && c.kind != connectorv1.WriteKind_WRITE_KIND_UNSPECIFIED {
+	if w, ok := h.ops[opKey{h.prov.Kind(), c.kind}]; ok && c.kind != connectorv1.WriteKind_WRITE_KIND_UNSPECIFIED {
 		op = &w
 		if r := stepFourShape(w, c); r != nil {
 			return nil, r
 		}
 		if w.Vet != nil {
 			var pd ObjectDirectory
-			if wd, ok := h.prov.(writeDirectory); ok {
+			if wd, ok := h.ext.(writeDirectory); ok {
 				pd = wd.WriteDirectory()
 			}
 			if r := w.Vet(pd, c.change); r != nil {
@@ -333,7 +346,7 @@ func (h *Handler) guard(ctx context.Context, c *call, ev *Event) (*passed, error
 			return nil, invalid("5", "TouchedSet", "change")
 		}
 		if w.TouchedLive != nil {
-			op2, ok := h.prov.(ObjectProvider)
+			op2, ok := h.ext.(ObjectProvider)
 			if !ok || op2.Objects() == nil {
 				return nil, unsupported()
 			}
@@ -367,9 +380,9 @@ func (h *Handler) guard(ctx context.Context, c *call, ev *Event) (*passed, error
 
 	// Step 7: live re-read and classification of every touched object. An error is tier0.
 	designated := unionGUIDs(parseGUIDs(c.t0.GetDesignated()), h.gates.Designated(c.conn.GetConnectionId()))
-	var regrants []Regrant
+	var regrants []provider.Regrant
 	var pdir ObjectDirectory
-	if wd, ok := h.prov.(writeDirectory); ok {
+	if wd, ok := h.ext.(writeDirectory); ok {
 		pdir = wd.WriteDirectory()
 	}
 	for i, id := range touched {
@@ -401,7 +414,7 @@ func (h *Handler) guard(ctx context.Context, c *call, ev *Event) (*passed, error
 	recheck := h.recheckProperty
 	removes := op != nil && op.RemovesTarget
 	return &passed{op: op, touched: touched, designated: designated, dec: dec, dc: bound, removes: removes,
-		auth: Authorised{p: &pass{evaluated: touched, dc: boundDSA, props: declared, dir: pdir, dcID: bound, recheck: recheck, prov: h.prov,
+		auth: Authorised{p: &pass{evaluated: touched, dc: boundDSA, props: declared, dir: pdir, dcID: bound, recheck: recheck, prov: h.ext,
 			objs: h.objects(), regrants: regrants}}}, nil
 }
 
@@ -415,7 +428,7 @@ const (
 // the declared kind and op, and the key names. Never values.
 func propertyRefusal(w tier0.PropertyWrite, target guid.GUID, step, reason string, st connectorv1.Tier0RefusalStage) *Refusal {
 	r := tier0Refusal(toWire(target), []basis{tier0.Designated}, st, step)
-	r.reason, r.propKind, r.propOp, r.propKeys = reason, kindName(w.Kind), w.Op.String(), append([]string(nil), w.Keys...)
+	r.Reason, r.PropKind, r.PropOp, r.PropKeys = reason, kindName(w.Kind), w.Op.String(), append([]string(nil), w.Keys...)
 	return r
 }
 
@@ -477,10 +490,10 @@ func (h *Handler) guardPropertyOnce(ctx context.Context, w tier0.PropertyWrite, 
 	}
 	r := propertyRefusal(w, target, step, reason, st)
 	if v.Op != 0 {
-		r.propOp = v.Op.String()
+		r.PropOp = v.Op.String()
 	}
 	if v.Keys != nil {
-		r.propKeys = append([]string(nil), v.Keys...)
+		r.PropKeys = append([]string(nil), v.Keys...)
 	}
 	return r
 }
@@ -495,13 +508,9 @@ func (h *Handler) propertyGuard(ctx context.Context, w WriteOp, c *call, target 
 	if err == nil && w.AlsoDeclares != nil {
 		extra, err = w.AlsoDeclares(c.change)
 	}
-	plane := tier0.PlaneEntra
-	if h.prov.Kind() == connectorv1.ProviderKind_PROVIDER_KIND_AD {
-		plane = tier0.PlaneAD
-	}
-	bad := err != nil || pw.Plane != plane // a declaration for the other plane is a bug in the kind
+	bad := err != nil || pw.Plane != h.plane // a declaration for the other plane is a bug in the kind
 	for _, x := range extra {
-		bad = bad || x.Plane != plane
+		bad = bad || x.Plane != h.plane
 	}
 	if bad {
 		ev.Reason = reasonBadDeclaration
@@ -670,7 +679,7 @@ func (h *Handler) checkRequest(c *call, idx map[string]*stmt, id guid.GUID, isAD
 
 // objects is the provider's object directory, nil when it has none.
 func (h *Handler) objects() StructureDirectory {
-	if p, ok := h.prov.(ObjectProvider); ok {
+	if p, ok := h.ext.(ObjectProvider); ok {
 		return p.Objects()
 	}
 	return nil
@@ -680,10 +689,10 @@ func (h *Handler) objects() StructureDirectory {
 // check, the one target read and the fixed-read-set classification. A provider that cannot do it
 // refuses (fail closed). A grant that is not proven is INSUFFICIENT_RIGHTS naming the right, and a
 // target that does not exist is OBJECT_NOT_FOUND, both only after the checks that justify them.
-func (h *Handler) liveDeleted(ctx context.Context, id, newParent guid.GUID, designated []guid.GUID) (Verdict, *Refusal) {
-	dc, ok := h.prov.(DeletedClassifier)
+func (h *Handler) liveDeleted(ctx context.Context, id, newParent guid.GUID, designated []guid.GUID) (provider.Verdict, *Refusal) {
+	dc, ok := h.ext.(DeletedClassifier)
 	if !ok || newParent == (guid.GUID{}) {
-		return Verdict{}, tier0Refusal(toWire(id), nil, stLive, "7")
+		return provider.Verdict{}, tier0Refusal(toWire(id), nil, stLive, "7")
 	}
 	v, err := dc.ClassifyDeleted(ctx, id, newParent, designated)
 	var rights *DeletedRightsError
@@ -714,7 +723,7 @@ func (h *Handler) live(ctx context.Context, idx map[string]*stmt, id guid.GUID, 
 				return tier0Refusal(toWire(id), nil, stLive, "7")
 			}
 			for _, ev := range evidence {
-				if !a.matches(ev) {
+				if !a.Matches(ev) {
 					return tier0Refusal(toWire(id), nil, stContradicted, "7")
 				}
 			}

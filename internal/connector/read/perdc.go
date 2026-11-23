@@ -10,8 +10,9 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/skenzeriq/activediq/internal/connector/ad"
+	"github.com/skenzeriq/activediq/internal/connector/provider"
+	"github.com/skenzeriq/activediq/internal/connector/refusal"
 	"github.com/skenzeriq/activediq/internal/connector/wirevalue"
-	"github.com/skenzeriq/activediq/internal/connector/write"
 	"github.com/skenzeriq/activediq/internal/directory/attr/codec"
 	"github.com/skenzeriq/activediq/internal/directory/attr/guid"
 	connectorv1 "github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1"
@@ -31,25 +32,7 @@ const (
 )
 
 // DC is one domain controller of the domain asked about.
-type DC struct {
-	Host    string
-	Site    string
-	DSAGUID guid.GUID
-	// RODC is meaningful only when RODCKnown. An unknown DC is in scope for both scopes: dropping it
-	// would hide a DC from the coverage.
-	RODC, RODCKnown bool
-}
-
-// PerDCSource is the optional per-DC half of a Source. A Source without it answers ReadPerDC with
-// CAPABILITY_UNSUPPORTED.
-type PerDCSource interface {
-	// DomainDCs lists the DCs that serve the domain whose naming-context head has this objectGUID,
-	// reachable or not.
-	DomainDCs(ctx context.Context, nc guid.GUID) ([]DC, error)
-	// ReadOnDC reads attrs of the object on that DC and on no other. The returned identity is the
-	// DC that answered; it is nil if the DC could not be reached.
-	ReadOnDC(ctx context.Context, dc DC, id guid.GUID, attrs []string) (*ad.Entry, *connectorv1.DcIdentity, error)
-}
+type DC = provider.DC
 
 // PerDCSender is the sending side of the ReadPerDC stream.
 type PerDCSender interface {
@@ -119,7 +102,7 @@ func (h *Handler) WithPerDCLimits(perDC, perDomain int) *Handler {
 }
 
 func invalidPerDC(field string) error {
-	r := write.NewRefusal(connectorv1.ErrorCode_ERROR_CODE_INVALID_ARGUMENT, connectorv1.RetryAdvice_RETRY_ADVICE_NEVER, "invalid request")
+	r := refusal.New(connectorv1.ErrorCode_ERROR_CODE_INVALID_ARGUMENT, connectorv1.RetryAdvice_RETRY_ADVICE_NEVER, "", "invalid request")
 	r.Err.Details = &connectorv1.ConnectorError_RejectedInput{RejectedInput: &connectorv1.RejectedInputDetails{RuleId: "InvalidReadPerDCRequest", Field: field}}
 	return r
 }
@@ -130,21 +113,24 @@ func invalidPerDC(field string) error {
 // dropped: COMPLETE means every DC in scope answered. Reads run under the per-DC and per-domain
 // caps, which max_concurrency can only lower.
 func (h *Handler) ReadPerDC(ctx context.Context, req *connectorv1.ReadPerDCRequest, out PerDCSender) error {
-	psrc, ok := h.src.(PerDCSource)
-	if !ok {
+	var psrc provider.PerDCReader
+	if h != nil && h.prov != nil {
+		psrc, _ = h.prov.(provider.PerDCReader)
+	}
+	if psrc == nil {
 		return refuse(connectorv1.ErrorCode_ERROR_CODE_CAPABILITY_UNSUPPORTED, connectorv1.RetryAdvice_RETRY_ADVICE_NEVER, "per-DC read not supported")
 	}
 	if req.GetConnection().GetConnectionId() == "" || req.GetConnection().GetDirectoryIdentity() == nil {
 		return invalidPerDC("connection")
 	}
-	if !proto.Equal(req.GetConnection().GetDirectoryIdentity(), h.src.Identity()) {
+	if !proto.Equal(req.GetConnection().GetDirectoryIdentity(), h.prov.Identity()) {
 		return refuse(connectorv1.ErrorCode_ERROR_CODE_DIRECTORY_IDENTITY_MISMATCH, connectorv1.RetryAdvice_RETRY_ADVICE_NEVER, "directory identity mismatch")
 	}
-	id, err := write.GUIDFromWire(req.GetGuid())
+	id, err := provider.GUIDFromWire(req.GetGuid())
 	if err != nil {
 		return invalidPerDC("guid")
 	}
-	nc, err := write.GUIDFromWire(req.GetNcGuid())
+	nc, err := provider.GUIDFromWire(req.GetNcGuid())
 	if err != nil {
 		return invalidPerDC("nc_guid")
 	}
@@ -169,6 +155,9 @@ func (h *Handler) ReadPerDC(ctx context.Context, req *connectorv1.ReadPerDCReque
 	}
 
 	all, err := psrc.DomainDCs(ctx, nc)
+	if errors.Is(err, provider.ErrPerDCUnavailable) {
+		return refuse(connectorv1.ErrorCode_ERROR_CODE_CAPABILITY_UNSUPPORTED, connectorv1.RetryAdvice_RETRY_ADVICE_NEVER, "per-DC read not supported")
+	}
 	if err != nil {
 		return mapAD(err, nil)
 	}
@@ -247,13 +236,13 @@ func (h *Handler) ReadPerDC(ctx context.Context, req *connectorv1.ReadPerDCReque
 }
 
 // readDC reads one DC under its cap and turns every outcome into a result.
-func (h *Handler) readDC(ctx context.Context, psrc PerDCSource, dom sem, dc DC, id guid.GUID, attrs []connectorv1.PerDcAttribute) *connectorv1.PerDcResult {
-	listed := &connectorv1.DcIdentity{DsaGuid: write.GUIDToWire(dc.DSAGUID), DnsHostname: dc.Host, Site: dc.Site}
+func (h *Handler) readDC(ctx context.Context, psrc provider.PerDCReader, dom sem, dc DC, id guid.GUID, attrs []connectorv1.PerDcAttribute) *connectorv1.PerDcResult {
+	listed := &connectorv1.DcIdentity{DsaGuid: provider.GUIDToWire(dc.DSAGUID), DnsHostname: dc.Host, Site: dc.Site}
 	fail := func(err error, who *connectorv1.DcIdentity) *connectorv1.PerDcResult {
 		if who == nil || !proto.Equal(who.GetDsaGuid(), listed.GetDsaGuid()) {
 			who = listed // an error result always names the DC that was listed, never an impostor
 		}
-		var ref *write.Refusal
+		var ref *refusal.Refusal
 		if !errors.As(mapAD(err, who), &ref) {
 			panic("read: mapAD returns a refusal")
 		}

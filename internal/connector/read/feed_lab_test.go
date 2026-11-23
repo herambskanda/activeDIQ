@@ -28,8 +28,9 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/skenzeriq/activediq/internal/connector/ad"
+	"github.com/skenzeriq/activediq/internal/connector/provider"
+	adprov "github.com/skenzeriq/activediq/internal/connector/provider/ad"
 	"github.com/skenzeriq/activediq/internal/connector/read"
-	"github.com/skenzeriq/activediq/internal/connector/write"
 	"github.com/skenzeriq/activediq/internal/directory/attr/guid"
 	"github.com/skenzeriq/activediq/internal/directory/client"
 	"github.com/skenzeriq/activediq/internal/platform/secret"
@@ -87,8 +88,7 @@ func (l *feedLab) guidOf(t *testing.T, dn string) guid.GUID {
 // provider (for the DC identity the tests compare with).
 type feed struct {
 	c    connectorv1.ConnectorClient
-	src  *read.ADSource
-	prov *write.ADProvider
+	prov *adprov.ADProvider
 	nc   *connectorv1.Guid
 }
 
@@ -114,13 +114,9 @@ func (l *feedLab) open(t *testing.T, admin bool, servers string, pool *x509.Cert
 	t.Cleanup(func() { _ = sess.Close() })
 	nc := l.guidOf(t, labDom)
 	ident := &connectorv1.DirectoryIdentity{Identity: &connectorv1.DirectoryIdentity_AdForest{AdForest: &connectorv1.AdForestIdentity{
-		ForestRootNcGuid: write.GUIDToWire(nc)}}}
-	prov := write.NewADProvider(sess, nil, ident, &memPins{})
-	src, err := read.NewADSource(sess, prov)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return &feed{c: startFeed(t, src, opts...), src: src, prov: prov, nc: write.GUIDToWire(nc)}
+		ForestRootNcGuid: provider.GUIDToWire(nc)}}}
+	prov := adprov.NewADProvider(sess, nil, ident, &memPins{})
+	return &feed{c: startFeed(t, prov, opts...), prov: prov, nc: provider.GUIDToWire(nc)}
 }
 
 func (f *feed) req(attrs ...string) *connectorv1.ChangeFeedRequest {
@@ -198,7 +194,7 @@ func TestLabFeedPrimeAndTheCookiePreChecks(t *testing.T) {
 	tooOld := func(age time.Duration) *connectorv1.FeedCookie {
 		return edit(func(c *connectorv1.FeedCookie) { c.IssuedAt = timestamppb.New(time.Now().Add(-age)) })
 	}
-	life, err := f.src.DeletionLifetime(ctx)
+	life, err := f.prov.DeletionLifetime(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -212,7 +208,7 @@ func TestLabFeedPrimeAndTheCookiePreChecks(t *testing.T) {
 		want connectorv1.ResyncReason
 	}{
 		{"CC-FEED-07", "invocation_id", edit(func(c *connectorv1.FeedCookie) {
-			c.Issuer.InvocationId = write.GUIDToWire(guid.GUID{9, 8, 7, 6, 5, 4, 3, 2, 1, 0, 1, 2, 3, 4, 5, 6})
+			c.Issuer.InvocationId = provider.GUIDToWire(guid.GUID{9, 8, 7, 6, 5, 4, 3, 2, 1, 0, 1, 2, 3, 4, 5, 6})
 		}), connectorv1.ResyncReason_RESYNC_REASON_INVOCATION_ID_CHANGED},
 		{"CC-FEED-08", "usn", edit(func(c *connectorv1.FeedCookie) {
 			u := ck.GetHighestCommittedUsnBefore() + 1_000_000
@@ -220,7 +216,7 @@ func TestLabFeedPrimeAndTheCookiePreChecks(t *testing.T) {
 		}),
 			connectorv1.ResyncReason_RESYNC_REASON_USN_ROLLBACK},
 		{"CC-FEED-09", "dsa_guid", edit(func(c *connectorv1.FeedCookie) {
-			c.Issuer.DsaGuid = write.GUIDToWire(guid.GUID{1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1})
+			c.Issuer.DsaGuid = provider.GUIDToWire(guid.GUID{1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1})
 		}), connectorv1.ResyncReason_RESYNC_REASON_ISSUER_MISMATCH},
 		{"CC-FEED-10", "at the boundary", tooOld(boundary + time.Minute), connectorv1.ResyncReason_RESYNC_REASON_COOKIE_TOO_OLD},
 		{"CC-FEED-10", "far beyond", tooOld(2 * life), connectorv1.ResyncReason_RESYNC_REASON_COOKIE_TOO_OLD},
@@ -264,7 +260,7 @@ func TestLabFeedRefusalsAndTheMandatorySet(t *testing.T) {
 	}
 	// Configuration and Schema are NC heads DirSync would follow; this connection does not manage them.
 	r := f.req("cn")
-	r.Partition = &connectorv1.FeedPartition{Partition: &connectorv1.FeedPartition_AdNcGuid{AdNcGuid: write.GUIDToWire(l.guidOf(t, "CN=Configuration,"+labDom))}}
+	r.Partition = &connectorv1.FeedPartition{Partition: &connectorv1.FeedPartition_AdNcGuid{AdNcGuid: provider.GUIDToWire(l.guidOf(t, "CN=Configuration,"+labDom))}}
 	r.Start = &connectorv1.ChangeFeedRequest_Prime{Prime: &connectorv1.FeedPrime{}}
 	if _, err := feedAll(f.c, r); code(err) != connectorv1.ErrorCode_ERROR_CODE_INVALID_ARGUMENT {
 		t.Errorf("Configuration NC accepted: %v", err)
@@ -299,7 +295,7 @@ func TestLabFeedRefusalsAndTheMandatorySet(t *testing.T) {
 		g    guid.GUID
 		name string
 	}{{liveG, "live"}, {goneG, "deleted"}} {
-		oc := cs[string(write.GUIDToWire(c.g).GetValue())]
+		oc := cs[string(provider.GUIDToWire(c.g).GetValue())]
 		if oc == nil {
 			t.Fatalf("%s user is not in the feed", c.name)
 		}
@@ -319,10 +315,10 @@ func TestLabFeedRefusalsAndTheMandatorySet(t *testing.T) {
 			t.Errorf("%s change without a DN", c.name)
 		}
 	}
-	if st := cs[string(write.GUIDToWire(liveG).GetValue())].GetState(); st != connectorv1.ObjectState_OBJECT_STATE_LIVE {
+	if st := cs[string(provider.GUIDToWire(liveG).GetValue())].GetState(); st != connectorv1.ObjectState_OBJECT_STATE_LIVE {
 		t.Errorf("live user state %v", st)
 	}
-	del := cs[string(write.GUIDToWire(goneG).GetValue())]
+	del := cs[string(provider.GUIDToWire(goneG).GetValue())]
 	if del.GetState() == connectorv1.ObjectState_OBJECT_STATE_LIVE || !strings.Contains(del.GetDn().GetDisplayDn(), "Deleted Objects") {
 		t.Errorf("deleted user: state %v dn %q", del.GetState(), del.GetDn().GetDisplayDn())
 	}

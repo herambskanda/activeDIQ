@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/skenzeriq/activediq/internal/connector/ad"
+	"github.com/skenzeriq/activediq/internal/connector/provider"
 	"github.com/skenzeriq/activediq/internal/connector/tier0"
 	"github.com/skenzeriq/activediq/internal/connector/write/ops"
 	"github.com/skenzeriq/activediq/internal/directory/attr/guid"
@@ -31,30 +32,8 @@ const (
 	AttrRDN         = "rdn"
 )
 
-// StructureDirectory is what the object kinds need from the directory. Every method acts on the one DC
-// the provider's session is bound to (rule 5); Move, Rename and Restore re-check under the session
-// lock and send exactly one write.
-type StructureDirectory interface {
-	// State reads one live object by GUID; a deleted object is not visible to it.
-	State(ctx context.Context, id guid.GUID) (ad.ObjectState, error)
-	// DeletedState is the deleted-state read of kind 6 Plan and Apply (fixed shape, TM-D33 rule 3):
-	// a deleted object comes back with Deleted true, a live one with Deleted false.
-	DeletedState(ctx context.Context, id guid.GUID) (ad.ObjectState, error)
-	// RecycleBin reports whether the AD Recycle Bin is enabled for the forest.
-	RecycleBin(ctx context.Context) (bool, error)
-	Move(ctx context.Context, r ad.MoveRequest) error
-	Rename(ctx context.Context, r ad.RenameRequest) error
-	Restore(ctx context.Context, r ad.RestoreRequest) error
-	// DeletedTarget is the deleted-target read of kind 6 step 7 (TM-F-RIGHTS (b1)); its only caller
-	// is ADProvider.ClassifyDeleted, after the container grant was proven.
-	DeletedTarget(ctx context.Context, id guid.GUID) (*ad.Entry, error)
-	// DeletedContainer is the container descriptor read (TM-F-RIGHTS (b2)): the DN and the raw
-	// owner+DACL descriptor of CN=Deleted Objects of domain.
-	DeletedContainer(ctx context.Context, domain dn.DN) (dn.DN, []byte, error)
-	// GroupMembers reads a live group's member values with the show-deactivated-link and extended-DN
-	// controls and no show-deleted (so a deleted member's value is visible), ranged to the end. truncated reports a cut.
-	GroupMembers(ctx context.Context, group guid.GUID) (members []string, truncated bool, err error)
-}
+// StructureDirectory is what the object kinds need from the directory (see package provider).
+type StructureDirectory = provider.StructureDirectory
 
 // ObjectProvider is a Provider that can reach the directory to write objects. The Entra provider
 // and a test double without one answer CAPABILITY_UNSUPPORTED.
@@ -101,23 +80,6 @@ func (o SessionObjects) Restore(ctx context.Context, r ad.RestoreRequest) error 
 // directory that cannot answer for lack of the attribute or object is "no": the restore is then
 // CAPABILITY_UNSUPPORTED, never an attempt to reanimate a tombstone.
 func (o SessionObjects) RecycleBin(ctx context.Context) (bool, error) { return o.S.RecycleBin(ctx) }
-
-// Objects implements ObjectProvider when the directory and the bound DC are one session.
-func (p *ADProvider) Objects() StructureDirectory {
-	var s *ad.Session
-	switch d := p.Dir.(type) {
-	case tier0.SessionDirectory:
-		s = d.S
-	case *tier0.SessionDirectory:
-		if d != nil {
-			s = d.S
-		}
-	}
-	if s == nil || !p.OverSession(s) {
-		return nil
-	}
-	return SessionObjects{S: s}
-}
 
 // objectClassOK reports whether the most specific objectClass is one of the kinds' classes
 // (contract §8.10.1 class matrix). inetOrgPerson counts as user; a managed service account and
@@ -542,7 +504,7 @@ func planRestore(ctx context.Context, a Authorised, req *connectorv1.PlanRequest
 
 // regrantsEntry is PlanResponse.before of a restore: the memberOf the restore brings back, by group
 // (contract §8.10.9 R2), so the technician sees every membership before approving. Nil when none.
-func regrantsEntry(id guid.GUID, rg []Regrant) *connectorv1.DirectoryEntry {
+func regrantsEntry(id guid.GUID, rg []provider.Regrant) *connectorv1.DirectoryEntry {
 	if len(rg) == 0 {
 		return nil
 	}

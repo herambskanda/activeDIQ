@@ -16,6 +16,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/skenzeriq/activediq/internal/connector/ad"
+	adprov "github.com/skenzeriq/activediq/internal/connector/provider/ad"
 	"github.com/skenzeriq/activediq/internal/connector/tier0"
 	"github.com/skenzeriq/activediq/internal/directory/client"
 	"github.com/skenzeriq/activediq/internal/directory/dn"
@@ -69,7 +70,7 @@ func newLabObj(t *testing.T) *labObj {
 	run := passRun(nil)
 	run.CompletedAt = time.Now()
 	book.Complete(connID, run)
-	prov := NewADProvider(sess, nil, adIdentity(), &memPins{})
+	prov := adprov.NewADProvider(sess, nil, adIdentity(), &memPins{})
 	prov.Self = dn.DNRef(mustParseDN(t, "CN=Administrator,CN=Users,"+labDom))
 	prov.Dynamic = &stubGuard{} // no Entra snapshot in the lab: the dynamic-rule guard allows (its own tests: propwrite_test.go)
 	dc, err := prov.BoundDC(ctx)

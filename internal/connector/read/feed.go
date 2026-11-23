@@ -10,7 +10,8 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/skenzeriq/activediq/internal/connector/ad"
-	"github.com/skenzeriq/activediq/internal/connector/write"
+	"github.com/skenzeriq/activediq/internal/connector/provider"
+	"github.com/skenzeriq/activediq/internal/connector/refusal"
 	"github.com/skenzeriq/activediq/internal/directory/dn"
 	connectorv1 "github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1"
 )
@@ -73,7 +74,7 @@ func (e sendError) Error() string { return "read: send: " + e.err.Error() }
 func (e sendError) Unwrap() error { return e.err }
 
 func invalidFeed(field string) error {
-	r := write.NewRefusal(connectorv1.ErrorCode_ERROR_CODE_INVALID_ARGUMENT, connectorv1.RetryAdvice_RETRY_ADVICE_NEVER, "invalid request")
+	r := refusal.New(connectorv1.ErrorCode_ERROR_CODE_INVALID_ARGUMENT, connectorv1.RetryAdvice_RETRY_ADVICE_NEVER, "", "invalid request")
 	r.Err.Details = &connectorv1.ConnectorError_RejectedInput{RejectedInput: &connectorv1.RejectedInputDetails{RuleId: "InvalidChangeFeedRequest", Field: field}}
 	return r
 }
@@ -81,7 +82,7 @@ func invalidFeed(field string) error {
 // stale is a STALE_COOKIE: the cookie cannot be continued and the caller resyncs. issuer is what the
 // cookie recorded, observed the DC actually reached when one was.
 func stale(reason connectorv1.ResyncReason, issuer, observed *connectorv1.DcIdentity) error {
-	r := write.NewRefusal(connectorv1.ErrorCode_ERROR_CODE_STALE_COOKIE, connectorv1.RetryAdvice_RETRY_ADVICE_AFTER_RESYNC, "cookie cannot be continued")
+	r := refusal.New(connectorv1.ErrorCode_ERROR_CODE_STALE_COOKIE, connectorv1.RetryAdvice_RETRY_ADVICE_AFTER_RESYNC, "", "cookie cannot be continued")
 	r.Err.Dc = proto.Clone(observed).(*connectorv1.DcIdentity)
 	r.Err.Details = &connectorv1.ConnectorError_StaleCookie{StaleCookie: &connectorv1.StaleCookieDetails{
 		Reason: reason, Issuer: proto.Clone(issuer).(*connectorv1.DcIdentity), Observed: proto.Clone(observed).(*connectorv1.DcIdentity)}}
@@ -89,25 +90,25 @@ func stale(reason connectorv1.ResyncReason, issuer, observed *connectorv1.DcIden
 }
 
 func feedLimit(limit string, value uint64) error {
-	r := write.NewRefusal(connectorv1.ErrorCode_ERROR_CODE_LIMIT_EXCEEDED, connectorv1.RetryAdvice_RETRY_ADVICE_SAME_DC_AFTER_BACKOFF, "feed cycle limit reached")
+	r := refusal.New(connectorv1.ErrorCode_ERROR_CODE_LIMIT_EXCEEDED, connectorv1.RetryAdvice_RETRY_ADVICE_SAME_DC_AFTER_BACKOFF, "", "feed cycle limit reached")
 	r.Err.Details = &connectorv1.ConnectorError_Limit{Limit: &connectorv1.LimitDetails{Limit: limit, Value: value}}
 	return r
 }
 
 // ChangeFeed implements the ChangeFeed RPC for AD.
 func (h *Handler) ChangeFeed(ctx context.Context, req *connectorv1.ChangeFeedRequest, out FeedSender) error {
-	f, ok := h.src.(Feeder)
-	if !ok {
+	f, ok := h.prov.(provider.Feeder)
+	if !ok || !h.supported() {
 		return refuse(connectorv1.ErrorCode_ERROR_CODE_CAPABILITY_UNSUPPORTED, connectorv1.RetryAdvice_RETRY_ADVICE_NEVER, "change feed not supported")
 	}
 	if req.GetConnection().GetConnectionId() == "" || req.GetConnection().GetDirectoryIdentity() == nil {
 		return invalidFeed("connection")
 	}
-	if !proto.Equal(req.GetConnection().GetDirectoryIdentity(), h.src.Identity()) {
+	if !proto.Equal(req.GetConnection().GetDirectoryIdentity(), h.prov.Identity()) {
 		return refuse(connectorv1.ErrorCode_ERROR_CODE_DIRECTORY_IDENTITY_MISMATCH, connectorv1.RetryAdvice_RETRY_ADVICE_NEVER, "directory identity mismatch")
 	}
 	ncWire := req.GetPartition().GetAdNcGuid()
-	nc, err := write.GUIDFromWire(ncWire)
+	nc, err := provider.GUIDFromWire(ncWire)
 	if err != nil {
 		return invalidFeed("partition") // unset, an Entra resource, or not a GUID
 	}
@@ -141,7 +142,7 @@ func (h *Handler) ChangeFeed(ctx context.Context, req *connectorv1.ChangeFeedReq
 	if prime != nil {
 		if sel := prime.GetDc(); sel != nil && sel.PinnedDsaGuid != nil {
 			pin = sel.PinnedDsaGuid
-			if _, err := write.GUIDFromWire(pin); err != nil {
+			if _, err := provider.GUIDFromWire(pin); err != nil {
 				return invalidFeed("start.prime.dc.pinned_dsa_guid")
 			}
 		}
@@ -164,7 +165,7 @@ func (h *Handler) ChangeFeed(ctx context.Context, req *connectorv1.ChangeFeedReq
 
 // feedAttrs validates the requested names: explicit, known to the schema, not held, and no secret.
 // Nothing reaches the DC before this passes.
-func (h *Handler) feedAttrs(f Feeder, in []string) ([]string, error) {
+func (h *Handler) feedAttrs(f provider.Feeder, in []string) ([]string, error) {
 	if len(in) > maxAttributes {
 		return nil, invalidFeed("attributes")
 	}
@@ -173,7 +174,7 @@ func (h *Handler) feedAttrs(f Feeder, in []string) ([]string, error) {
 		if a == "" || strings.ContainsAny(a, "*+") {
 			return nil, invalidFeed("attributes") // "*" and "+" are not names
 		}
-		c, err := h.src.CanonicalAttr(a)
+		c, err := h.rd.CanonicalAttr(a)
 		if err != nil {
 			return nil, mapAD(err, nil)
 		}
@@ -211,10 +212,10 @@ func checkCookie(c *connectorv1.FeedCookie) (*cookieIn, error) {
 		return nil, invalidFeed("start.resume.cookie")
 	}
 	iss := c.GetIssuer()
-	if _, err := write.GUIDFromWire(iss.GetDsaGuid()); err != nil {
+	if _, err := provider.GUIDFromWire(iss.GetDsaGuid()); err != nil {
 		return nil, invalidFeed("start.resume.cookie.issuer")
 	}
-	if _, err := write.GUIDFromWire(iss.GetInvocationId()); err != nil {
+	if _, err := provider.GUIDFromWire(iss.GetInvocationId()); err != nil {
 		return nil, invalidFeed("start.resume.cookie.issuer")
 	}
 	if c.HighestCommittedUsnBefore == nil {
@@ -229,7 +230,7 @@ func checkCookie(c *connectorv1.FeedCookie) (*cookieIn, error) {
 
 type feedRun struct {
 	h     *Handler
-	f     Feeder
+	f     provider.Feeder
 	out   FeedSender
 	nc    dn.ObjectRef
 	attrs []string
@@ -272,7 +273,7 @@ func (r *feedRun) resume(ctx context.Context, ck *cookieIn) error {
 	h := r.h
 	// The cookie names its DC and nothing else may serve it. This connector is bound to one DC; if
 	// that DC cannot be read the answer is UNREACHABLE_DC for the same DC, never a stale cookie.
-	dc, err := h.src.BoundDC(ctx)
+	dc, err := h.dc.BoundDC(ctx)
 	if err != nil || dc == nil {
 		return unreachableIssuer()
 	}
@@ -377,7 +378,7 @@ func (r *feedRun) fail(ctx context.Context, err error, resuming bool) error {
 
 // sameDCAfter fails unless the DC the cycle ran on is still the same one, invocation id included.
 func (r *feedRun) sameDCAfter(ctx context.Context, resuming bool) error {
-	after, err := r.h.src.BoundDC(ctx)
+	after, err := r.h.dc.BoundDC(ctx)
 	if err != nil || after == nil {
 		if resuming {
 			return unreachableIssuer()
@@ -419,7 +420,7 @@ func (h *Handler) feedFailure(ctx context.Context, err error, dc, issuer *connec
 	mapped := mapAD(err, dc)
 	if resuming {
 		// The cookie's DC is the one to retry, not another.
-		var rf *write.Refusal
+		var rf *refusal.Refusal
 		if errors.As(mapped, &rf) && rf.Err.GetCode() == connectorv1.ErrorCode_ERROR_CODE_UNREACHABLE_DC {
 			rf.Err.Retry = connectorv1.RetryAdvice_RETRY_ADVICE_SAME_DC_AFTER_BACKOFF
 		}
@@ -473,7 +474,7 @@ func (r *feedRun) send(b *connectorv1.ChangeBatch) error {
 }
 
 func (h *Handler) objectChange(c ad.ObjectChange) (*connectorv1.ObjectChange, error) {
-	out := &connectorv1.ObjectChange{ObjectGuid: write.GUIDToWire(c.GUID), Dn: &connectorv1.DnValue{DisplayDn: c.DN}}
+	out := &connectorv1.ObjectChange{ObjectGuid: provider.GUIDToWire(c.GUID), Dn: &connectorv1.DnValue{DisplayDn: c.DN}}
 	switch c.State {
 	case ad.StateLive:
 		out.State = connectorv1.ObjectState_OBJECT_STATE_LIVE
@@ -485,7 +486,7 @@ func (h *Handler) objectChange(c ad.ObjectChange) (*connectorv1.ObjectChange, er
 		return nil, errBadChange
 	}
 	if c.HasParent {
-		out.ParentGuid = write.GUIDToWire(c.Parent)
+		out.ParentGuid = provider.GUIDToWire(c.Parent)
 	}
 	for _, a := range c.Attributes {
 		name := strings.ToLower(a.Name)

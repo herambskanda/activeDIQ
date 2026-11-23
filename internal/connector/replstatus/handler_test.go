@@ -24,7 +24,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/skenzeriq/activediq/internal/connector/ad"
-	"github.com/skenzeriq/activediq/internal/connector/write"
+	"github.com/skenzeriq/activediq/internal/connector/refusal"
 	connectorv1 "github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1"
 )
 
@@ -117,7 +117,7 @@ func run(t *testing.T, src *fakeSrc, req *connectorv1.ReadReplicationStatusReque
 }
 
 func code(err error) connectorv1.ErrorCode {
-	var r *write.Refusal
+	var r *refusal.Refusal
 	if errors.As(err, &r) {
 		return r.Err.GetCode()
 	}

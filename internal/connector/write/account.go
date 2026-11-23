@@ -16,6 +16,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/skenzeriq/activediq/internal/connector/ad"
+	"github.com/skenzeriq/activediq/internal/connector/provider"
 	"github.com/skenzeriq/activediq/internal/connector/tier0"
 	"github.com/skenzeriq/activediq/internal/connector/write/ops"
 	"github.com/skenzeriq/activediq/internal/directory/accountkind"
@@ -32,12 +33,8 @@ import (
 // disable. Each is a WriteOp row; the Tier-0 guard, the write gate and the property guard run before
 // any of this code (§8.1 steps 1 to 7), and the LDAP requests are built in write/ops.
 
-// AccountSession is what the account kinds need from a directory session; *ad.Session implements it.
-type AccountSession interface {
-	DCIdentity(ctx context.Context) (ad.DCIdentity, error)
-	ReadAccount(ctx context.Context, ref dn.ObjectRef) (ad.AccountState, error)
-	ModifyAccount(ctx context.Context, ref dn.ObjectRef, check ad.AccountCheck, send ad.AccountSender, needSecure bool) error
-}
+// AccountSession is what the account kinds need from a directory session (see package provider).
+type AccountSession = provider.AccountSession
 
 // AccountProvider is implemented by a Provider that can write accounts. The AD provider built over a
 // session is one; the Entra provider is not (those kinds answer CAPABILITY_UNSUPPORTED).
@@ -45,17 +42,9 @@ type AccountProvider interface {
 	AccountSession() AccountSession
 }
 
-// AccountSession returns the session the provider's reads and DC binding run on.
-func (p *ADProvider) AccountSession() AccountSession {
-	if p == nil || p.Accounts == nil {
-		return nil
-	}
-	return p.Accounts
-}
-
 func init() {
 	for _, sp := range accountkind.Specs() {
-		operations[sp.Kind] = accountOp(sp)
+		operations[opKey{connectorv1.ProviderKind_PROVIDER_KIND_AD, sp.Kind}] = accountOp(sp)
 	}
 }
 
@@ -103,7 +92,7 @@ func accountOp(sp accountkind.Spec) WriteOp {
 func uuidText(g *connectorv1.Guid) (string, error) {
 	b := g.GetValue()
 	if len(b) != 16 {
-		return "", errBadGUID
+		return "", provider.ErrBadGUID
 	}
 	h := hex.EncodeToString(b)
 	return h[:8] + "-" + h[8:12] + "-" + h[12:16] + "-" + h[16:20] + "-" + h[20:], nil

@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/skenzeriq/activediq/internal/connector/ad"
+	"github.com/skenzeriq/activediq/internal/connector/provider"
 	"github.com/skenzeriq/activediq/internal/connector/read"
 	"github.com/skenzeriq/activediq/internal/connector/write"
 	"github.com/skenzeriq/activediq/internal/directory/attr/sid"
@@ -28,6 +29,9 @@ type describing struct {
 
 func (d *describing) Topology(context.Context) (*ad.Topology, error) { return d.top, d.err }
 
+// IsSamba answers true, the label of a source that cannot tell (rule 7 never reports SUPPORTED then).
+func (d *describing) IsSamba(context.Context) (bool, error) { return true, nil }
+
 func describeReq() *connectorv1.DescribeRequest {
 	return &connectorv1.DescribeRequest{Connection: &connectorv1.ConnectionRef{ConnectionId: "c1", DirectoryIdentity: ident}}
 }
@@ -46,7 +50,7 @@ func TestDescribeServesNamingContextsAndLimits(t *testing.T) {
 		},
 		Limits: ad.ServerLimits{MaxPageSize: 1000, MaxValueRange: 1500},
 	}}
-	resp, err := start(t, d).Describe(context.Background(), describeReq())
+	resp, err := start(t, d, read.WithOperations(write.Capabilities)).Describe(context.Background(), describeReq())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,7 +92,7 @@ func TestDescribeServesNamingContextsAndLimits(t *testing.T) {
 		}
 	}
 	dom := ncs[0]
-	if got := string(dom.GetNcGuid().GetValue()); got != string(write.GUIDToWire(g(domGUID)).GetValue()) {
+	if got := string(dom.GetNcGuid().GetValue()); got != string(provider.GUIDToWire(g(domGUID)).GetValue()) {
 		t.Errorf("domain nc_guid is not the wire form of the objectGUID")
 	}
 	if string(dom.GetDomainSid().GetValue()) != string(s.Bytes()) || dom.GetDnsName() != "lab.test" || dom.GetNetbiosName() != "LAB" ||
@@ -105,7 +109,7 @@ func TestDescribeRefusals(t *testing.T) {
 	other := &connectorv1.DirectoryIdentity{Identity: &connectorv1.DirectoryIdentity_AdForest{AdForest: &connectorv1.AdForestIdentity{
 		ForestRootNcGuid: &connectorv1.Guid{Value: []byte("fedcba9876543210")}}}}
 	for name, c := range map[string]struct {
-		src  read.Source
+		src  provider.Provider
 		req  *connectorv1.DescribeRequest
 		want connectorv1.ErrorCode
 	}{

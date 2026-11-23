@@ -141,7 +141,7 @@ func TestComputerResetDeclaresOnlyUnicodePwd(t *testing.T) {
 	if got := accountDecl(sp, 0).Keys; len(got) != 1 || got[0] != "unicodePwd" {
 		t.Fatalf("keys %v", got)
 	}
-	if operations[connectorv1.WriteKind_WRITE_KIND_COMPUTER_ACCOUNT_RESET].WantsSecret {
+	if operations[adKey(connectorv1.WriteKind_WRITE_KIND_COMPUTER_ACCOUNT_RESET)].WantsSecret {
 		t.Fatal("kind 13 must not take secret_input")
 	}
 }

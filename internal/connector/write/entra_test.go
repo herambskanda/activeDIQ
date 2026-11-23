@@ -2,6 +2,8 @@ package write
 
 import (
 	"context"
+	"errors"
+	"github.com/skenzeriq/activediq/internal/connector/provider/entra"
 	"testing"
 	"time"
 
@@ -45,7 +47,7 @@ func entraRig(t *testing.T) (*Handler, *graphtest.Server, connectorv1.PlanReques
 		Checks: map[connectorv1.VerificationCheck]connectorv1.CheckOutcome{
 			connectorv1.VerificationCheck_VERIFICATION_CHECK_EV3_OVER_PRIVILEGE: connectorv1.CheckOutcome_CHECK_OUTCOME_PASS,
 			connectorv1.VerificationCheck_VERIFICATION_CHECK_EV4_SUFFICIENCY:    connectorv1.CheckOutcome_CHECK_OUTCOME_PASS}})
-	h, err := New(&EntraProvider{Reader: c, TenantID: eTenant}, book, WithRecorder(&memRecorder{}), WithClock(func() time.Time { return now }))
+	h, err := New(&entra.EntraProvider{Reader: c, TenantID: eTenant}, book, WithRecorder(&memRecorder{}), WithClock(func() time.Time { return now }))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,4 +133,57 @@ func TestADCorrelatedToEntraTier0RefusedBeforeDirectory(t *testing.T) {
 	if r.prov.n() != 0 {
 		t.Fatalf("%d directory calls", r.prov.n())
 	}
+}
+
+// groupReader answers GroupMembers from a table; the classifier methods are never reached because
+// the base classifier is not part of this test (Classify is exercised through membersOf).
+type groupReader struct {
+	tier0.Reader
+	members map[guid.GUID][]graph.DirectoryObject
+	err     map[guid.GUID]error
+}
+
+func (g groupReader) GroupMembers(_ context.Context, id guid.GUID) ([]graph.DirectoryObject, error) {
+	if e := g.err[id]; e != nil {
+		return nil, e
+	}
+	m, ok := g.members[id]
+	if !ok {
+		return nil, &graph.Error{Code: graph.CodeNotFound}
+	}
+	return m, nil
+}
+
+// An Entra direct member of a designated group is tier0; missing group skipped; other errors refuse.
+func TestEntraDesignatedMembership(t *testing.T) {
+	ctx := context.Background()
+	user, grp := entraID(ePlain), mk(82)
+	h, _, _ := entraRig(t)
+	p := h.prov.(*entra.EntraProvider)
+	p.Reader = withMembers{p.Reader, groupReader{
+		members: map[guid.GUID][]graph.DirectoryObject{entraID(eGroup): {}, grp: {{ID: user.String(), ODataType: "#microsoft.graph.user"}}},
+		err:     map[guid.GUID]error{mk(80): errors.New("graph 500")}}}
+	v, err := p.Classify(ctx, user, []guid.GUID{grp})
+	if err != nil || !v.Tier0 || v.Bases[len(v.Bases)-1] != tier0.Designated {
+		t.Fatalf("direct member: %+v %v", v, err)
+	}
+	if v, err := p.Classify(ctx, user, []guid.GUID{mk(81)}); err != nil || v.Tier0 {
+		t.Fatalf("missing designated group: %+v %v", v, err)
+	}
+	if v, err := p.Classify(ctx, user, []guid.GUID{mk(80)}); err == nil || !v.Tier0 {
+		t.Fatalf("read error must fail closed: %+v %v", v, err)
+	}
+	if v, err := p.Classify(ctx, entraID("77777777-7777-7777-7777-0000000000aa"), []guid.GUID{grp}); err != nil || v.Tier0 {
+		t.Fatalf("non-member: %+v %v", v, err)
+	}
+}
+
+// withMembers sends GroupMembers to the table and everything else to the live (fake Graph) reader.
+type withMembers struct {
+	tier0.Reader
+	g groupReader
+}
+
+func (w withMembers) GroupMembers(ctx context.Context, id guid.GUID) ([]graph.DirectoryObject, error) {
+	return w.g.GroupMembers(ctx, id)
 }

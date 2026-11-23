@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/skenzeriq/activediq/internal/connector/labadmin"
-	"github.com/skenzeriq/activediq/internal/connector/write"
+	"github.com/skenzeriq/activediq/internal/connector/provider"
 	"github.com/skenzeriq/activediq/internal/directory/attr/guid"
 	connectorv1 "github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1"
 	"github.com/skenzeriq/activediq/internal/testlab"
@@ -37,11 +37,11 @@ func TestLabDescribeNamingContextsEqualDirectRead(t *testing.T) {
 	parts := adm.ReadPartitions()
 	wireOf := func(dnStr string) string {
 		t.Helper()
-		return string(write.GUIDToWire(mustGUID(t, adm.ObjectGUID(dnStr))).GetValue())
+		return string(provider.GUIDToWire(mustGUID(t, adm.ObjectGUID(dnStr))).GetValue())
 	}
 	domainDN, cfgDN, schemaDN := parts.DomainDN, parts.ConfigDN, parts.SchemaDN
 	ident := &connectorv1.DirectoryIdentity{Identity: &connectorv1.DirectoryIdentity_AdForest{AdForest: &connectorv1.AdForestIdentity{
-		ForestRootNcGuid: write.GUIDToWire(mustGUID(t, parts.RootDomainGUID))}}}
+		ForestRootNcGuid: provider.GUIDToWire(mustGUID(t, parts.RootDomainGUID))}}}
 
 	resp, err := lab.Describe(ctx, &connectorv1.DescribeRequest{Connection: &connectorv1.ConnectionRef{ConnectionId: "lab", DirectoryIdentity: ident}})
 	if err != nil {

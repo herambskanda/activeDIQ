@@ -16,8 +16,9 @@ import (
 	"github.com/go-ldap/ldap/v3"
 
 	"github.com/skenzeriq/activediq/internal/connector/ad"
+	"github.com/skenzeriq/activediq/internal/connector/provider"
+	adprov "github.com/skenzeriq/activediq/internal/connector/provider/ad"
 	"github.com/skenzeriq/activediq/internal/connector/read"
-	"github.com/skenzeriq/activediq/internal/connector/write"
 	"github.com/skenzeriq/activediq/internal/directory/attr/guid"
 	"github.com/skenzeriq/activediq/internal/platform/secret"
 	connectorv1 "github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1"
@@ -65,7 +66,7 @@ func TestLabReadPerDCSingleDC(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		return write.GUIDToWire(g)
+		return provider.GUIDToWire(g)
 	}
 	sam := fmt.Sprintf("t1143%d", time.Now().UnixNano()%1_000_000)
 	userDN := "CN=Müller\\, " + sam + ",CN=Users," + labDom
@@ -79,16 +80,9 @@ func TestLabReadPerDCSingleDC(t *testing.T) {
 
 	ident := &connectorv1.DirectoryIdentity{Identity: &connectorv1.DirectoryIdentity_AdForest{AdForest: &connectorv1.AdForestIdentity{
 		ForestRootNcGuid: guidOf(labDom)}}}
-	prov := write.NewADProvider(sess, nil, ident, &memPins{})
-	base, err := read.NewADSource(sess, prov)
-	if err != nil {
-		t.Fatal(err)
-	}
-	psrc, err := read.NewADPerDCSource(base, openAt)
-	if err != nil {
-		t.Fatal(err)
-	}
-	h, err := read.New(psrc)
+	prov := adprov.NewADProvider(sess, nil, ident, &memPins{})
+	prov.OpenDC = openAt
+	h, err := read.New(prov)
 	if err != nil {
 		t.Fatal(err)
 	}

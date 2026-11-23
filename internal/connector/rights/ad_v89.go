@@ -2,6 +2,7 @@ package rights
 
 import (
 	"errors"
+	"github.com/skenzeriq/activediq/internal/connector/provider"
 	"sort"
 
 	"github.com/skenzeriq/activediq/internal/connector/ad"
@@ -67,8 +68,8 @@ func (c *adCheck) v8Reports(doms []adguid.GUID) {
 		scope = doms
 	}
 	type target struct {
-		attr  *SchemaObject
-		class *SchemaObject
+		attr  *provider.SchemaObject
+		class *provider.SchemaObject
 	}
 	var ts []target
 	for _, an := range reportAttrs {
@@ -129,7 +130,7 @@ func (c *adCheck) v8Reports(doms []adguid.GUID) {
 // token read the attribute: an allow with Read Property (all properties, the attribute, or its
 // property set; GenericAll too) that is inheritable to the class, and no deny of it. A deny
 // anywhere wins here, the safe direction for a read-sufficiency check.
-func readsChildProp(d *descriptor, tokens map[string]bool, attr *SchemaObject, class adguid.GUID) bool {
+func readsChildProp(d *descriptor, tokens map[string]bool, attr *provider.SchemaObject, class adguid.GUID) bool {
 	allowed := false
 	for _, a := range d.aces {
 		if !tokens[a.trustee.String()] || a.flags&aceFlagContainerInherit == 0 {
@@ -183,7 +184,7 @@ func (c *adCheck) v9() {
 			never[o.ID] = o.Name
 		}
 	}
-	var dsa *SchemaObject
+	var dsa *provider.SchemaObject
 	if o, err := c.classByName(dsaClass); err != nil {
 		c.cannot(v9, nil, err)
 		return
@@ -259,7 +260,7 @@ type ouKind struct {
 // WRITE_OWNER, Delete-Tree, write of every property or a never-delegate one, create of every child
 // class or of a dMSA, every extended right or Get-Changes(-All), and the never-delegate validated
 // writes.
-func (c *adCheck) ouExcess(g grant, never map[adguid.GUID]string, dsa *SchemaObject) []ouKind {
+func (c *adCheck) ouExcess(g grant, never map[adguid.GUID]string, dsa *provider.SchemaObject) []ouKind {
 	a := g.ace
 	var typ *adguid.GUID
 	if a.hasType {
@@ -341,7 +342,7 @@ func (c *adCheck) missing(obj adguid.GUID, d *descriptor, domain bool) {
 			case e.ext != nil:
 				typ = *e.ext
 			case e.attr != "" || e.class != "":
-				var o *SchemaObject
+				var o *provider.SchemaObject
 				var err error
 				if e.attr != "" {
 					o, err = c.attrByName(e.attr)

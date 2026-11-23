@@ -15,6 +15,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/skenzeriq/activediq/internal/connector/ad"
+	"github.com/skenzeriq/activediq/internal/connector/provider"
 	"github.com/skenzeriq/activediq/internal/connector/tier0"
 	"github.com/skenzeriq/activediq/internal/connector/write"
 	"github.com/skenzeriq/activediq/internal/directory"
@@ -110,7 +111,7 @@ func (noLinkTier0) Build(_ context.Context, _ client.Stage, op client.WriteOp) (
 		return client.Tier0{}, err
 	}
 	return client.Tier0{Context: &connectorv1.Tier0Context{Tier0Revision: 1, Statements: []*connectorv1.CorrelationStatement{{
-		Object: write.GUIDToWire(g), ComputedAt: timestamppb.Now(),
+		Object: provider.GUIDToWire(g), ComputedAt: timestamppb.Now(),
 		Correlation: &connectorv1.CorrelationStatement_NoHybridLink{NoHybridLink: &connectorv1.NoHybridLink{}}}}}}, nil
 }
 

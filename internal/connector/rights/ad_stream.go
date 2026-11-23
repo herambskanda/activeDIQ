@@ -3,6 +3,7 @@ package rights
 import (
 	"context"
 	"errors"
+	"github.com/skenzeriq/activediq/internal/connector/provider"
 	"time"
 
 	"google.golang.org/protobuf/proto"
@@ -81,7 +82,7 @@ const (
 // A directory failure that prevents naming the identity returns an error before `completed` (the
 // caller records FAILED). ErrLocalRecordFailed means the shrink record or the baseline could not be
 // made durable: the stream carries no `completed`, no epoch starts and the caller closes the gate.
-func StreamAD(ctx context.Context, d ADDirectory, epoch *EpochState, req *v1.VerifyConnectionRequest, identity dn.ObjectRef, directory *v1.DirectoryIdentity,
+func StreamAD(ctx context.Context, d provider.RightsDirectory, epoch *EpochState, req *v1.VerifyConnectionRequest, identity dn.ObjectRef, directory *v1.DirectoryIdentity,
 	send func(*v1.VerifyConnectionResponse) error, now func() time.Time) error {
 	if now == nil {
 		now = time.Now

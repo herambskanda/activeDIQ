@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/skenzeriq/activediq/internal/connector/provider"
 	"github.com/skenzeriq/activediq/internal/connector/write"
 	"log/slog"
 	"os"
@@ -17,14 +18,49 @@ import (
 
 	"github.com/skenzeriq/activediq/internal/connector/ad"
 	"github.com/skenzeriq/activediq/internal/connector/tier0"
+	adguid "github.com/skenzeriq/activediq/internal/directory/attr/guid"
 	"github.com/skenzeriq/activediq/internal/directory/dn"
 	v1 "github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1"
 )
 
 const secretDN = "CN=Secret Admin,OU=Tier0,DC=lab,DC=test"
 
+// bareProv is a provider with the core only: no facets.
+type bareProv struct{ id *v1.DirectoryIdentity }
+
+func (p bareProv) Kind() v1.ProviderKind           { return v1.ProviderKind_PROVIDER_KIND_AD }
+func (p bareProv) Identity() *v1.DirectoryIdentity { return p.id }
+func (bareProv) Classify(context.Context, adguid.GUID, []adguid.GUID) (provider.Verdict, error) {
+	return provider.Verdict{}, nil
+}
+func (bareProv) Anchors(context.Context, adguid.GUID) (provider.Anchors, error) {
+	return provider.Anchors{}, nil
+}
+func (bareProv) PropertyGuard(context.Context) (provider.PropertyGuard, error) {
+	return provider.GuardOrRefuse(nil), nil
+}
+
+// rightsProv adds the RightsSource facet over dir.
+type rightsProv struct {
+	id  *v1.DirectoryIdentity
+	dir provider.RightsDirectory
+}
+
+func (p rightsProv) Kind() v1.ProviderKind           { return bareProv{}.Kind() }
+func (p rightsProv) Identity() *v1.DirectoryIdentity { return p.id }
+func (rightsProv) Classify(ctx context.Context, id adguid.GUID, d []adguid.GUID) (provider.Verdict, error) {
+	return bareProv{}.Classify(ctx, id, d)
+}
+func (rightsProv) Anchors(ctx context.Context, id adguid.GUID) (provider.Anchors, error) {
+	return bareProv{}.Anchors(ctx, id)
+}
+func (rightsProv) PropertyGuard(ctx context.Context) (provider.PropertyGuard, error) {
+	return bareProv{}.PropertyGuard(ctx)
+}
+func (p rightsProv) RightsDirectory() provider.RightsDirectory { return p.dir }
+
 type failingDir struct {
-	ADDirectory
+	provider.RightsDirectory
 	err error
 }
 
@@ -43,7 +79,7 @@ func (f *fakeStream) Send(m *v1.VerifyConnectionResponse) error {
 	return nil
 }
 
-func (w *world) handler(t *testing.T, ep *EpochState, dir ADDirectory) *VerifyHandler {
+func (w *world) handler(t *testing.T, ep *EpochState, dir provider.RightsDirectory) *VerifyHandler {
 	t.Helper()
 	w.setTokens()
 	ref, _ := dn.ParseObjectRef(w.id.DN)
@@ -60,7 +96,7 @@ func (w *world) handler(t *testing.T, ep *EpochState, dir ADDirectory) *VerifyHa
 	if err != nil {
 		t.Fatal(err)
 	}
-	h, err := NewVerifyHandler(VerifyConfig{Dir: dir, Epoch: ep, Identity: ref, Directory: testDirectory(),
+	h, err := NewVerifyHandler(rightsProv{id: testDirectory(), dir: dir}, VerifyConfig{Epoch: ep, Identity: ref,
 		Gate: gate, OnLocalRecordFailed: gate.CloseLocalRecordFailed})
 	if err != nil {
 		t.Fatal(err)
@@ -206,22 +242,46 @@ func TestNewVerifyHandlerFailsClosedWithoutHook(t *testing.T) {
 	w := newWorld(t)
 	h := w.handler(t, nil, nil)
 	gate, _ := write.NewGateBook(nopBaseline{}, nil)
-	base := VerifyConfig{Dir: h.dir, Epoch: h.epoch, Identity: h.identity, Directory: h.directory, Gate: gate,
+	p := rightsProv{id: h.directory, dir: h.dir}
+	base := VerifyConfig{Epoch: h.epoch, Identity: h.identity, Gate: gate,
 		OnLocalRecordFailed: gate.CloseLocalRecordFailed}
 	for name, mut := range map[string]func(*VerifyConfig){
 		"hook":  func(c *VerifyConfig) { c.OnLocalRecordFailed = nil },
 		"gate":  func(c *VerifyConfig) { c.Gate = nil },
-		"dir":   func(c *VerifyConfig) { c.Dir = nil },
 		"epoch": func(c *VerifyConfig) { c.Epoch = nil },
 	} {
 		c := base
 		mut(&c)
-		if got, err := NewVerifyHandler(c); err == nil || got != nil {
+		if got, err := NewVerifyHandler(p, c); err == nil || got != nil {
 			t.Fatalf("%s nil: constructed", name)
 		}
 	}
+	if got, err := NewVerifyHandler(nil, base); err == nil || got != nil {
+		t.Fatal("nil provider: constructed")
+	}
+	if got, err := NewVerifyHandler(bareProv{}, base); err == nil || got != nil {
+		t.Fatal("provider with no identity: constructed")
+	}
+	// A provider without the RightsSource facet builds a handler that answers CAPABILITY_UNSUPPORTED,
+	// without a gate feed and without a nil dereference.
+	bare, err := NewVerifyHandler(bareProv{id: h.directory}, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st := &fakeStream{}
+	if ce := connErr(t, bare.VerifyConnection(context.Background(), request(w), st)); ce.Code != v1.ErrorCode_ERROR_CODE_CAPABILITY_UNSUPPORTED || len(st.sent) != 0 {
+		t.Fatalf("%v, %d events", ce, len(st.sent))
+	}
+	// A facet that has no directory is the same answer.
+	nodir, err := NewVerifyHandler(rightsProv{id: h.directory}, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ce := connErr(t, nodir.VerifyConnection(context.Background(), request(w), &fakeStream{})); ce.Code != v1.ErrorCode_ERROR_CODE_CAPABILITY_UNSUPPORTED {
+		t.Fatalf("%v", ce)
+	}
 	// A zero-value handler refuses calls instead of streaming without a gate feed.
-	err := (&VerifyHandler{}).VerifyConnection(context.Background(), request(w), &fakeStream{})
+	err = (&VerifyHandler{}).VerifyConnection(context.Background(), request(w), &fakeStream{})
 	if ce := connErr(t, err); ce.Code != v1.ErrorCode_ERROR_CODE_PROVIDER_FAILURE {
 		t.Fatalf("%v", ce)
 	}

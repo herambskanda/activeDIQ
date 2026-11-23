@@ -74,7 +74,7 @@ func run(ctx context.Context, cfg config.Config, e env) error {
 		return err
 	}
 	defer be.close()
-	binding, err := TunnelBinding(be.verify, be.read, be.write)
+	binding, err := TunnelBinding(be.svc)
 	if err != nil {
 		return err
 	}

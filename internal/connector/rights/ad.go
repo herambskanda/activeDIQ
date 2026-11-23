@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/skenzeriq/activediq/internal/connector/provider"
 	"sort"
 	"strings"
 
@@ -148,7 +149,7 @@ type member struct {
 
 type adCheck struct {
 	ctx context.Context
-	d   ADDirectory
+	d   provider.RightsDirectory
 	in  ADInput
 	nm  tier0.Naming
 
@@ -168,29 +169,29 @@ type adCheck struct {
 	seenFP  map[string]bool // DM-24.I4 fingerprints already in out
 	errs    map[v1.VerificationCheck]error
 	famSet  map[v1.RightsFamily]bool
-	schName map[string]*SchemaObject // by lower-case name+kind; nil = not found
-	schID   map[adguid.GUID]*SchemaObject
+	schName map[string]*provider.SchemaObject // by lower-case name+kind; nil = not found
+	schID   map[adguid.GUID]*provider.SchemaObject
 }
 
 // snapshotHook replaces the tier0 classifier for tests of StreamAD, which builds its own ADInput.
 var snapshotHook func(ctx context.Context) (*tier0.ADSet, error)
 
 // snapshotWith is the production snapshot; tests replace it to see the pins and designations it is given.
-var snapshotWith = func(ctx context.Context, d ADDirectory, pinned, designated []adguid.GUID) (*tier0.ADSet, error) {
+var snapshotWith = func(ctx context.Context, d provider.RightsDirectory, pinned, designated []adguid.GUID) (*tier0.ADSet, error) {
 	return tier0.NewAD(d).SnapshotWith(ctx, pinned, designated)
 }
 
 var errNoIdentity = errors.New("rights: the connector identity could not be read")
 
 // VerifyAD runs V7 (steps 1, 2, 3, 5), V8 and V9 as the connector identity.
-func VerifyAD(ctx context.Context, d ADDirectory, in ADInput) (*ADResult, error) {
+func VerifyAD(ctx context.Context, d provider.RightsDirectory, in ADInput) (*ADResult, error) {
 	nm, err := d.Naming(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("naming contexts: %w", err)
 	}
 	c := &adCheck{ctx: ctx, d: d, in: in, nm: nm, errs: map[v1.VerificationCheck]error{},
 		set: map[string]*member{}, famSet: map[v1.RightsFamily]bool{},
-		schName: map[string]*SchemaObject{}, schID: map[adguid.GUID]*SchemaObject{}}
+		schName: map[string]*provider.SchemaObject{}, schID: map[adguid.GUID]*provider.SchemaObject{}}
 	for _, f := range in.EnabledFamilies {
 		c.famSet[f] = true
 	}
@@ -429,10 +430,14 @@ func notFound(err error) bool { return ad.CodeOf(err) == ad.CodeObjectNotFound }
 
 // ---- schema -------------------------------------------------------------------------------
 
-func (c *adCheck) attrByName(name string) (*SchemaObject, error)  { return c.byName(name, false) }
-func (c *adCheck) classByName(name string) (*SchemaObject, error) { return c.byName(name, true) }
+func (c *adCheck) attrByName(name string) (*provider.SchemaObject, error) {
+	return c.byName(name, false)
+}
+func (c *adCheck) classByName(name string) (*provider.SchemaObject, error) {
+	return c.byName(name, true)
+}
 
-func (c *adCheck) byName(name string, class bool) (*SchemaObject, error) {
+func (c *adCheck) byName(name string, class bool) (*provider.SchemaObject, error) {
 	key := fmt.Sprintf("%v|%s", class, strings.ToLower(name))
 	if o, ok := c.schName[key]; ok {
 		return o, nil
@@ -441,7 +446,7 @@ func (c *adCheck) byName(name string, class bool) (*SchemaObject, error) {
 	if err != nil {
 		return nil, err
 	}
-	var p *SchemaObject
+	var p *provider.SchemaObject
 	if found {
 		p = &o
 		c.schID[o.ID] = p
@@ -450,7 +455,7 @@ func (c *adCheck) byName(name string, class bool) (*SchemaObject, error) {
 	return p, nil
 }
 
-func (c *adCheck) byID(id adguid.GUID) (*SchemaObject, error) {
+func (c *adCheck) byID(id adguid.GUID) (*provider.SchemaObject, error) {
 	if o, ok := c.schID[id]; ok {
 		return o, nil
 	}
@@ -458,7 +463,7 @@ func (c *adCheck) byID(id adguid.GUID) (*SchemaObject, error) {
 	if err != nil {
 		return nil, err
 	}
-	var p *SchemaObject
+	var p *provider.SchemaObject
 	if found {
 		p = &o
 	}

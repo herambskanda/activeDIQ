@@ -12,7 +12,7 @@ import (
 
 	"github.com/skenzeriq/activediq/internal/compose/config"
 	"github.com/skenzeriq/activediq/internal/connector/labadmin"
-	"github.com/skenzeriq/activediq/internal/connector/write"
+	"github.com/skenzeriq/activediq/internal/connector/provider"
 	"github.com/skenzeriq/activediq/internal/directory/attr/guid"
 	"github.com/skenzeriq/activediq/internal/directory/client"
 	"github.com/skenzeriq/activediq/internal/directory/connection"
@@ -100,7 +100,7 @@ func TestLabServerServesChangeFeed(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		wire := write.GUIDToWire(g)
+		wire := provider.GUIDToWire(g)
 		cc, err := src.Connector(ctx, string(conn.ID))
 		if err != nil {
 			t.Fatal(err)

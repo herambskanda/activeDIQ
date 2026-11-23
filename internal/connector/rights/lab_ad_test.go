@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/skenzeriq/activediq/internal/connector/ad"
+	adprov "github.com/skenzeriq/activediq/internal/connector/provider/ad"
 	adguid "github.com/skenzeriq/activediq/internal/directory/attr/guid"
 	"github.com/skenzeriq/activediq/internal/directory/dn"
 	"github.com/skenzeriq/activediq/internal/platform/secret"
@@ -143,7 +144,7 @@ func (l *lab) verify(ctx context.Context, name, userDN string, in ADInput) labRu
 		l.t.Fatal(err)
 	}
 	in.Identity = ref
-	res, err := VerifyAD(ctx, NewSessionDirectory(s), in)
+	res, err := VerifyAD(ctx, adprov.NewSessionDirectory(s), in)
 	if err != nil {
 		l.t.Fatal(err)
 	}

@@ -8,6 +8,8 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
+	"github.com/skenzeriq/activediq/internal/connector/provider"
+	adprov "github.com/skenzeriq/activediq/internal/connector/provider/ad"
 	"os"
 	"path/filepath"
 	"strings"
@@ -19,7 +21,6 @@ import (
 
 	"github.com/skenzeriq/activediq/internal/connector/ad"
 	"github.com/skenzeriq/activediq/internal/connector/read"
-	"github.com/skenzeriq/activediq/internal/connector/write"
 	"github.com/skenzeriq/activediq/internal/directory/attr/guid"
 	"github.com/skenzeriq/activediq/internal/platform/secret"
 	connectorv1 "github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1"
@@ -104,7 +105,7 @@ func TestLabReadPinnedWithVerdict(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		return write.GUIDToWire(g)
+		return provider.GUIDToWire(g)
 	}
 
 	// An ordinary user with a comma and a non-ASCII letter in its name.
@@ -120,12 +121,8 @@ func TestLabReadPinnedWithVerdict(t *testing.T) {
 
 	ident := &connectorv1.DirectoryIdentity{Identity: &connectorv1.DirectoryIdentity_AdForest{AdForest: &connectorv1.AdForestIdentity{
 		ForestRootNcGuid: guidOf(labDom)}}}
-	prov := write.NewADProvider(sess, nil, ident, &memPins{})
-	adsrc, err := read.NewADSource(sess, prov)
-	if err != nil {
-		t.Fatal(err)
-	}
-	h, err := read.New(adsrc)
+	prov := adprov.NewADProvider(sess, nil, ident, &memPins{})
+	h, err := read.New(prov)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -183,11 +180,11 @@ func TestLabReadPinnedWithVerdict(t *testing.T) {
 	}
 
 	// A pin to another DSA fails with no stream; a missing object is OBJECT_NOT_FOUND.
-	other := write.GUIDToWire(guid.GUID{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16})
+	other := provider.GUIDToWire(guid.GUID{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16})
 	if s, err = do(guidOf(userDN), other, true); err == nil || len(s.ms) != 0 {
 		t.Fatalf("foreign pin served: %v", err)
 	}
-	if _, err = do(write.GUIDToWire(guid.GUID{9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9}), dc.GetDsaGuid(), true); err == nil {
+	if _, err = do(provider.GUIDToWire(guid.GUID{9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9}), dc.GetDsaGuid(), true); err == nil {
 		t.Fatal("missing object read")
 	}
 }

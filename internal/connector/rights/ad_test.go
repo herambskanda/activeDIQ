@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"github.com/skenzeriq/activediq/internal/connector/provider"
 	"strings"
 	"testing"
 
@@ -33,7 +34,7 @@ type fakeAD struct {
 	fail    map[string]error // key (guid text, "sid:<s>", lower dn) -> error from Read
 	rbcd    []*ad.Entry
 	findErr error
-	attrs   map[string]SchemaObject // by lower name
+	attrs   map[string]provider.SchemaObject // by lower name
 	reads   []readCall
 	read    map[string]bool // keys Read was asked for
 	next    uint16
@@ -46,7 +47,7 @@ type readCall struct {
 
 func newFakeAD() *fakeAD {
 	return &fakeAD{byGUID: map[string]*ad.Entry{}, bySID: map[string]*ad.Entry{}, byDN: map[string]*ad.Entry{},
-		fail: map[string]error{}, attrs: map[string]SchemaObject{}}
+		fail: map[string]error{}, attrs: map[string]provider.SchemaObject{}}
 }
 
 func (f *fakeAD) gid() adguid.GUID {
@@ -150,29 +151,29 @@ func onlyRequested(e *ad.Entry, attrs []string) *ad.Entry {
 	return ad.NewEntry(e.DN, m)
 }
 
-func (f *fakeAD) SchemaByName(_ context.Context, name string, class bool) (SchemaObject, bool, error) {
+func (f *fakeAD) SchemaByName(_ context.Context, name string, class bool) (provider.SchemaObject, bool, error) {
 	o, ok := f.attrs[strings.ToLower(name)]
 	return o, ok && o.Class == class, nil
 }
 
-func (f *fakeAD) SchemaByID(_ context.Context, id adguid.GUID) (SchemaObject, bool, error) {
+func (f *fakeAD) SchemaByID(_ context.Context, id adguid.GUID) (provider.SchemaObject, bool, error) {
 	for _, o := range f.attrs {
 		if o.ID == id {
 			return o, true, nil
 		}
 	}
-	return SchemaObject{}, false, nil
+	return provider.SchemaObject{}, false, nil
 }
 
 func (f *fakeAD) schemaAttr(name string, flags int32) adguid.GUID {
 	g := f.gid()
-	f.attrs[strings.ToLower(name)] = SchemaObject{Name: name, ID: g, SearchFlags: flags}
+	f.attrs[strings.ToLower(name)] = provider.SchemaObject{Name: name, ID: g, SearchFlags: flags}
 	return g
 }
 
 func (f *fakeAD) schemaClass(name string) adguid.GUID {
 	g := f.gid()
-	f.attrs[strings.ToLower(name)] = SchemaObject{Name: name, ID: g, Class: true}
+	f.attrs[strings.ToLower(name)] = provider.SchemaObject{Name: name, ID: g, Class: true}
 	return g
 }
 
@@ -883,7 +884,7 @@ func TestPinsReachSnapshotAndC13GroupsAreReturned(t *testing.T) {
 	ref, _ := dn.ParseObjectRef(w.id.DN)
 	var gotPins, gotDes []adguid.GUID
 	prev := snapshotWith
-	snapshotWith = func(_ context.Context, _ ADDirectory, pinned, designated []adguid.GUID) (*tier0.ADSet, error) {
+	snapshotWith = func(_ context.Context, _ provider.RightsDirectory, pinned, designated []adguid.GUID) (*tier0.ADSet, error) {
 		gotPins, gotDes = pinned, designated
 		return w.set, nil
 	}

@@ -17,8 +17,7 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 
 	"github.com/skenzeriq/activediq/internal/connector/ad"
-	"github.com/skenzeriq/activediq/internal/connector/read"
-	"github.com/skenzeriq/activediq/internal/connector/write"
+	adprov "github.com/skenzeriq/activediq/internal/connector/provider/ad"
 	"github.com/skenzeriq/activediq/internal/directory/inventory"
 	dirsync "github.com/skenzeriq/activediq/internal/directory/sync"
 	"github.com/skenzeriq/activediq/internal/platform/secret"
@@ -94,11 +93,7 @@ func TestWindowsLabSyncCapture(t *testing.T) {
 	}
 	l := &searchLab{adm: adm, stamp: time.Now().UTC().Format("150405")}
 	l.ident = &connectorv1.DirectoryIdentity{Identity: &connectorv1.DirectoryIdentity_AdForest{AdForest: &connectorv1.AdForestIdentity{ForestRootNcGuid: l.guid(t, dom)}}}
-	src, err := read.NewADSource(sess, write.NewADProvider(sess, nil, l.ident, &memPins{}))
-	if err != nil {
-		t.Fatal(err)
-	}
-	l.client = start(t, src)
+	l.client = start(t, adprov.NewADProvider(sess, nil, l.ident, &memPins{}))
 
 	ou := "OU=t1787-" + l.stamp + "," + dom
 	l.delTree(ou)

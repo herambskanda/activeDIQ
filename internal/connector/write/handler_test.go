@@ -2,6 +2,7 @@ package write
 
 import (
 	"context"
+	"github.com/skenzeriq/activediq/internal/connector/provider"
 	"os"
 	"runtime"
 	"strings"
@@ -114,12 +115,12 @@ func TestNonTier0IsUnsupported(t *testing.T) {
 		t.Fatalf("operation table holds %d kinds, want 13 (kinds 1-6, the five account kinds and kinds 11-12)", len(operations))
 	}
 	for k := range operations {
-		if !want[k] {
-			t.Errorf("unexpected kind %s in the operation table", k)
+		if !want[k.Kind] || k.Provider != connectorv1.ProviderKind_PROVIDER_KIND_AD {
+			t.Errorf("unexpected kind %s/%s in the operation table", k.Provider, k.Kind)
 		}
 	}
 	for k := range want {
-		if _, ok := operations[k]; !ok {
+		if _, ok := operations[adKey(k)]; !ok {
 			t.Errorf("kind %s has no operation row", k)
 		}
 	}
@@ -262,19 +263,19 @@ func TestEvidenceBoundToObject(t *testing.T) {
 		return &connectorv1.Tier0Context{Statements: []*connectorv1.CorrelationStatement{peersStmt(id, t0time, goodPeer(false))}}
 	}
 	r := newRig(t, &run)
-	r.prov.anchors[id] = Anchors{Source: [][]byte{[]byte("someone else")}}
+	r.prov.anchors[id] = provider.Anchors{Source: [][]byte{[]byte("someone else")}}
 	_, err := r.h.Plan(context.Background(), planReq(id, mkCtx()))
 	wantTier0(t, err, connectorv1.Tier0RefusalStage_TIER0_REFUSAL_STAGE_CONTEXT_CONTRADICTED)
 
 	r = newRig(t, &run)
-	r.prov.anchors[id] = Anchors{Source: [][]byte{[]byte("anchor")}}
+	r.prov.anchors[id] = provider.Anchors{Source: [][]byte{[]byte("anchor")}}
 	_, err = r.h.Plan(context.Background(), planReq(id, mkCtx()))
 	if connErr(t, err).GetCode() != connectorv1.ErrorCode_ERROR_CODE_CAPABILITY_UNSUPPORTED {
 		t.Fatalf("matching evidence: %v", err)
 	}
 
 	r = newRig(t, &run)
-	r.prov.anchErr = ErrNoAnchors
+	r.prov.anchErr = provider.ErrNoAnchors
 	_, err = r.h.Plan(context.Background(), planReq(id, mkCtx()))
 	wantTier0(t, err, connectorv1.Tier0RefusalStage_TIER0_REFUSAL_STAGE_LIVE_REREAD)
 }
@@ -469,7 +470,7 @@ func withTestOp(r *rig, touched ...byte) *recordedOp {
 	rec := &recordedOp{}
 	k := connectorv1.WriteKind(1)
 	r.prov.guard = &stubGuard{} // allows; the guard's own tests are in propwrite_test.go
-	r.h.ops = map[connectorv1.WriteKind]WriteOp{k: {
+	r.h.ops = map[opKey]WriteOp{adKey(k): {
 		PropertyWrite: declare(adUpdateTitle, nil),
 		Touched: func(target guidT, _ *connectorv1.WriteChange) ([]guidT, error) {
 			out := []guidT{target}
@@ -553,8 +554,8 @@ func TestStep9ReportsBasis(t *testing.T) {
 	q := applyReq(tgt, ctxFor(tgt))
 	q.Kind, q.Change = 1, testChange()
 	// Replace the fake's behaviour after the write: tier0 with C2, no error.
-	r.h.ops[1] = func() WriteOp {
-		w := r.h.ops[1]
+	r.h.ops[adKey(1)] = func() WriteOp {
+		w := r.h.ops[adKey(1)]
 		inner := w.Apply
 		w.Apply = func(ctx context.Context, a Authorised, req *connectorv1.ApplyRequest) (*connectorv1.ApplyResponse, error) {
 			r.prov.tier0[tgt] = []Basis{tier0.C2}
@@ -637,13 +638,13 @@ func TestStep9UsesDesignatedSet(t *testing.T) {
 	withTestOp(r)
 	q := applyReq(tgt, ctxFor(tgt))
 	q.Kind, q.Change = 1, testChange()
-	w := r.h.ops[1]
+	w := r.h.ops[adKey(1)]
 	inner := w.Apply
 	w.Apply = func(ctx context.Context, a Authorised, req *connectorv1.ApplyRequest) (*connectorv1.ApplyResponse, error) {
 		r.prov.members = map[guid.GUID][]guid.GUID{grp: {tgt}} // joins during the write window
 		return inner(ctx, a, req)
 	}
-	r.h.ops[1] = w
+	r.h.ops[adKey(1)] = w
 	resp, err := r.h.Apply(context.Background(), q)
 	if err != nil {
 		t.Fatal(err)

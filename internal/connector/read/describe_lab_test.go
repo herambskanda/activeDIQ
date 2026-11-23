@@ -16,8 +16,9 @@ import (
 	"github.com/go-ldap/ldap/v3"
 
 	"github.com/skenzeriq/activediq/internal/connector/ad"
+	"github.com/skenzeriq/activediq/internal/connector/provider"
+	adprov "github.com/skenzeriq/activediq/internal/connector/provider/ad"
 	"github.com/skenzeriq/activediq/internal/connector/read"
-	"github.com/skenzeriq/activediq/internal/connector/write"
 	"github.com/skenzeriq/activediq/internal/directory/attr/guid"
 	"github.com/skenzeriq/activediq/internal/platform/secret"
 	connectorv1 "github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1"
@@ -68,17 +69,13 @@ func TestLabDescribeEqualsDirectPartitionRead(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		return write.GUIDToWire(g)
+		return provider.GUIDToWire(g)
 	}
 
 	ident := &connectorv1.DirectoryIdentity{Identity: &connectorv1.DirectoryIdentity_AdForest{AdForest: &connectorv1.AdForestIdentity{
 		ForestRootNcGuid: guidOf(labDom)}}}
-	prov := write.NewADProvider(sess, nil, ident, &memPins{})
-	src, err := read.NewADSource(sess, prov)
-	if err != nil {
-		t.Fatal(err)
-	}
-	h, err := read.New(src)
+	prov := adprov.NewADProvider(sess, nil, ident, &memPins{})
+	h, err := read.New(prov)
 	if err != nil {
 		t.Fatal(err)
 	}
