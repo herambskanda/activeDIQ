@@ -119,7 +119,7 @@ func Test_pso_applies_over_budget_is_a_marker_and_unknown(t *testing.T) {
 			return e.count(t, `SELECT count(*) FROM public.inventory_psos WHERE pso_guid = $1::uuid AND applies_over_budget`, p) == 1
 		}
 		e.policyTx(t, func(ctx context.Context, tx store.Tx, w inventory.PolicyWriter) error {
-			if err := w.SetDomainPolicy(ctx, tx, c, inventory.GUID(hDom), inventory.DomainPolicy{MaxPwdAge: days(42), LockoutDuration: mins(30), PSOsReadAt: hBase}, hBase); err != nil {
+			if err := w.SetDomainPolicy(ctx, tx, c, inventory.GUID(hDom), inventory.DomainPolicy{MaxPwdAge: days(42), LockoutDuration: mins(30), PSOsReadAt: hBase, FunctionalLevel: lvl(7)}, hBase); err != nil {
 				return err
 			}
 			p1 := int64(1)
@@ -346,7 +346,7 @@ func Test_policy_cte_terminates_on_deep_and_cyclic_nesting(t *testing.T) {
 			t.Fatal(err)
 		}
 		e.policyTx(t, func(ctx context.Context, tx store.Tx, w inventory.PolicyWriter) error {
-			if err := w.SetDomainPolicy(ctx, tx, c, inventory.GUID(hDom), inventory.DomainPolicy{MaxPwdAge: days(42), LockoutDuration: mins(30), PSOsReadAt: hBase}, hBase); err != nil {
+			if err := w.SetDomainPolicy(ctx, tx, c, inventory.GUID(hDom), inventory.DomainPolicy{MaxPwdAge: days(42), LockoutDuration: mins(30), PSOsReadAt: hBase, FunctionalLevel: lvl(7)}, hBase); err != nil {
 				return err
 			}
 			p := int64(1)

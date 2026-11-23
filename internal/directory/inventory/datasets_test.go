@@ -118,6 +118,7 @@ func (e *env) policyTx(t *testing.T, fn func(ctx context.Context, tx store.Tx, w
 
 func days(n int64) *filetime.Interval { return &filetime.Interval{Ticks: n * 86400 * 10_000_000} }
 func mins(n int64) *filetime.Interval { return &filetime.Interval{Ticks: n * 60 * 10_000_000} }
+func lvl(n int) *int                  { return &n }
 func forever() *filetime.Interval     { return &filetime.Interval{Forever: true} }
 
 // hStructure writes the NC head, the OU the users live in and the container the PSOs live in. Both
@@ -147,6 +148,7 @@ type hUser struct {
 	pwdLastSet time.Time
 	expires    time.Time
 	spn        *bool
+	rodc       bool   // msDS-SecondaryKrbTgtNumber set
 	primary    string // a group GUID
 	kind       inventory.Kind
 	class      string
@@ -171,7 +173,7 @@ func (u hUser) obs() inventory.Observation {
 	return inventory.Observation{Object: inventory.GUID(u.guid), NC: inventory.GUID(hDom), Kind: k, Class: cl, State: inventory.ObjLive,
 		Parent: inventory.GUID(parent), Ancestry: anc, DN: "CN=" + u.sam + ",OU=People,DC=example,DC=test", RDN: "CN=" + u.sam,
 		SID: hSID(u.rid), SAMAccountName: u.sam, UserAccountControl: u.uac, InputsRead: u.read,
-		LockoutTime: u.lockout, PwdLastSet: u.pwdLastSet, AccountExpires: u.expires, HasSPN: u.spn,
+		LockoutTime: u.lockout, PwdLastSet: u.pwdLastSet, AccountExpires: u.expires, HasSPN: u.spn, RODCKrbtgt: &u.rodc,
 		PrimaryGroup: inventory.GUID(u.primary), WhenCreated: hBase.Add(-24 * time.Hour)}
 }
 
@@ -287,7 +289,7 @@ func Test_inventory_users_smoke(t *testing.T) {
 			t.Fatal(err)
 		}
 		e.policyTx(t, func(ctx context.Context, tx store.Tx, w inventory.PolicyWriter) error {
-			return w.SetDomainPolicy(ctx, tx, e.adA, inventory.GUID(hDom), inventory.DomainPolicy{MaxPwdAge: days(42), LockoutDuration: mins(30), PSOsReadAt: hBase}, hBase)
+			return w.SetDomainPolicy(ctx, tx, e.adA, inventory.GUID(hDom), inventory.DomainPolicy{MaxPwdAge: days(42), LockoutDuration: mins(30), PSOsReadAt: hBase, FunctionalLevel: lvl(7)}, hBase)
 		})
 		cols := []report.ColumnID{"sam_account_name", "locked_out", "lockout_ends_at", "password_state", "password_expires_at", "days_to_password_expiry", "account_expired", "policy_source", "probable_service_account"}
 		res := e.run(t, reg, hQuery{dataset: inventory.DatasetUsers, cols: cols, scope: e.scopeNC(e.adA), now: hBase.Add(24 * time.Hour),

@@ -621,7 +621,7 @@ func b2Setup(t *testing.T, s *storetest.Server) (*env, *library.Library, seed) {
 	never := pso(2, "PSO-never", inventory.PSO{Precedence: i64(2), MaxPwdAge: forever(), LockoutDuration: mins(5)})
 	e.policyTx(t, func(ctx context.Context, tx store.Tx, w inventory.PolicyWriter) error {
 		if err := w.SetDomainPolicy(ctx, tx, e.adA, inventory.GUID(hDom),
-			inventory.DomainPolicy{MaxPwdAge: days(domainMaxAge), LockoutDuration: mins(30), LogonSyncIntervalDays: &syncDays, PSOsReadAt: hBase}, hBase); err != nil {
+			inventory.DomainPolicy{MaxPwdAge: days(domainMaxAge), LockoutDuration: mins(30), LogonSyncIntervalDays: &syncDays, PSOsReadAt: hBase, FunctionalLevel: lvl(7)}, hBase); err != nil {
 			return err
 		}
 		for guid, p := range sd.pw {

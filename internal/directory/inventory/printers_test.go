@@ -168,7 +168,9 @@ func Test_printers_columns_carry_no_secret(t *testing.T) {
 func Test_migration_0082_admits_printqueue_and_requires_a_resync(t *testing.T) {
 	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
 		const mig = "0082_inventory_printqueue_kind.sql"
-		e := setupFS(t, s, migrationsFS(t, func(n string) bool { return n < mig || strings.HasSuffix(n, clusterSPNMigSuffix) }))
+		e := setupFS(t, s, migrationsFS(t, func(n string) bool {
+			return n < mig || strings.HasSuffix(n, policyGatesMigSuffix) || strings.HasSuffix(n, clusterSPNMigSuffix)
+		}))
 		e.hStructure(t, e.adA)
 		old := inventory.Observation{Object: inventory.GUID(hGUID(6, 1)), NC: inventory.GUID(hDom), Kind: inventory.KindOther, Class: "printQueue",
 			State: inventory.ObjLive, Parent: inventory.GUID(hOU), Ancestry: []inventory.GUID{inventory.GUID(hOU), inventory.GUID(hDom)},

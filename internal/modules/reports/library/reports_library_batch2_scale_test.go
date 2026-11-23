@@ -95,7 +95,7 @@ func Test_reports_library_batch2_at_scale(t *testing.T) {
 		syncDays := 14
 		e.policyTx(t, func(ctx context.Context, tx store.Tx, w inventory.PolicyWriter) error {
 			return w.SetDomainPolicy(ctx, tx, e.adA, inventory.GUID(hDom),
-				inventory.DomainPolicy{MaxPwdAge: days(domainMaxAge), LockoutDuration: mins(30), LogonSyncIntervalDays: &syncDays, PSOsReadAt: hBase}, hBase)
+				inventory.DomainPolicy{MaxPwdAge: days(domainMaxAge), LockoutDuration: mins(30), LogonSyncIntervalDays: &syncDays, PSOsReadAt: hBase, FunctionalLevel: lvl(7)}, hBase)
 		})
 
 		scope := e.scopeNC(e.adA)

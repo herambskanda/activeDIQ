@@ -40,7 +40,8 @@ func uacObs(o inventory.Observation, uac int64, dis bool) inventory.Observation 
 func (w *world) policy(t *testing.T, maxAge, lock *filetime.Interval, psosRead bool) {
 	t.Helper()
 	err := w.db.WithTenant(context.Background(), w.tid, func(ctx context.Context, tx store.Tx) error {
-		dp := inventory.DomainPolicy{MaxPwdAge: maxAge, LockoutDuration: lock}
+		lvl := 7
+		dp := inventory.DomainPolicy{MaxPwdAge: maxAge, LockoutDuration: lock, FunctionalLevel: &lvl}
 		if psosRead {
 			dp.PSOsReadAt = now1097
 		}

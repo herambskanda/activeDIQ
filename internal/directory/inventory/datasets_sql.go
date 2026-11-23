@@ -12,6 +12,9 @@ package inventory
 //     the lowest precedence wins, then the lowest objectGUID compared as the 16 raw wire bytes.
 //     Group-linked PSOs come from the transitive membership and the primary group. Only NORMAL_ACCOUNT
 //     users that are not krbtgt resolve a PSO.
+//   - A domain functional level below 2008 (msDS-Behavior-Version < 3) gives no PSO effect: the domain
+//     policy applies (LAB-PS-13). An unread level leaves the policy unresolved. An RODC krbtgt_<n>
+//     (msDS-SecondaryKrbTgtNumber set) resolves no PSO (LAB-PS-10).
 //   - A candidate PSO that is not stored, has no precedence, or a domain whose PSO set was never read
 //     leaves the policy unresolved: the states that need it are unknown_input_missing, never the
 //     domain policy.
@@ -34,11 +37,12 @@ const (
 		" || substring(cand.b from 6 for 1) || substring(cand.b from 5 for 1) || substring(cand.b from 8 for 1) || substring(cand.b from 7 for 1)" +
 		" || substring(cand.b from 9))"
 
-	// eligible: NORMAL_ACCOUNT and not krbtgt (RID 502, or an RODC krbtgt_<n>).
+	// eligible: NORMAL_ACCOUNT and not krbtgt (RID 502, or an RODC krbtgt_<n>: the krbtgt_ name or the
+	// msDS-SecondaryKrbTgtNumber marker, LAB-PS-10).
 	// A NULL (the sid or the logon name was not read) stays NULL, so the row fails closed to unresolved
 	// rather than quietly taking the domain policy.
 	eligible = "((" + uac + " & 512) = 512 AND substring({t}.sid from length({t}.sid) - 3) <> decode('f6010000', 'hex')" +
-		" AND left(lower({t}.sam_account_name), 7) <> 'krbtgt_')"
+		" AND left(lower({t}.sam_account_name), 7) <> 'krbtgt_' AND {t}.rodc_krbtgt IS DISTINCT FROM true)"
 
 	// psoOver: a PSO of the account's naming context named more targets than the applies budget (TM-D32), so
 	// the stored edges are not the whole set and no account of the domain can be said to have no PSO.
@@ -69,11 +73,12 @@ const (
 		" ORDER BY psoval.precedence NULLS FIRST, " + wireKey + " LIMIT 1" +
 		") SELECT s.status, s.why, s.pso, CASE s.status WHEN 0 THEN s.dmax WHEN 1 THEN s.pmax END AS maxage," +
 		" CASE s.status WHEN 0 THEN s.dlock WHEN 1 THEN s.plock END AS lockdur FROM (" +
-		"SELECT CASE WHEN dom.psos_read_at IS NULL THEN 2 WHEN " + eligible + " IS NULL THEN 2 WHEN NOT " + eligible + " THEN 0" +
+		"SELECT CASE WHEN dom.nc_guid IS NULL OR dom.functional_level IS NULL THEN 2 WHEN dom.functional_level < 3 THEN 0 WHEN dom.psos_read_at IS NULL THEN 2 WHEN " + eligible + " IS NULL THEN 2 WHEN NOT " + eligible + " THEN 0" +
 		" WHEN " + psoOver + " THEN 2" +
 		" WHEN (SELECT unsure FROM shaky) AND NOT EXISTS (SELECT 1 FROM cand WHERE tier = 1) THEN 2" +
 		" WHEN EXISTS (SELECT 1 FROM best) THEN (CASE WHEN (SELECT precedence FROM best) IS NULL THEN 2 ELSE 1 END) ELSE 0 END AS status," +
-		" CASE WHEN dom.nc_guid IS NULL THEN 'domain_policy_not_read' WHEN dom.psos_read_at IS NULL THEN 'pso_set_not_read'" +
+		" CASE WHEN dom.nc_guid IS NULL THEN 'domain_policy_not_read' WHEN dom.functional_level IS NULL THEN 'domain_level_not_read'" +
+		" WHEN dom.functional_level < 3 THEN NULL WHEN dom.psos_read_at IS NULL THEN 'pso_set_not_read'" +
 		" WHEN " + eligible + " IS NULL THEN 'account_inputs_not_read'" +
 		" WHEN " + eligible + " AND " + psoOver + " THEN 'pso_applies_over_budget'" +
 		" WHEN " + eligible + " AND (SELECT unsure FROM shaky) AND NOT EXISTS (SELECT 1 FROM cand WHERE tier = 1) THEN 'group_closure_incomplete'" +

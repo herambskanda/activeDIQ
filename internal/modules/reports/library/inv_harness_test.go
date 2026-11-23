@@ -138,6 +138,7 @@ func i64(v int64) *int64              { return &v }
 func days(n int64) *filetime.Interval { return &filetime.Interval{Ticks: n * 86400 * 10_000_000} }
 func mins(n int64) *filetime.Interval { return &filetime.Interval{Ticks: n * 60 * 10_000_000} }
 func forever() *filetime.Interval     { return &filetime.Interval{Forever: true} }
+func lvl(n int) *int                  { return &n }
 
 // hStructure writes the NC head, the OU the users live in and the container the PSOs live in. Both
 // children are direct children of the head.

@@ -486,7 +486,7 @@ equals a pure-Go reference function `inventory.DeriveUserState(inputs, now)`. Th
   `account_expired_reason`, `activity_source_reason`); `probable_service_account_reason` was already there.
   Each is `none` when the state is known, else the cause: `uac_not_read`, `lockout_time_not_read`,
   `pwd_last_set_not_read`, `last_logon_not_read`, `activity_inputs_not_read`, `account_expires_not_read`,
-  `pso_set_not_read` (PSO set never read), `pso_not_read` (an applying PSO has no stored row),
+  `domain_level_not_read` (functional level unread), `pso_set_not_read` (PSO set never read), `pso_not_read` (an applying PSO has no stored row),
   `pso_precedence_not_read`, `pso_interval_not_read`, `domain_policy_not_read` (domain row or interval
   missing), `account_inputs_not_read` (uac, SID or logon name missing: the policy cannot be chosen, so it
   fails closed). They are evaluated in the same query from the same CTE row as the state. (3) The codec refuses a stored max age of 0 (`UnverifiedValue`), so
