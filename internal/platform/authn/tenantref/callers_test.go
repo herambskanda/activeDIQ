@@ -32,6 +32,7 @@ var permitted = map[string]string{
 	"internal/modules/helpdesk/handlers.go":          "p.Tenant (authenticated console session principal from apihost.PrincipalFrom; tokens refused)",
 	"internal/modules/reports/handlers.go":           "p.Tenant (authenticated principal from apihost.PrincipalFrom; token principals refused)",
 	"internal/modules/reports/schedule/render.go":    "app.tenant_id of the delivery renderer transaction (tenant-scoped tx setting)",
+	"internal/platform/audit/read/handlers.go":       "p.Tenant (authenticated principal from apihost.PrincipalFrom; audit-read permission enforced before search)",
 	"internal/platform/fleet/fleetsql/enrollment.go": "p.Tenant (authenticated principal) compared to the tid argument",
 	"internal/platform/fleet/fleetsql/reenrol.go":    "p.Tenant (authenticated principal) compared to the tid argument",
 	"internal/platform/fleet/fleetsql/revoke.go":     "p.Tenant (authenticated principal) compared to the tid argument",

@@ -7,6 +7,7 @@ import (
 	"github.com/skenzeriq/activediq/internal/directory"
 	"github.com/skenzeriq/activediq/internal/platform"
 	"github.com/skenzeriq/activediq/internal/platform/apihost"
+	auditread "github.com/skenzeriq/activediq/internal/platform/audit/read"
 	"github.com/skenzeriq/activediq/internal/platform/module"
 	"github.com/skenzeriq/activediq/internal/platform/notify/syslog"
 	"github.com/skenzeriq/activediq/internal/platform/rbac"
@@ -16,7 +17,7 @@ import (
 // role holds plus the platform packages' own operation permissions. Module permissions arrive through
 // Registrar.Permission (EP-6), so the catalogue cannot drift from the code that checks them.
 func kernelPermissions() []string {
-	set := []string{syslog.ManagePermission, syslog.ReadPermission}
+	set := []string{syslog.ManagePermission, syslog.ReadPermission, auditread.Permission}
 	for _, r := range rbac.BuiltInRoles() {
 		for _, p := range r.Permissions {
 			set = append(set, string(p))

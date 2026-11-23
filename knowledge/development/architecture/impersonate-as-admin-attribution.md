@@ -170,3 +170,14 @@ not a Windows 4724/4738/5136 event, so AC 2 is T-2304. The run found and fixed t
 Apply and Verify ran without the tenant on the context, the account Actions' write ran without the DSA
 pin on the context, and enable, disable and unlock plan an empty diff and are skipped as no-change
 (T-2301, not fixed here).
+
+## 9. The read side (T-2300)
+
+`GET /api/v1/audit/events` (operation `listAuditEvents`, tag `platform.audit`, permission `audit.read`, held by
+`platform-administrator`) is how an auditor makes the §5 join: filters `dc`, `credentialId`, `target` (objectGUID),
+`from` / `to`, cursor paging; each event answers `requester`, `via`, `dc`, `credentialId`, `target`. The search is
+`audit.Search` (typed filters compared in Go over the parsed envelope, bounded by a 5,000-row scan per request, so a
+page may be short and still carry `nextCursor`); `internal/platform/audit/read` is the thin handler. Time filters apply
+to the chain's own commit time (`audit_event.at`, indexed by migration 0096), not the event's `At`. Each search records
+an `audit.queried` event with `filter_*` details (never `dc` / `credential_id`, so a search is not mistaken for a step).
+A caller without `audit.read` is refused with 403 and `authz.permission.denied` is chained (`auditedAuthz`).

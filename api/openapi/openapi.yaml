@@ -29,6 +29,8 @@ tags:
     description: Directory connections. Attestation of an Entra connection's takeover protection (TM-D17), its maximum age, and the IdP callback. Connection health for the Home panels (connections.read).
   - name: platform.notify
     description: Notification sinks. SIEM syslog destinations; TLS by default, plaintext only by an audited opt-in. No destination can be deleted.
+  - name: platform.audit
+    description: Admin read of the audit trail. Search step events by DC, credential, target GUID and time; returns Requester and Via. Permission audit.read.
   - name: delegation
     description: Roles and assignments. The input contracts of the delegation.* control-plane Actions; personal to an account, step-up required.
   - name: directory

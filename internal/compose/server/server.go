@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	auditread "github.com/skenzeriq/activediq/internal/platform/audit/read"
 	"github.com/skenzeriq/activediq/internal/platform/notify/delivery"
 	"github.com/skenzeriq/activediq/internal/platform/notify/syslog"
 	"log/slog"
@@ -193,6 +194,8 @@ func Run(ctx context.Context, cfg config.Config, getenv func(string) string) err
 		return err
 	}
 	tags = append(tags, syslog.Handlers{Store: siem}.Bind())
+	// The admin audit read (audit.read, T-2300): a typed search of the chain that records itself.
+	tags = append(tags, auditread.Handlers{DB: db, Sink: ok.Chainer}.Bind())
 	// The anonymous liveness and readiness probes (AN-1). Readiness is the store answering.
 	tags = append(tags, buildHealth(db, slog.Default()))
 	// First-run setup (TM-TB16-T7, AN-4): an unclaimed install holds a one-time secret the installing
